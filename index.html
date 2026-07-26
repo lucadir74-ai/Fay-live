@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>FotoLive — Gestione serata</title>
+<style>
+  :root{
+    --bg:#0B0E14; --surface:#141926; --surface2:#1B2233; --line:#252E44;
+    --ink:#E8ECF4; --muted:#8A94A8; --accent:#F5B942; --accent-ink:#1A1204;
+    --ok:#5BC98A; --danger:#E4574F;
+    --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+  button{font:inherit;color:inherit;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input[type=text],input[type=number],select{background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 10px}
+  .badge{font-family:var(--mono);font-weight:700;background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:2px 8px;letter-spacing:.5px}
+
+  /* ---------- Layout ---------- */
+  #app{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;font-weight:700;letter-spacing:.3px}
+  header h1 span{color:var(--accent)}
+  #eventInfo{color:var(--muted);font-size:13px}
+  #searchBox{width:180px;font-family:var(--mono);text-transform:uppercase}
+  .spacer{flex:1}
+  #statusBar{display:flex;gap:18px;align-items:center;padding:6px 16px;background:var(--surface);border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+  #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto}
+  #progWrap{display:none;align-items:center;gap:12px;padding:7px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  #progWrap.show{display:flex}
+  #progTrack{flex:1;height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+  #progFill{height:100%;width:0%;background:var(--accent);border-radius:99px;transition:width .2s}
+  #progLabel{font-size:12.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
+  #lbLoading{position:absolute;top:12px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted)}
+  #lbLoading.show{display:flex}
+  #lbLoading::before{content:"";width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ltab{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:9px;background:var(--surface2);border:1px solid var(--line);cursor:pointer;white-space:nowrap;font-weight:600}
+  .ltab:hover{border-color:var(--accent)}
+  .ltab.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .ltab .lt{font-family:var(--mono);font-weight:800;font-size:15px;letter-spacing:.5px}
+  .ltab .stat{font-size:11.5px;font-weight:600;color:var(--muted)}
+  .ltab.active .stat{color:var(--accent-ink);opacity:.75}
+  .ltab .stat.pr{color:var(--ok)}
+  .ltab .stat.ex{color:#7FB8F0}
+  .ltab.active .stat.pr,.ltab.active .stat.ex{color:var(--accent-ink);opacity:.8}
+  #statusBar b{color:var(--ink)}
+  #monitorState{display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--danger)}
+  .dot.on{background:var(--ok)}
+
+  main{flex:1;position:relative;overflow:hidden}
+
+  /* ---------- Griglia virtualizzata ---------- */
+  #gridWrap{position:absolute;inset:0;overflow-y:auto}
+  #gridSpacer{position:relative;width:100%}
+  .cell{position:absolute;border-radius:10px;overflow:hidden;background:var(--surface);cursor:pointer;border:2px solid transparent}
+  .cell img{width:100%;height:100%;object-fit:cover;display:block}
+  .cell .code{position:absolute;left:6px;bottom:6px;font-family:var(--mono);font-size:12px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 7px;border-radius:5px;letter-spacing:.5px}
+  .cell.sel{border-color:var(--accent)}
+  .cell.sel::after{content:"✓";position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-weight:800;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .cell.focused{box-shadow:0 0 0 2px var(--ink) inset}
+  .cell .flags{position:absolute;top:6px;left:6px;display:flex;gap:4px}
+  .flag{font-family:var(--mono);font-size:11px;font-weight:700;background:rgba(11,14,20,.85);border-radius:5px;padding:1px 6px}
+  .flag.print{color:var(--ok)}
+  .flag.exp{color:#7FB8F0}
+
+  /* ---------- Lightbox operatore ---------- */
+  #lightbox{position:absolute;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(3px);display:none;flex-direction:column;z-index:20}
+  #lightbox.open{display:flex}
+  #lbTop{display:flex;align-items:center;gap:12px;padding:10px 16px}
+  #lbCode{font-family:var(--mono);font-size:20px;font-weight:800;color:var(--accent);letter-spacing:1px}
+  #lbStage{flex:1;position:relative;min-height:0}
+  #lbStage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
+  #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
+
+  /* ---------- Pannelli ---------- */
+  .panel{position:absolute;top:0;right:0;bottom:0;width:400px;background:var(--surface);border-left:1px solid var(--line);z-index:30;display:none;flex-direction:column}
+  .panel.open{display:flex}
+  .panel h2{font-size:15px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .panel .body{padding:16px 18px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:14px}
+  .field label{display:block;color:var(--muted);font-size:12.5px;margin-bottom:5px}
+  .field input[type=text],.field select{width:100%}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  #ovPreview{display:flex;gap:10px}
+  #ovPreview canvas{background:#000;border-radius:8px;border:1px solid var(--line)}
+  .hint{color:var(--muted);font-size:12px}
+  .panel footer{padding:14px 18px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
+
+  /* ---------- Barra selezione ---------- */
+  #selBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--accent);border-radius:14px;padding:10px 16px;display:none;align-items:center;gap:12px;z-index:15;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  #selBar.show{display:flex}
+  #selCount{font-weight:700;color:var(--accent)}
+
+  /* ---------- Vuoto / drop ---------- */
+  #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)}
+  #empty .big{font-size:44px;font-family:var(--mono);color:var(--accent);font-weight:800;letter-spacing:2px}
+  kbd{font-family:var(--mono);background:var(--surface2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px}
+  #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
+  dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
+  dialog::backdrop{background:rgba(6,8,12,.7)}
+  .toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;z-index:50;opacity:0;transition:opacity .25s}
+  .toast.show{opacity:1}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Foto<span>Live</span></h1>
+    <span id="eventInfo">Nessuna serata attiva</span>
+    <button id="btnEvent">Serata…</button>
+    <button id="btnArchive">Archivio…</button>
+    <button id="btnImport" class="primary" disabled>Importa cartella</button>
+    <input type="file" id="fileInput" webkitdirectory multiple hidden>
+    <div class="spacer"></div>
+    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )" disabled>
+    <button id="btnMonitor" disabled>Apri monitor cliente</button>
+  </header>
+
+  <nav id="letterTabs" hidden></nav>
+
+  <div id="progWrap">
+    <span id="progLabel">0/0</span>
+    <div id="progTrack"><div id="progFill"></div></div>
+  </div>
+
+  <main>
+    <div id="gridWrap"><div id="gridSpacer"></div></div>
+
+    <div id="empty">
+      <div>Crea la serata, poi importa la cartella della SD: i codici vengono assegnati in automatico.</div>
+      <div id="shortcuts">
+        <span><kbd>frecce</kbd></span><span>naviga tra le foto</span>
+        <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
+        <span><kbd>doppio clic</kbd></span><span>ingrandisci (anche <kbd>invio</kbd> o clic destro)</span>
+        <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
+        <span><kbd>M</kbd></span><span>mostra sul monitor cliente</span>
+        <span><kbd>/</kbd></span><span>cerca per codice</span>
+        <span><kbd>esc</kbd></span><span>chiudi / riprendi slideshow</span>
+      </div>
+    </div>
+
+    <!-- Lightbox operatore -->
+    <div id="lightbox">
+      <div id="lbTop">
+        <span id="lbCode">—</span>
+        <span id="lbStatus" class="hint"></span>
+        <div class="spacer"></div>
+        <button id="lbSelect">Seleziona <kbd>spazio</kbd></button>
+        <button id="lbPrint">Stampa</button>
+        <button id="lbExport">Esporta file</button>
+        <button id="lbShow">Mostra sul monitor <kbd>M</kbd></button>
+        <button id="lbClose">Chiudi <kbd>esc</kbd></button>
+      </div>
+      <div id="lbStage"><canvas id="lbCanvas"></canvas>
+        <div id="lbLoading">Carico la versione nitida…</div>
+        <div id="lbNav"><button id="lbPrev">‹</button><button id="lbNext">›</button></div>
+      </div>
+    </div>
+
+    <!-- Pannello serata -->
+    <div class="panel" id="eventPanel">
+      <h2>Serata</h2>
+      <div class="body">
+        <div class="field"><label>Nome evento</label><input type="text" id="evName" placeholder="Es. Sabato — Sottovento"></div>
+        <div class="field"><label>Slideshow: secondi per foto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
+        <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
+          <input type="file" id="evLogo" accept="image/*"></div>
+        <div class="field"><label>Scritta — in basso a sinistra</label>
+          <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo"></div>
+        <div class="field"><label>Anteprima overlay (orizzontale / verticale)</label>
+          <div id="ovPreview">
+            <canvas id="pvH" width="220" height="147"></canvas>
+            <canvas id="pvV" width="110" height="165"></canvas>
+          </div>
+          <p class="hint">Logo e scritta sono ancorati agli angoli in proporzione al lato corto: la posizione resta corretta su entrambi gli orientamenti. Gli originali non vengono toccati.</p>
+        </div>
+      </div>
+      <footer>
+        <button id="evCancel">Annulla</button>
+        <button id="evSave" class="primary">Salva serata</button>
+      </footer>
+    </div>
+
+    <!-- Barra selezione -->
+    <div id="selBar">
+      <span><span id="selCount">0</span> selezionate</span>
+      <button id="selShow" class="primary">Mostra sul monitor</button>
+      <button id="selPrint">Stampa</button>
+      <button id="selExport">Esporta file</button>
+      <button id="selClear">Svuota</button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </main>
+
+  <div id="statusBar">
+    <span>Foto: <b id="stTotal">0</b></span>
+    <span>Archivio: <b id="stArch">non impostato</b></span>
+    <span>Miniature: <b id="stThumbs">0</b></span>
+    <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
+    <div class="spacer"></div>
+    <span id="stMode">—</span>
+  </div>
+</div>
+
+<dialog id="confirmImport">
+  <h3 style="margin-bottom:10px">Conferma import</h3>
+  <p id="ciText" style="margin-bottom:14px"></p>
+  <div class="field" id="ciLetterField" style="margin-bottom:16px">
+    <label>Lettera per questa importazione (fotografo)</label>
+    <input type="text" id="ciLetter" maxlength="1" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:70px;text-align:center">
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="ciNo">Annulla</button><button id="ciYes" class="primary">Importa</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+/* =====================================================================
+   FotoLive — nucleo v1
+   Stato in memoria: serata, foto (File + miniatura), selezione.
+   Monitor cliente: finestra secondaria pilotata dall'operatore via canvas.
+   ===================================================================== */
+
+const $ = id => document.getElementById(id);
+
+const state = {
+  event: null,            // {name, secs, logoImg, text}
+  photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
+  byCode: new Map(),
+  counters: {},           // lettera -> ultimo numero
+  selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
+  activeLetter: null,     // null = tutte
+  focusIdx: -1,
+  filter: "",
+  lightboxIdx: -1,
+  monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0 },
+};
+
+/* ---------- utilità ---------- */
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
+function pad3(n){ return String(n).padStart(3,"0"); }
+function fmtCode(letter,num){ return letter+"-"+pad3(num); }
+function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
+
+/* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
+function drawOverlay(ctx, w, h){
+  const ev = state.event; if(!ev) return;
+  const S = Math.min(w,h), m = S*0.035;
+  if(ev.logoImg){
+    const lw = S*0.20, lh = lw * (ev.logoImg.height/ev.logoImg.width);
+    ctx.drawImage(ev.logoImg, w-m-lw, m, lw, lh);
+  }
+  if(ev.text){
+    const fs = Math.max(10, S*0.042);
+    ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+    ctx.textBaseline = "bottom";
+    ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
+    ctx.fillStyle="#fff";
+    ctx.fillText(ev.text, m, h-m);
+    ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+  }
+}
+function drawCodeBadge(ctx, w, h, code){
+  const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
+  ctx.font=`800 ${fs}px ui-monospace, Consolas, monospace`;
+  const tw = ctx.measureText(code).width, pad=fs*0.35;
+  const bx=w/2-tw/2-pad, by=h-m-fs-pad*2, bw=tw+pad*2, bh=fs+pad*1.6;
+  ctx.fillStyle="rgba(11,14,20,.82)";
+  if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,fs*0.25); ctx.fill(); }
+  else ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle="#F5B942"; ctx.textBaseline="top";
+  ctx.fillText(code, w/2-tw/2, by+pad*0.8);
+}
+
+/* ---------- pannello serata ---------- */
+
+let pendingLogo = null;
+$("btnEvent").onclick = ()=>{ openEventPanel(); };
+function openEventPanel(){
+  const ev = state.event;
+  if(ev){ $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text; }
+  pendingLogo = ev ? ev.logoImg : null;
+  $("eventPanel").classList.add("open");
+  renderOverlayPreview();
+}
+$("evCancel").onclick = ()=> $("eventPanel").classList.remove("open");
+$("evLogo").onchange = async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  pendingLogo = await loadImg(URL.createObjectURL(f));
+  renderOverlayPreview();
+};
+$("evText").oninput = renderOverlayPreview;
+function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
+
+function renderOverlayPreview(){
+  const saved = state.event;
+  const tmp = { logoImg: pendingLogo, text: $("evText").value };
+  state.event = Object.assign({}, saved||{}, tmp);
+  for(const id of ["pvH","pvV"]){
+    const c=$(id), ctx=c.getContext("2d");
+    ctx.fillStyle="#2A3550"; ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle="#3A4768";
+    ctx.beginPath(); ctx.arc(c.width*0.45,c.height*0.42,Math.min(c.width,c.height)*0.18,0,7); ctx.fill();
+    drawOverlay(ctx,c.width,c.height);
+  }
+  state.event = saved;
+}
+$("evSave").onclick = ()=>{
+  const name=$("evName").value.trim();
+  if(!name){ toast("Dai un nome alla serata"); return; }
+  state.event = {
+    name, secs: Math.max(2, +$("evSecs").value||4),
+    text: $("evText").value.trim(), logoImg: pendingLogo,
+  };
+  $("eventInfo").textContent = name + " — " + new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  $("btnImport").disabled = false;
+  $("btnMonitor").disabled = false;
+  $("searchBox").disabled = false;
+  $("eventPanel").classList.remove("open");
+  toast("Serata salvata");
+};
+
+/* ---------- import ---------- */
+$("btnImport").onclick = ()=> $("fileInput").click();
+
+// lettera suggerita dal nome della cartella che contiene la foto (es. ".../25-07/B/IMG_001.jpg" -> B)
+function detectLetter(f){
+  const parts=(f.webkitRelativePath||"").split("/");
+  if(parts.length>=2){
+    const parent=parts[parts.length-2].trim().toUpperCase();
+    if(/^[A-Z]$/.test(parent)) return parent;
+  }
+  return null;
+}
+
+$("fileInput").onchange = async e=>{
+  const files=[...e.target.files].filter(isImage);
+  e.target.value="";
+  if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
+
+  const suggested = detectLetter(files[0]);
+  $("ciText").textContent = `${files.length} foto trovate.`;
+  $("ciLetter").value = suggested || "";
+
+  const dlg=$("confirmImport"); dlg.showModal();
+  $("ciLetter").focus();
+  const L = await new Promise(res=>{
+    $("ciYes").onclick=()=>{
+      const v=$("ciLetter").value.trim().toUpperCase();
+      if(!/^[A-Z]$/.test(v)){ toast("Inserisci una lettera (A–Z)"); $("ciLetter").focus(); return; }
+      dlg.close(); res(v);
+    };
+    $("ciNo").onclick=()=>{ dlg.close(); res(null); };
+  });
+  if(!L) return;
+
+  await ensureArchive();
+
+  files.sort((a,b)=>a.lastModified-b.lastModified || a.name.localeCompare(b.name));
+  let n = state.counters[L]||0;
+  const batch=[];
+  for(const f of files){
+    n++;
+    const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
+              file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
+    state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
+  }
+  state.counters[L]=n;
+  $("stTotal").textContent = state.photos.length;
+  renderTabs(); layoutGrid();
+  toast(`Importate ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code})`);
+  const M=state.monitor;
+  M.queue = buildSlideshowQueue();
+  processBatch(batch);
+};
+
+const prog = { total:0, done:0 };
+function progUpdate(){
+  const w=$("progWrap");
+  if(prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
+  w.classList.add("show");
+  $("progLabel").textContent = `Anteprime ${prog.done}/${prog.total}`;
+  $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
+}
+/* ---------- archivio su cartella dedicata ---------- */
+state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
+
+// mini archivio chiave-valore per ricordare la cartella tra le sessioni (funziona su https)
+const idb = {
+  db:null,
+  open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
+    const r=indexedDB.open("fotolive",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("kv");
+    r.onsuccess=()=>{ this.db=r.result; res(this.db); };
+    r.onerror=()=>rej(r.error);
+  });},
+  async get(k){ const db=await this.open(); return new Promise((res,rej)=>{
+    const t=db.transaction("kv").objectStore("kv").get(k);
+    t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); });},
+  async set(k,v){ const db=await this.open(); return new Promise((res,rej)=>{
+    const t=db.transaction("kv","readwrite").objectStore("kv").put(v,k);
+    t.onsuccess=()=>res(); t.onerror=()=>rej(t.error); });}
+};
+
+async function ensureArchive(){
+  if(state.archive) return state.archive;
+  if(!window.showDirectoryPicker){
+    toast("Questo browser non supporta l'archivio su cartella: continuo con le sole anteprime in memoria");
+    return null;
+  }
+  // 1) prova a riattivare la cartella salvata dalle sessioni precedenti
+  try{
+    const saved = await idb.get("archiveDir");
+    if(saved){
+      let perm = await saved.queryPermission({mode:"readwrite"});
+      if(perm!=="granted") perm = await saved.requestPermission({mode:"readwrite"});
+      if(perm==="granted"){
+        state.archive = saved;
+        $("stArch").textContent = saved.name;
+        return saved;
+      }
+    }
+  }catch(_){ /* si passa alla scelta manuale */ }
+  // 2) prima volta: scelta della cartella fissa
+  toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FotoLive — verrà ricordata");
+  try{
+    state.archive = await showDirectoryPicker({mode:"readwrite"});
+    $("stArch").textContent = state.archive.name;
+    idb.set("archiveDir", state.archive).catch(()=>{});
+    return state.archive;
+  }catch(_){ return null; }
+}
+$("btnArchive").onclick = ()=> ensureArchive();
+// all'avvio mostra la cartella ricordata (si riattiva al primo import)
+idb.get("archiveDir").then(h=>{ if(h && !state.archive) $("stArch").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
+
+// <archivio>/<AAAA-MM-GG>/<Lettera>/<NNN ore HH.MM>/  — NNN progressivo per lettera per giorno
+async function getImportDir(letter){
+  if(!state.archive) return null;
+  try{
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0,10);
+    const dayDir = await state.archive.getDirectoryHandle(dateStr, {create:true});
+    const letDir = await dayDir.getDirectoryHandle(letter, {create:true});
+    let n=0;
+    for await (const entry of letDir.values()){ if(entry.kind==="directory") n++; }
+    const hm = String(now.getHours()).padStart(2,"0")+"."+String(now.getMinutes()).padStart(2,"0");
+    const impName = String(n+1).padStart(3,"0")+" ore "+hm;
+    return await letDir.getDirectoryHandle(impName, {create:true});
+  }catch(err){
+    console.error("archivio", err);
+    toast("Non riesco a scrivere nell'archivio: "+(err.message||err));
+    return null;
+  }
+}
+
+// restituisce sempre la versione più affidabile del file (archivio prima, poi origine)
+async function freshFile(p){
+  if(p.arch){ try{ return await p.arch.getFile(); }catch(_){} }
+  return p.file;
+}
+
+function toBlobAsync(c, q){ return new Promise(res=>c.toBlob(res,"image/jpeg",q)); }
+
+// decodifica ridimensionata con tripla scorta (opzioni piene → senza orientamento → via <img>)
+async function decodeScaled(blob, maxSide){
+  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium", imageOrientation:"from-image"}); }
+  catch(_){ }
+  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium"}); }
+  catch(_){ }
+  const url=URL.createObjectURL(blob);
+  try{
+    const img=await loadImg(url);
+    const k=Math.min(1, maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement("canvas");
+    c.width=Math.max(1,Math.round(img.naturalWidth*k));
+    c.height=Math.max(1,Math.round(img.naturalHeight*k));
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return await createImageBitmap(c);
+  }finally{ URL.revokeObjectURL(url); }
+}
+
+async function processBatch(batch){
+  const TH=260, PV=1800;
+  prog.total += batch.length*2; progUpdate();
+  let fails=0;
+
+  // FASE 1 — miniature veloci: la griglia si riempie subito
+  for(const p of batch){
+    try{
+      const bmp = await decodeScaled(p.file, TH);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      p.thumb = c.toDataURL("image/jpeg",0.78);
+      p.w=c.width; p.h=c.height;
+    }catch(err){ fails++; console.warn("miniatura", p.code, err); }
+    prog.done++;
+    if((prog.done & 7)===0){
+      progUpdate();
+      $("stThumbs").textContent = state.photos.filter(x=>x.thumb).length;
+      paintVisible();
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  progUpdate();
+  $("stThumbs").textContent = state.photos.filter(x=>x.thumb).length;
+  paintVisible();
+
+  // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
+  const evDir = await getImportDir(batch[0].letter);
+  for(const p of batch){
+    let buf=null;
+    try{ buf = await p.file.arrayBuffer(); }
+    catch(err){ console.warn("lettura", p.code, err); }
+    if(evDir && buf){
+      try{
+        const ext = (p.file.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
+        const fh = await evDir.getFileHandle(p.code+ext, {create:true});
+        const w = await fh.createWritable();
+        await w.write(buf); await w.close();
+        p.arch = fh;
+      }catch(err){ console.warn("copia archivio", p.code, err); }
+    }
+    try{
+      const srcBlob = buf? new Blob([buf], {type:p.file.type||"image/jpeg"}) : p.file;
+      const bmp = await decodeScaled(srcBlob, PV);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      p.preview = await toBlobAsync(c, 0.85);
+    }catch(err){ console.warn("anteprima", p.code, err); }
+    buf=null;
+    prog.done++;
+    if((prog.done & 7)===0){ progUpdate(); await new Promise(r=>setTimeout(r,0)); }
+  }
+  progUpdate();
+  if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
+}
+
+/* ---------- immagini piene on-demand (per lightbox e monitor) ---------- */
+const bigCache = new Map(); // id -> ImageBitmap  (LRU semplice)
+async function decodeBig(p, maxSide){
+  const file = await freshFile(p);
+  // 1) decodifica diretta
+  try{
+    const bmp0 = await createImageBitmap(file, {imageOrientation:"from-image"});
+    const k = Math.min(1, maxSide/Math.max(bmp0.width,bmp0.height));
+    if(k>=1) return bmp0;
+    const bmp = await createImageBitmap(bmp0, {resizeWidth:Math.round(bmp0.width*k), resizeQuality:"high"});
+    bmp0.close();
+    return bmp;
+  }catch(e1){ /* continua */ }
+  // 2) rilettura fresca dei byte dal disco
+  try{
+    const buf = await file.arrayBuffer();
+    const bmp0 = await createImageBitmap(new Blob([buf],{type:file.type||"image/jpeg"}), {imageOrientation:"from-image"});
+    const k = Math.min(1, maxSide/Math.max(bmp0.width,bmp0.height));
+    if(k>=1) return bmp0;
+    const bmp = await createImageBitmap(bmp0, {resizeWidth:Math.round(bmp0.width*k), resizeQuality:"high"});
+    bmp0.close();
+    return bmp;
+  }catch(e2){
+    if(e2 && (e2.name==="NotReadableError" || e2.name==="NotFoundError")) throw e2;
+  }
+  // 3) decodifica via <img>
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await loadImg(url);
+    const k=Math.min(1, maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement("canvas");
+    c.width=Math.max(1,Math.round(img.naturalWidth*k));
+    c.height=Math.max(1,Math.round(img.naturalHeight*k));
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return await createImageBitmap(c);
+  }finally{ URL.revokeObjectURL(url); }
+}
+function friendlyErr(err, code){
+  if(err && (err.name==="NotReadableError" || err.name==="NotFoundError" || err instanceof Event))
+    return `${code}: il file su disco è cambiato o non è più raggiungibile dopo l'import (copia ancora in corso? cartella spostata?). Attendi la fine della copia e reimporta la cartella.`;
+  return `Errore aprendo ${code}: ${err && err.message ? err.message : err}`;
+}
+async function getBig(p, maxSide=1920){
+  if(bigCache.has(p.id)){ const b=bigCache.get(p.id); bigCache.delete(p.id); bigCache.set(p.id,b); return b; }
+  let bmp;
+  if(p.preview){
+    bmp = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+  }else{
+    bmp = await decodeBig(p, maxSide);
+  }
+  bigCache.set(p.id,bmp);
+  if(bigCache.size>24){ const [oldId, old]=bigCache.entries().next().value; old.close(); bigCache.delete(oldId); }
+  return bmp;
+}
+
+/* ---------- griglia virtualizzata ---------- */
+const wrap=$("gridWrap"), spacer=$("gridSpacer");
+const CELL=196, GAP=10, PADX=16;
+let cols=1, visible=[], cellPool=new Map(); // idx foto filtrata -> div
+
+function parseQuery(q){
+  const clean=q.replace(/[^A-Z0-9]/g,"");
+  const m=clean.match(/^([A-Z])(\d{1,4})$/);
+  return m? {letter:m[1], num:parseInt(m[2],10)} : null;
+}
+function filteredPhotos(){
+  let list = state.activeLetter? state.photos.filter(p=>p.letter===state.activeLetter) : state.photos;
+  if(!state.filter) return list;
+  const ex=parseQuery(state.filter);
+  // un codice completo (es. C12) cerca ovunque, anche fuori dalla lettera attiva
+  if(ex) return state.photos.filter(p=>p.letter===ex.letter && String(p.num).includes(String(ex.num)));
+  return list.filter(p=>p.code.includes(state.filter));
+}
+
+/* ---------- schede lettera ---------- */
+function renderTabs(){
+  const nav=$("letterTabs");
+  const letters=[...new Set(state.photos.map(p=>p.letter))].sort();
+  nav.hidden = letters.length===0;
+  const stats=L=>{
+    const ph = L? state.photos.filter(p=>p.letter===L) : state.photos;
+    return { n:ph.length,
+             pr:ph.filter(p=>p.prints>0).length,
+             ex:ph.filter(p=>p.exported).length };
+  };
+  const tab=(L,label)=>{
+    const s=stats(L);
+    const active = state.activeLetter===L;
+    return `<button class="ltab${active?" active":""}" data-l="${L||""}">
+      <span class="lt">${label}</span>
+      <span class="stat">${s.n} foto</span>
+      <span class="stat pr">🖨 ${s.pr}</span>
+      <span class="stat ex">⇩ ${s.ex}</span>
+    </button>`;
+  };
+  nav.innerHTML = tab(null,"Tutte") + letters.map(L=>tab(L,L)).join("");
+  nav.querySelectorAll(".ltab").forEach(b=>{
+    b.onclick=()=>{
+      state.activeLetter = b.dataset.l || null;
+      state.focusIdx = -1;
+      cellPool.forEach(el=>el.remove()); cellPool.clear();
+      wrap.scrollTop=0;
+      renderTabs(); layoutGrid();
+    };
+  });
+}
+function layoutGrid(){
+  const list=filteredPhotos();
+  $("empty").style.display = state.photos.length? "none":"flex";
+  cols = Math.max(1, Math.floor((wrap.clientWidth-PADX*2+GAP)/(CELL+GAP)));
+  const rows = Math.ceil(list.length/cols);
+  spacer.style.height = (rows*(CELL+GAP)+PADX*2)+"px";
+  paintVisible();
+}
+function paintVisible(){
+  const list=filteredPhotos();
+  const top=wrap.scrollTop, vh=wrap.clientHeight;
+  const r0=Math.max(0, Math.floor((top-PADX)/(CELL+GAP))-1);
+  const r1=Math.floor((top+vh)/(CELL+GAP))+1;
+  const i0=r0*cols, i1=Math.min(list.length-1, (r1+1)*cols-1);
+  const need=new Set();
+  for(let i=i0;i<=i1;i++) need.add(i);
+  for(const [i,el] of cellPool){ if(!need.has(i)){ el.remove(); cellPool.delete(i); } }
+  for(let i=i0;i<=i1;i++){
+    const p=list[i]; if(!p) continue;
+    let el=cellPool.get(i);
+    if(!el){
+      el=document.createElement("div"); el.className="cell";
+      el.style.width=CELL+"px"; el.style.height=CELL+"px";
+      el.onclick=()=>{ state.focusIdx=i; toggleSel(p); paintVisible(); };
+      el.ondblclick=()=>{ state.focusIdx=i; openLightbox(i); };
+      el.oncontextmenu=(e)=>{ e.preventDefault(); state.focusIdx=i; openLightbox(i); };
+      spacer.append(el); cellPool.set(i,el);
+    }
+    el.style.left=(PADX+(i%cols)*(CELL+GAP))+"px";
+    el.style.top =(PADX+Math.floor(i/cols)*(CELL+GAP))+"px";
+    el.classList.toggle("sel", state.selection.has(p.id));
+    el.classList.toggle("focused", i===state.focusIdx);
+    let flags="";
+    if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
+    if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
+    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
+    if(el._html!==html){ el.innerHTML=html; el._html=html; }
+  }
+}
+wrap.addEventListener("scroll", paintVisible, {passive:true});
+addEventListener("resize", layoutGrid);
+
+/* ---------- ricerca ---------- */
+$("searchBox").oninput = e=>{
+  state.filter = e.target.value.trim().toUpperCase();
+  cellPool.forEach(el=>el.remove()); cellPool.clear();
+  state.focusIdx = state.filter? 0 : state.focusIdx;
+  wrap.scrollTop=0; layoutGrid();
+  // se la ricerca identifica la foto, la mostro subito in grande (griglia visibile dietro)
+  const list=filteredPhotos(), ex=parseQuery(state.filter);
+  const exact = ex? list.find(p=>p.num===ex.num) : null;
+  if(exact) openLightbox(list.indexOf(exact));
+  else if(list.length===1) openLightbox(0);
+  else if($("lightbox").classList.contains("open")) closeLightbox();
+};
+$("searchBox").addEventListener("keydown", e=>{
+  if(e.key==="Enter"){ e.target.blur(); }
+});
+
+/* ---------- selezione ---------- */
+function toggleSel(p){
+  if(state.selection.has(p.id)) state.selection.delete(p.id);
+  else state.selection.add(p.id);
+  updateSelBar();
+}
+function selSet(){ return [...state.selection].map(id=>state.photos.find(p=>p.id===id)).filter(Boolean); }
+function updateSelBar(){
+  $("selCount").textContent = state.selection.size;
+  $("selBar").classList.toggle("show", state.selection.size>0);
+}
+$("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
+$("selShow").onclick = ()=> presentSelection();
+$("selPrint").onclick = ()=> printPhotos(selSet());
+$("selExport").onclick = ()=> exportPhotos(selSet());
+
+/* ---------- stampa ed esportazione ---------- */
+async function renderFull(p, withOverlay=true){
+  let src;
+  try{
+    src = await decodeBig(p, 100000); // originale a piena risoluzione dal disco
+  }catch(err){
+    if(!p.preview) throw err;
+    toast(p.code+": originale non leggibile dal disco, stampo dall'anteprima interna (1800px)");
+    src = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+  }
+  const c=document.createElement("canvas"); c.width=src.width; c.height=src.height;
+  const ctx=c.getContext("2d"); ctx.drawImage(src,0,0); src.close();
+  if(withOverlay) drawOverlay(ctx,c.width,c.height);
+  return c;
+}
+async function printPhotos(set){
+  if(!set.length){ toast("Nessuna foto da stampare"); return; }
+  const w=window.open("","fotolive_print","width=900,height=700");
+  if(!w){ toast("Popup bloccato: consenti i popup"); return; }
+  w.document.write(`<!DOCTYPE html><html><head><title>FotoLive — Stampa</title><style>
+    @page{margin:0}
+    html,body{margin:0}
+    .pg{page-break-after:always;display:flex;align-items:center;justify-content:center;width:100vw;height:100vh}
+    img{max-width:100%;max-height:100%}
+  </style></head><body></body></html>`);
+  w.document.close();
+  toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
+  const loads=[];
+  for(const p of set){
+    const c=await renderFull(p,true);
+    const img=w.document.createElement("img");
+    img.src=c.toDataURL("image/jpeg",0.95);
+    loads.push(img.decode().catch(()=>{}));
+    const d=w.document.createElement("div"); d.className="pg"; d.append(img);
+    w.document.body.append(d);
+  }
+  await Promise.all(loads);
+  w.focus(); w.print();
+  set.forEach(p=>{ p.prints++; });
+  renderTabs(); paintVisible(); refreshLbStatus();
+  toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
+}
+async function exportPhotos(set){
+  if(!set.length){ toast("Nessuna foto da esportare"); return; }
+  let fallback=0;
+  for(const p of set){
+    const f = await freshFile(p);
+    let blob=f, name=p.code+"_"+(f.name||p.file.name);
+    try{ await f.slice(0,16).arrayBuffer(); }
+    catch(_){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download=name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    p.exported=true;
+  }
+  renderTabs(); paintVisible(); refreshLbStatus();
+  toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ${fallback} dall'anteprima interna: originale non leggibile` : ""));
+}
+function statusText(p){
+  const parts=[];
+  if(p.prints>0) parts.push("Stampata"+(p.prints>1?" ×"+p.prints:""));
+  if(p.exported) parts.push("Esportata");
+  return parts.join(" · ");
+}
+function refreshLbStatus(){
+  const p=filteredPhotos()[state.lightboxIdx];
+  if(p && $("lightbox").classList.contains("open")) $("lbStatus").textContent = statusText(p);
+}
+
+/* ---------- lightbox operatore ---------- */
+async function openLightbox(i){
+  const list=filteredPhotos(); if(!list[i]) return;
+  state.lightboxIdx=i; state.focusIdx=i;
+  $("lightbox").classList.add("open");
+  await paintLightbox();
+}
+let lbSeq=0;
+async function paintLightbox(){
+  const list=filteredPhotos(); const p=list[state.lightboxIdx]; if(!p) return;
+  const my=++lbSeq;
+  $("lbCode").textContent=p.code;
+  $("lbStatus").textContent = statusText(p);
+  $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
+  const c=$("lbCanvas"), ctx=c.getContext("2d");
+
+  // 1) subito la miniatura ingrandita (sfocata ma istantanea)
+  if(p.thumb){
+    try{
+      const t=await loadImg(p.thumb);
+      if(my!==lbSeq) return;
+      c.width=t.width*4; c.height=t.height*4;
+      ctx.imageSmoothingEnabled=true;
+      ctx.drawImage(t,0,0,c.width,c.height);
+      drawOverlay(ctx,c.width,c.height);
+    }catch(_){}
+  }else{
+    c.width=800; c.height=600;
+    ctx.fillStyle="#111624"; ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle="#8A94A8"; ctx.font="500 24px 'Segoe UI',sans-serif";
+    ctx.textAlign="center"; ctx.fillText("Carico "+p.code+"…", c.width/2, c.height/2); ctx.textAlign="left";
+  }
+
+  // 2) poi la versione nitida (con un secondo tentativo automatico)
+  $("lbLoading").classList.add("show");
+  try{
+    let bmp;
+    try{ bmp=await getBig(p); }
+    catch(_){ await new Promise(r=>setTimeout(r,500)); bmp=await getBig(p); }
+    if(my!==lbSeq) return;
+    c.width=bmp.width; c.height=bmp.height;
+    ctx.drawImage(bmp,0,0);
+    drawOverlay(ctx,c.width,c.height);
+  }catch(err){
+    if(my!==lbSeq) return;
+    toast(friendlyErr(err, p.code));
+    console.error("lightbox", p.code, err);
+  }finally{
+    if(my===lbSeq) $("lbLoading").classList.remove("show");
+  }
+  const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
+}
+function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; paintVisible(); }
+$("lbClose").onclick=closeLightbox;
+$("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
+$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; state.focusIdx--; paintLightbox(); } };
+$("lbNext").onclick=()=>{ if(state.lightboxIdx<filteredPhotos().length-1){ state.lightboxIdx++; state.focusIdx++; paintLightbox(); } };
+$("lbSelect").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
+$("lbShow").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) presentSet([p]); };
+$("lbPrint").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) printPhotos([p]); };
+$("lbExport").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) exportPhotos([p]); };
+
+/* ---------- monitor cliente ---------- */
+$("btnMonitor").onclick = openMonitor;
+function openMonitor(){
+  const M=state.monitor;
+  if(M.win && !M.win.closed){ M.win.focus(); return; }
+  const w = window.open("", "fotolive_monitor", "width=1280,height=720");
+  if(!w){ toast("Popup bloccato: consenti i popup per aprire il monitor"); return; }
+  w.document.write(`<!DOCTYPE html><html><head><title>FotoLive — Monitor cliente</title><style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+    canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    #hint{position:absolute;top:12px;left:12px;color:#666;font:13px "Segoe UI",sans-serif;cursor:default}
+  </style></head><body><canvas id="c"></canvas><div id="hint">Trascina questa finestra sul monitor cliente e premi F11</div></body></html>`);
+  w.document.close();
+  const canvas=w.document.getElementById("c");
+  M.win=w; M.canvas=canvas; M.ctx=canvas.getContext("2d");
+  const fit=()=>{ canvas.width=w.innerWidth*(w.devicePixelRatio||1); canvas.height=w.innerHeight*(w.devicePixelRatio||1); repaintMonitor(); };
+  w.addEventListener("resize",fit); fit();
+  setTimeout(()=>{ const h=w.document.getElementById("hint"); if(h) h.remove(); }, 9000);
+  const watch=setInterval(()=>{ if(w.closed){ clearInterval(watch); stopSlideshow(); M.win=null; setMonState("off"); } },800);
+  setMonState("slideshow");
+  startSlideshow();
+}
+function setMonState(mode){
+  const M=state.monitor; M.mode=mode;
+  $("monDot").classList.toggle("on", mode!=="off");
+  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : "Monitor: presentazione";
+  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : "";
+}
+function buildSlideshowQueue(){
+  // priorità alle più recenti: le ultime 150 in testa (più fresche prima), poi il resto a rotazione
+  const all=[...state.photos].sort((a,b)=>b.ts-a.ts);
+  const fresh=all.slice(0,150), rest=all.slice(150);
+  const q=[];
+  let ri=0;
+  for(let i=0;i<fresh.length;i++){ q.push(fresh[i]); if(i%3===2 && ri<rest.length) q.push(rest[ri++]); }
+  while(ri<rest.length) q.push(rest[ri++]);
+  return q;
+}
+function startSlideshow(){
+  const M=state.monitor; stopTimer();
+  if(!M.win || M.win.closed) return;
+  setMonState("slideshow");
+  M.queue = buildSlideshowQueue(); M.qPos=0;
+  const step=async()=>{
+    if(!M.win || M.win.closed || M.mode!=="slideshow") return;
+    if(!M.queue.length){ paintMonitorMessage("In attesa di foto…"); return; }
+    if(M.qPos>=M.queue.length){ M.queue=buildSlideshowQueue(); M.qPos=0; }
+    const p=M.queue[M.qPos++];
+    await paintMonitorPhoto(p,true);
+  };
+  step();
+  M.timer=setInterval(step, (state.event?.secs||4)*1000);
+}
+function stopTimer(){ const M=state.monitor; if(M.timer){ clearInterval(M.timer); M.timer=null; } }
+function stopSlideshow(){ stopTimer(); }
+async function paintMonitorPhoto(p, withCode){
+  const M=state.monitor; if(!M.ctx) return;
+  let bmp;
+  try{ bmp=await getBig(p, 2200); }
+  catch(err){ console.error("monitor", p.code, err); return; }
+  if(!M.win || M.win.closed) return;
+  const cw=M.canvas.width, ch=M.canvas.height;
+  const k=Math.min(cw/bmp.width, ch/bmp.height);
+  const dw=bmp.width*k, dh=bmp.height*k, dx=(cw-dw)/2, dy=(ch-dh)/2;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  M.ctx.drawImage(bmp,dx,dy,dw,dh);
+  M.ctx.save(); M.ctx.translate(dx,dy);
+  drawOverlay(M.ctx,dw,dh);
+  if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
+  M.ctx.restore();
+  M._last=p;
+}
+function paintMonitorMessage(msg){
+  const M=state.monitor; if(!M.ctx) return;
+  const cw=M.canvas.width, ch=M.canvas.height;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  M.ctx.fillStyle="#555"; M.ctx.font=`500 ${ch*0.04}px "Segoe UI",sans-serif`;
+  M.ctx.textAlign="center"; M.ctx.fillText(msg,cw/2,ch/2); M.ctx.textAlign="left";
+}
+function repaintMonitor(){ const M=state.monitor; if(M._last) paintMonitorPhoto(M._last, M.mode==="slideshow"); }
+
+/* ---------- presentazione (foto singola o set) ---------- */
+function presentSelection(){
+  const set=selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  presentSet(set);
+}
+function presentSet(set){
+  const M=state.monitor;
+  if(!M.win || M.win.closed) openMonitor();
+  if(!M.win) return;
+  stopTimer();
+  M.present=set; M.pIdx=0; setMonState("present");
+  paintMonitorPhoto(set[0], true);
+  if(set[1]) getBig(set[1]);
+  toast(set.length===1? `Sul monitor: ${set[0].code}` : `Presentazione di ${set.length} foto — frecce per navigare`);
+}
+function presentNav(d){
+  const M=state.monitor; if(M.mode!=="present") return;
+  M.pIdx=Math.min(M.present.length-1, Math.max(0, M.pIdx+d));
+  paintMonitorPhoto(M.present[M.pIdx], true);
+  const nx=M.present[M.pIdx+d]; if(nx) getBig(nx);
+}
+function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) startSlideshow(); }
+
+/* ---------- tastiera ---------- */
+addEventListener("keydown", e=>{
+  const tag=document.activeElement.tagName;
+  if(tag==="INPUT"||tag==="SELECT"){ if(e.key==="Escape") document.activeElement.blur(); return; }
+  const M=state.monitor;
+  const lbOpen=$("lightbox").classList.contains("open");
+  if(e.key==="/"){ e.preventDefault(); $("searchBox").focus(); $("searchBox").select(); return; }
+  if(e.key==="Escape"){
+    if(lbOpen){ closeLightbox(); }
+    else if(M.mode==="present"){ backToSlideshow(); }
+    return;
+  }
+  if(M.mode==="present" && !lbOpen){
+    if(e.key==="ArrowRight"){ presentNav(1); return; }
+    if(e.key==="ArrowLeft"){ presentNav(-1); return; }
+  }
+  if(lbOpen){
+    if(e.key==="ArrowRight") $("lbNext").click();
+    else if(e.key==="ArrowLeft") $("lbPrev").click();
+    else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
+    else if(e.key.toLowerCase()==="m") $("lbShow").click();
+    else if(e.key==="Enter") closeLightbox();
+    return;
+  }
+  const list=filteredPhotos(); if(!list.length) return;
+  if(["ArrowRight","ArrowLeft","ArrowUp","ArrowDown"].includes(e.key)){
+    e.preventDefault();
+    let i=state.focusIdx<0?0:state.focusIdx;
+    if(e.key==="ArrowRight") i++; if(e.key==="ArrowLeft") i--;
+    if(e.key==="ArrowDown") i+=cols; if(e.key==="ArrowUp") i-=cols;
+    state.focusIdx=Math.min(list.length-1, Math.max(0,i));
+    ensureVisible(state.focusIdx); paintVisible();
+  }else if(e.key===" "){
+    e.preventDefault();
+    const p=list[state.focusIdx]; if(p){ toggleSel(p); paintVisible(); }
+  }else if(e.key==="Enter"){
+    if(state.focusIdx>=0) openLightbox(state.focusIdx);
+  }else if(e.key.toLowerCase()==="m"){
+    if(state.selection.size) presentSelection();
+    else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
+  }
+});
+function ensureVisible(i){
+  const y=PADX+Math.floor(i/cols)*(CELL+GAP);
+  if(y<wrap.scrollTop) wrap.scrollTop=y-10;
+  else if(y+CELL>wrap.scrollTop+wrap.clientHeight) wrap.scrollTop=y+CELL-wrap.clientHeight+10;
+}
+
+layoutGrid();
+</script>
+</body>
+</html>
