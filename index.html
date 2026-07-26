@@ -37,7 +37,7 @@
   #progTrack{flex:1;height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
   #progFill{height:100%;width:0%;background:var(--accent);border-radius:99px;transition:width .2s}
   #progLabel{font-size:12.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
-  #lbLoading{position:absolute;top:12px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted)}
+  #lbLoading{position:absolute;top:62px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted);z-index:2}
   #lbLoading.show{display:flex}
   #lbLoading::before{content:"";width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -81,11 +81,11 @@
   .cmp .code{position:absolute;left:8px;bottom:8px;font-family:var(--mono);font-size:13px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 8px;border-radius:5px;letter-spacing:.5px}
 
   /* ---------- Lightbox operatore ---------- */
-  #lightbox{position:absolute;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(3px);display:none;flex-direction:column;z-index:20}
-  #lightbox.open{display:flex}
-  #lbTop{display:flex;align-items:center;gap:12px;padding:10px 16px}
+  #lightbox{position:absolute;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(3px);display:none;z-index:20}
+  #lightbox.open{display:block}
+  #lbTop{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:12px;padding:10px 16px;background:linear-gradient(rgba(6,8,12,.92),rgba(6,8,12,0))}
   #lbCode{font-family:var(--mono);font-size:20px;font-weight:800;color:var(--accent);letter-spacing:1px}
-  #lbStage{flex:1;position:relative;min-height:0}
+  #lbStage{position:absolute;inset:0}
   #lbStage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
@@ -732,7 +732,10 @@ $("searchBox").oninput = e=>{
   else if($("lightbox").classList.contains("open")) closeLightbox();
 };
 $("searchBox").addEventListener("keydown", e=>{
-  if(e.key==="Enter"){ e.target.blur(); }
+  if(e.key==="Enter"){
+    e.target.blur();
+    if($("lightbox").classList.contains("open")) closeLightbox();
+  }
 });
 
 /* ---------- selezione ---------- */
@@ -882,6 +885,7 @@ async function paintLightbox(){
       ctx.imageSmoothingEnabled=true;
       ctx.drawImage(t,0,0,c.width,c.height);
       drawOverlay(ctx,c.width,c.height);
+      drawCodeBadge(ctx,c.width,c.height,p.code);
     }catch(_){}
   }else{
     c.width=800; c.height=600;
@@ -900,6 +904,7 @@ async function paintLightbox(){
     c.width=bmp.width; c.height=bmp.height;
     ctx.drawImage(bmp,0,0);
     drawOverlay(ctx,c.width,c.height);
+    drawCodeBadge(ctx,c.width,c.height,p.code);
   }catch(err){
     if(my!==lbSeq) return;
     toast(friendlyErr(err, p.code));
@@ -1046,7 +1051,7 @@ addEventListener("keydown", e=>{
     else if(e.key==="ArrowLeft") $("lbPrev").click();
     else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
     else if(e.key.toLowerCase()==="m") $("lbShow").click();
-    else if(e.key==="Enter") closeLightbox();
+    else if(e.key==="Enter"){ e.preventDefault(); closeLightbox(); }
     return;
   }
   const list=filteredPhotos(); if(!list.length) return;
