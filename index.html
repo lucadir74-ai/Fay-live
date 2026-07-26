@@ -192,7 +192,16 @@
       <h2>Serata</h2>
       <div class="body">
         <div class="field"><label>Nome evento</label><input type="text" id="evName" placeholder="Es. Sabato — Sottovento"></div>
-        <div class="field"><label>Slideshow: secondi per foto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
+        <div class="row">
+          <div class="field"><label>Slideshow: secondi per scatto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
+          <div class="field"><label>Foto insieme sullo schermo</label>
+            <select id="evTiles">
+              <option value="4">4 (2×2)</option>
+              <option value="6" selected>6 (3×2)</option>
+              <option value="8">8 (4×2)</option>
+              <option value="9">9 (3×3)</option>
+            </select></div>
+        </div>
         <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
           <input type="file" id="evLogo" accept="image/*"></div>
         <div class="field"><label>Scritta — in basso a sinistra</label>
@@ -312,7 +321,7 @@ let pendingLogo = null;
 $("btnEvent").onclick = ()=>{ openEventPanel(); };
 function openEventPanel(){
   const ev = state.event;
-  if(ev){ $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text; }
+  if(ev){ $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text; $("evTiles").value=String(ev.tiles||6); }
   pendingLogo = ev ? ev.logoImg : null;
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
@@ -344,6 +353,7 @@ $("evSave").onclick = ()=>{
   if(!name){ toast("Dai un nome alla serata"); return; }
   state.event = {
     name, secs: Math.max(2, +$("evSecs").value||4),
+    tiles: +$("evTiles").value||6,
     text: $("evText").value.trim(), logoImg: pendingLogo,
   };
   $("eventInfo").textContent = name + " — " + new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
@@ -953,14 +963,8 @@ function setMonState(mode){
   $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : "";
 }
 function buildSlideshowQueue(){
-  // priorità alle più recenti: le ultime 150 in testa (più fresche prima), poi il resto a rotazione
-  const all=[...state.photos].sort((a,b)=>b.ts-a.ts);
-  const fresh=all.slice(0,150), rest=all.slice(150);
-  const q=[];
-  let ri=0;
-  for(let i=0;i<fresh.length;i++){ q.push(fresh[i]); if(i%3===2 && ri<rest.length) q.push(rest[ri++]); }
-  while(ri<rest.length) q.push(rest[ri++]);
-  return q;
+  // in ordine di codice: prima per lettera, poi per numero
+  return [...state.photos].sort((a,b)=> a.letter===b.letter ? a.num-b.num : (a.letter<b.letter?-1:1));
 }
 function startSlideshow(){
   const M=state.monitor; stopTimer();
@@ -970,9 +974,9 @@ function startSlideshow(){
   const step=async()=>{
     if(!M.win || M.win.closed || M.mode!=="slideshow") return;
     if(!M.queue.length){ paintMonitorMessage("In attesa di foto…"); return; }
-    if(M.qPos>=M.queue.length){ M.queue=buildSlideshowQueue(); M.qPos=0; }
-    const p=M.queue[M.qPos++];
-    await paintMonitorPhoto(p,true);
+    if(M.qPos>=M.queue.length) M.qPos=0;
+    await paintMonitorMosaic(M.qPos);
+    M.qPos++;
   };
   step();
   M.timer=setInterval(step, (state.event?.secs||4)*1000);
@@ -996,6 +1000,36 @@ async function paintMonitorPhoto(p, withCode){
   M.ctx.restore();
   M._last=p;
 }
+const TILE_GRID = {4:[2,2], 6:[3,2], 8:[4,2], 9:[3,3]};
+async function paintMonitorMosaic(start){
+  const M=state.monitor; if(!M.ctx) return;
+  const n = (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
+  const [cols,rows] = TILE_GRID[n];
+  const q=M.queue, L=q.length;
+  const page=[];
+  for(let i=0;i<Math.min(n,L);i++) page.push(q[(start+i)%L]);
+  const cw=M.canvas.width, ch=M.canvas.height;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  const gap=Math.round(Math.min(cw,ch)*0.008);
+  const tw=(cw-gap*(cols+1))/cols, th=(ch-gap*(rows+1))/rows;
+  for(let i=0;i<page.length;i++){
+    const p=page[i];
+    let bmp; try{ bmp=await getBig(p, 1400); }catch(_){ continue; }
+    if(!M.win || M.win.closed || M.mode!=="slideshow") return;
+    const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
+    const k=Math.min(tw/bmp.width, th/bmp.height);
+    const dw=bmp.width*k, dh=bmp.height*k;
+    const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
+    M.ctx.drawImage(bmp,dx,dy,dw,dh);
+    M.ctx.save(); M.ctx.translate(dx,dy);
+    drawOverlay(M.ctx,dw,dh);
+    drawCodeBadge(M.ctx,dw,dh,p.code);
+    M.ctx.restore();
+  }
+  M._page=start;
+  // precarica le prossime
+  for(let i=0;i<2 && L;i++){ const nx=q[(start+n+i)%L]; if(nx) getBig(nx,1400).catch(()=>{}); }
+}
 function paintMonitorMessage(msg){
   const M=state.monitor; if(!M.ctx) return;
   const cw=M.canvas.width, ch=M.canvas.height;
@@ -1003,7 +1037,11 @@ function paintMonitorMessage(msg){
   M.ctx.fillStyle="#555"; M.ctx.font=`500 ${ch*0.04}px "Segoe UI",sans-serif`;
   M.ctx.textAlign="center"; M.ctx.fillText(msg,cw/2,ch/2); M.ctx.textAlign="left";
 }
-function repaintMonitor(){ const M=state.monitor; if(M._last) paintMonitorPhoto(M._last, M.mode==="slideshow"); }
+function repaintMonitor(){
+  const M=state.monitor;
+  if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
+  else if(M._last) paintMonitorPhoto(M._last, false);
+}
 
 /* ---------- presentazione (foto singola o set) ---------- */
 function presentSelection(){
