@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>FotoLive — Gestione serata</title>
+<title>Fay Live — Gestione serata</title>
 <style>
   :root{
     --bg:#0B0E14; --surface:#141926; --surface2:#1B2233; --line:#252E44;
@@ -71,6 +71,15 @@
   .flag.print{color:var(--ok)}
   .flag.exp{color:#7FB8F0}
 
+  /* ---------- vista insieme ---------- */
+  #compare{position:absolute;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:18}
+  #compare.open{display:flex}
+  #cmpTop{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+  #cmpGrid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:14px 16px;align-content:start}
+  .cmp{position:relative;border-radius:10px;overflow:hidden;background:#000;cursor:pointer;aspect-ratio:3/2}
+  .cmp img{width:100%;height:100%;object-fit:contain}
+  .cmp .code{position:absolute;left:8px;bottom:8px;font-family:var(--mono);font-size:13px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 8px;border-radius:5px;letter-spacing:.5px}
+
   /* ---------- Lightbox operatore ---------- */
   #lightbox{position:absolute;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(3px);display:none;flex-direction:column;z-index:20}
   #lightbox.open{display:flex}
@@ -115,7 +124,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>Foto<span>Live</span></h1>
+    <h1>Fay <span>Live</span></h1>
     <span id="eventInfo">Nessuna serata attiva</span>
     <button id="btnEvent">Serata…</button>
     <button id="btnArchive">Archivio…</button>
@@ -147,6 +156,17 @@
         <span><kbd>/</kbd></span><span>cerca per codice</span>
         <span><kbd>esc</kbd></span><span>chiudi / riprendi slideshow</span>
       </div>
+    </div>
+
+    <!-- Vista insieme (selezione) -->
+    <div id="compare">
+      <div id="cmpTop">
+        <b id="cmpCount"></b>
+        <div class="spacer"></div>
+        <button id="cmpShow" class="primary">Mostra sul monitor</button>
+        <button id="cmpClose">Chiudi <kbd>esc</kbd></button>
+      </div>
+      <div id="cmpGrid"></div>
     </div>
 
     <!-- Lightbox operatore -->
@@ -194,7 +214,8 @@
     <!-- Barra selezione -->
     <div id="selBar">
       <span><span id="selCount">0</span> selezionate</span>
-      <button id="selShow" class="primary">Mostra sul monitor</button>
+      <button id="selCompare" class="primary">Vedi insieme</button>
+      <button id="selShow">Mostra sul monitor</button>
       <button id="selPrint">Stampa</button>
       <button id="selExport">Esporta file</button>
       <button id="selClear">Svuota</button>
@@ -228,7 +249,7 @@
 <script>
 "use strict";
 /* =====================================================================
-   FotoLive — nucleo v1
+   Fay Live — nucleo v1
    Stato in memoria: serata, foto (File + miniatura), selezione.
    Monitor cliente: finestra secondaria pilotata dall'operatore via canvas.
    ===================================================================== */
@@ -245,6 +266,7 @@ const state = {
   focusIdx: -1,
   filter: "",
   lightboxIdx: -1,
+  lbCustom: null,        // lista personalizzata per il lightbox (vista insieme)
   monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0 },
 };
 
@@ -401,7 +423,7 @@ state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
 const idb = {
   db:null,
   open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
-    const r=indexedDB.open("fotolive",1);
+    const r=indexedDB.open("faylive",1);
     r.onupgradeneeded=()=>r.result.createObjectStore("kv");
     r.onsuccess=()=>{ this.db=r.result; res(this.db); };
     r.onerror=()=>rej(r.error);
@@ -434,7 +456,7 @@ async function ensureArchive(){
     }
   }catch(_){ /* si passa alla scelta manuale */ }
   // 2) prima volta: scelta della cartella fissa
-  toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FotoLive — verrà ricordata");
+  toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
   try{
     state.archive = await showDirectoryPicker({mode:"readwrite"});
     $("stArch").textContent = state.archive.name;
@@ -729,6 +751,33 @@ $("selShow").onclick = ()=> presentSelection();
 $("selPrint").onclick = ()=> printPhotos(selSet());
 $("selExport").onclick = ()=> exportPhotos(selSet());
 
+/* ---------- vista insieme (selezione affiancata) ---------- */
+const cmpUrls=[];
+function openCompare(){
+  const set=selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  $("cmpCount").textContent = set.length+" foto selezionate";
+  const g=$("cmpGrid"); g.innerHTML="";
+  set.forEach((p,i)=>{
+    const d=document.createElement("div"); d.className="cmp";
+    const img=document.createElement("img");
+    if(p.thumb) img.src=p.thumb;
+    if(p.preview){ const u=URL.createObjectURL(p.preview); cmpUrls.push(u); img.src=u; }
+    const c=document.createElement("span"); c.className="code"; c.textContent=p.code;
+    d.append(img,c);
+    d.onclick=()=>openLightboxList(set, i);
+    g.append(d);
+  });
+  $("compare").classList.add("open");
+}
+function closeCompare(){
+  $("compare").classList.remove("open");
+  cmpUrls.splice(0).forEach(u=>URL.revokeObjectURL(u));
+}
+$("selCompare").onclick = openCompare;
+$("cmpClose").onclick = closeCompare;
+$("cmpShow").onclick = ()=> presentSelection();
+
 /* ---------- stampa ed esportazione ---------- */
 async function renderFull(p, withOverlay=true){
   let src;
@@ -746,9 +795,9 @@ async function renderFull(p, withOverlay=true){
 }
 async function printPhotos(set){
   if(!set.length){ toast("Nessuna foto da stampare"); return; }
-  const w=window.open("","fotolive_print","width=900,height=700");
+  const w=window.open("","faylive_print","width=900,height=700");
   if(!w){ toast("Popup bloccato: consenti i popup"); return; }
-  w.document.write(`<!DOCTYPE html><html><head><title>FotoLive — Stampa</title><style>
+  w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Stampa</title><style>
     @page{margin:0}
     html,body{margin:0}
     .pg{page-break-after:always;display:flex;align-items:center;justify-content:center;width:100vw;height:100vh}
@@ -796,12 +845,20 @@ function statusText(p){
   return parts.join(" · ");
 }
 function refreshLbStatus(){
-  const p=filteredPhotos()[state.lightboxIdx];
+  const p=lbList()[state.lightboxIdx];
   if(p && $("lightbox").classList.contains("open")) $("lbStatus").textContent = statusText(p);
 }
 
 /* ---------- lightbox operatore ---------- */
+function lbList(){ return state.lbCustom || filteredPhotos(); }
+function openLightboxList(set, i){
+  state.lbCustom = set;
+  state.lightboxIdx = i;
+  $("lightbox").classList.add("open");
+  paintLightbox();
+}
 async function openLightbox(i){
+  state.lbCustom = null;
   const list=filteredPhotos(); if(!list[i]) return;
   state.lightboxIdx=i; state.focusIdx=i;
   $("lightbox").classList.add("open");
@@ -809,7 +866,7 @@ async function openLightbox(i){
 }
 let lbSeq=0;
 async function paintLightbox(){
-  const list=filteredPhotos(); const p=list[state.lightboxIdx]; if(!p) return;
+  const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
   const my=++lbSeq;
   $("lbCode").textContent=p.code;
   $("lbStatus").textContent = statusText(p);
@@ -852,24 +909,24 @@ async function paintLightbox(){
   }
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
-function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; paintVisible(); }
+function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; paintVisible(); }
 $("lbClose").onclick=closeLightbox;
 $("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
-$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; state.focusIdx--; paintLightbox(); } };
-$("lbNext").onclick=()=>{ if(state.lightboxIdx<filteredPhotos().length-1){ state.lightboxIdx++; state.focusIdx++; paintLightbox(); } };
-$("lbSelect").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
-$("lbShow").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) presentSet([p]); };
-$("lbPrint").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) printPhotos([p]); };
-$("lbExport").onclick=()=>{ const p=filteredPhotos()[state.lightboxIdx]; if(p) exportPhotos([p]); };
+$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); } };
+$("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); } };
+$("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
+$("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
+$("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
+$("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPhotos([p]); };
 
 /* ---------- monitor cliente ---------- */
 $("btnMonitor").onclick = openMonitor;
 function openMonitor(){
   const M=state.monitor;
   if(M.win && !M.win.closed){ M.win.focus(); return; }
-  const w = window.open("", "fotolive_monitor", "width=1280,height=720");
+  const w = window.open("", "faylive_monitor", "width=1280,height=720");
   if(!w){ toast("Popup bloccato: consenti i popup per aprire il monitor"); return; }
-  w.document.write(`<!DOCTYPE html><html><head><title>FotoLive — Monitor cliente</title><style>
+  w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Monitor cliente</title><style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
     canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
     #hint{position:absolute;top:12px;left:12px;color:#666;font:13px "Segoe UI",sans-serif;cursor:default}
@@ -976,6 +1033,7 @@ addEventListener("keydown", e=>{
   if(e.key==="/"){ e.preventDefault(); $("searchBox").focus(); $("searchBox").select(); return; }
   if(e.key==="Escape"){
     if(lbOpen){ closeLightbox(); }
+    else if($("compare").classList.contains("open")){ closeCompare(); }
     else if(M.mode==="present"){ backToSlideshow(); }
     return;
   }
