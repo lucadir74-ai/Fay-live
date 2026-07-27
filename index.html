@@ -152,7 +152,7 @@
       <div id="shortcuts">
         <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
         <span><kbd>doppio clic</kbd></span><span>ingrandisce la foto (anche clic destro)</span>
-        <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta</span>
+        <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · in presentazione fa ripartire lo slideshow</span>
         <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
         <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
         <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
@@ -835,7 +835,7 @@ function closeCompare(){
 }
 $("selCompare").onclick = openCompare;
 $("cmpClose").onclick = closeCompare;
-$("cmpShow").onclick = ()=> presentSelection();
+$("cmpShow").onclick = ()=> presentMosaicSet(selSet());
 
 /* ---------- stampa ed esportazione ---------- */
 async function renderFull(p, withOverlay=true){
@@ -1017,8 +1017,8 @@ async function openMonitor(){
 function setMonState(mode){
   const M=state.monitor; M.mode=mode;
   $("monDot").classList.toggle("on", mode!=="off");
-  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : "Monitor: presentazione";
-  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : "";
+  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
+  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — Esc per riprendere lo slideshow" : "";
 }
 function buildSlideshowQueue(){
   // in ordine di codice: prima per lettera, poi per numero
@@ -1058,14 +1058,16 @@ async function paintMonitorPhoto(p, withCode){
   M.ctx.restore();
   M._last=p;
 }
-const TILE_GRID = {4:[2,2], 6:[3,2], 8:[4,2], 9:[3,3]};
-async function paintMonitorMosaic(start){
+const TILE_GRID = {1:[1,1],2:[2,1],3:[3,1],4:[2,2],5:[3,2],6:[3,2],7:[4,2],8:[4,2],9:[3,3],10:[4,3],11:[4,3],12:[4,3]};
+function layoutFor(n){
+  if(TILE_GRID[n]) return TILE_GRID[n];
+  const cols=Math.ceil(Math.sqrt(n*1.5));
+  return [cols, Math.ceil(n/cols)];
+}
+// disegna una pagina di foto affiancate sul monitor cliente
+async function drawTilePage(page, expectMode, withInfo){
   const M=state.monitor; if(!M.ctx) return;
-  const n = (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
-  const [cols,rows] = TILE_GRID[n];
-  const q=M.queue, L=q.length;
-  const page=[];
-  for(let i=0;i<Math.min(n,L);i++) page.push(q[(start+i)%L]);
+  const [cols,rows] = layoutFor(page.length);
   const cw=M.canvas.width, ch=M.canvas.height;
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
   const gap=Math.round(Math.min(cw,ch)*0.008);
@@ -1073,7 +1075,7 @@ async function paintMonitorMosaic(start){
   for(let i=0;i<page.length;i++){
     const p=page[i];
     let bmp; try{ bmp=await getBig(p, 1400); }catch(_){ continue; }
-    if(!M.win || M.win.closed || M.mode!=="slideshow") return;
+    if(!M.win || M.win.closed || M.mode!==expectMode) return;
     const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
     const k=Math.min(tw/bmp.width, th/bmp.height);
     const dw=bmp.width*k, dh=bmp.height*k;
@@ -1084,23 +1086,43 @@ async function paintMonitorMosaic(start){
     drawCodeBadge(M.ctx,dw,dh,p.code);
     M.ctx.restore();
   }
-  // riga informativa centrale (prezzi/info)
-  const info = state.event && state.event.infoLine;
-  if(info){
-    const bh = Math.round(ch*0.075);
-    const by = Math.round(ch/2 - bh/2);
-    M.ctx.fillStyle = "rgba(11,14,20,.88)";
-    M.ctx.fillRect(0, by, cw, bh);
-    M.ctx.fillStyle = "#F5B942";
-    const fs = Math.round(bh*0.52);
-    M.ctx.font = `700 ${fs}px "Segoe UI", sans-serif`;
-    M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
-    M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
-    M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
+  if(withInfo){
+    const info = state.event && state.event.infoLine;
+    if(info){
+      const bh = Math.round(ch*0.075);
+      const by = Math.round(ch/2 - bh/2);
+      M.ctx.fillStyle = "rgba(11,14,20,.88)";
+      M.ctx.fillRect(0, by, cw, bh);
+      M.ctx.fillStyle = "#F5B942";
+      const fs = Math.round(bh*0.52);
+      M.ctx.font = `700 ${fs}px "Segoe UI", sans-serif`;
+      M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
+      M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
+      M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
+    }
   }
+}
+async function paintMonitorMosaic(start){
+  const M=state.monitor; if(!M.ctx) return;
+  const n = (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
+  const q=M.queue, L=q.length;
+  const page=[];
+  for(let i=0;i<Math.min(n,L);i++) page.push(q[(start+i)%L]);
+  await drawTilePage(page, "slideshow", true);
   M._page=start;
-  // precarica le prossime
   for(let i=0;i<2 && L;i++){ const nx=q[(start+n+i)%L]; if(nx) getBig(nx,1400).catch(()=>{}); }
+}
+// selezione/preferiti affiancati, statici, sul monitor cliente
+async function presentMosaicSet(set){
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  const M=state.monitor;
+  if(!M.win || M.win.closed) await openMonitor();
+  if(!M.win || M.win.closed) return;
+  stopTimer();
+  M._staticSet=set;
+  setMonState("mosaic");
+  await drawTilePage(set, "mosaic", false);
+  toast(`${set.length} foto affiancate sul monitor — Esc per riprendere lo slideshow`);
 }
 function paintMonitorMessage(msg){
   const M=state.monitor; if(!M.ctx) return;
@@ -1112,6 +1134,7 @@ function paintMonitorMessage(msg){
 function repaintMonitor(){
   const M=state.monitor;
   if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
+  else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
   else if(M._last) paintMonitorPhoto(M._last, false);
 }
 
@@ -1121,10 +1144,10 @@ function presentSelection(){
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
   presentSet(set);
 }
-function presentSet(set){
+async function presentSet(set){
   const M=state.monitor;
-  if(!M.win || M.win.closed) openMonitor();
-  if(!M.win) return;
+  if(!M.win || M.win.closed) await openMonitor();
+  if(!M.win || M.win.closed) return;
   stopTimer();
   M.present=set; M.pIdx=0; setMonState("present");
   paintMonitorPhoto(set[0], true);
@@ -1149,7 +1172,7 @@ addEventListener("keydown", e=>{
   if(e.key==="Escape"){
     if(lbOpen){ closeLightbox(); }
     else if($("compare").classList.contains("open")){ closeCompare(); }
-    else if(M.mode==="present"){ backToSlideshow(); }
+    else if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); }
     return;
   }
   if(M.mode==="present" && !lbOpen){
@@ -1176,7 +1199,8 @@ addEventListener("keydown", e=>{
     e.preventDefault();
     const p=list[state.focusIdx]; if(p){ toggleSel(p); paintVisible(); }
   }else if(e.key==="Enter"){
-    if(state.focusIdx>=0) openLightbox(state.focusIdx);
+    if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
+    else if(state.focusIdx>=0) openLightbox(state.focusIdx);
   }else if(e.key.toLowerCase()==="m"){
     if(state.selection.size) presentSelection();
     else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
