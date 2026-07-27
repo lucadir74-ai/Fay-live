@@ -1588,7 +1588,7 @@ async function nextNumber(letter, count){
 }
 
 // finestra di conservazione: gli originali più vecchi vengono rimossi dal cloud
-const GIORNI_CONSERVAZIONE = 30;
+const GIORNI_CONSERVAZIONE = 15;
 async function cleanupOld(){
   if(!sb) return;
   try{
