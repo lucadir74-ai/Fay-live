@@ -70,6 +70,11 @@
   .cell.focused{box-shadow:0 0 0 2px var(--ink) inset}
   .cell .flags{position:absolute;top:6px;left:6px;display:flex;gap:4px}
   .flag{font-family:var(--mono);font-size:11px;font-weight:700;background:rgba(11,14,20,.85);border-radius:5px;padding:1px 6px}
+  .cell .code.pr, .cmp .code.pr{background:var(--ok);color:#06210f}
+  .cell .code.ex, .cmp .code.ex{background:#7FB8F0;color:#0a1f33}
+  .chip{font-size:12.5px;font-weight:700;border-radius:6px;padding:3px 10px;margin-left:4px}
+  .chip.pr{background:var(--ok);color:#06210f}
+  .chip.ex{background:#7FB8F0;color:#0a1f33}
   .flag.print{color:var(--ok)}
   .flag.exp{color:#7FB8F0}
 
@@ -327,15 +332,16 @@ function drawOverlay(ctx, w, h){
     ctx.shadowBlur=0; ctx.shadowOffsetY=0;
   }
 }
-function drawCodeBadge(ctx, w, h, code){
+function drawCodeBadge(ctx, w, h, code, status){
   const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
   ctx.font=`800 ${fs}px ui-monospace, Consolas, monospace`;
   const tw = ctx.measureText(code).width, pad=fs*0.35;
   const bx=w/2-tw/2-pad, by=h-m-fs-pad*2, bw=tw+pad*2, bh=fs+pad*1.6;
-  ctx.fillStyle="rgba(11,14,20,.82)";
+  ctx.fillStyle = status==="pr" ? "rgba(91,201,138,.95)" : status==="ex" ? "rgba(127,184,240,.95)" : "rgba(11,14,20,.82)";
   if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,fs*0.25); ctx.fill(); }
   else ctx.fillRect(bx,by,bw,bh);
-  ctx.fillStyle="#F5B942"; ctx.textBaseline="top";
+  ctx.fillStyle = status==="pr" ? "#06210f" : status==="ex" ? "#0a1f33" : "#F5B942";
+  ctx.textBaseline="top";
   ctx.fillText(code, w/2-tw/2, by+pad*0.8);
 }
 
@@ -767,7 +773,8 @@ function paintVisible(){
     let flags="";
     if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
     if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
-    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
+    const st=statusOf(p);
+    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
     if(el._html!==html){ el.innerHTML=html; el._html=html; }
   }
 }
@@ -822,7 +829,7 @@ function openCompare(){
     const img=document.createElement("img");
     if(p.thumb) img.src=p.thumb;
     if(p.preview){ const u=URL.createObjectURL(p.preview); cmpUrls.push(u); img.src=u; }
-    const c=document.createElement("span"); c.className="code"; c.textContent=p.code;
+    const c=document.createElement("span"); c.className="code"+(statusOf(p)?" "+statusOf(p):""); c.textContent=p.code;
     d.append(img,c);
     d.onclick=()=>openLightboxList(set, i);
     g.append(d);
@@ -897,15 +904,22 @@ async function exportPhotos(set){
   renderTabs(); paintVisible(); refreshLbStatus();
   toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ${fallback} dall'anteprima interna: originale non leggibile` : ""));
 }
+function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
 function statusText(p){
   const parts=[];
   if(p.prints>0) parts.push("Stampata"+(p.prints>1?" ×"+p.prints:""));
   if(p.exported) parts.push("Esportata");
   return parts.join(" · ");
 }
+function setLbStatus(p){
+  let h="";
+  if(p.prints>0) h+=`<span class="chip pr">Stampata${p.prints>1?" ×"+p.prints:""}</span>`;
+  if(p.exported) h+=`<span class="chip ex">Esportata</span>`;
+  $("lbStatus").innerHTML=h;
+}
 function refreshLbStatus(){
   const p=lbList()[state.lightboxIdx];
-  if(p && $("lightbox").classList.contains("open")) $("lbStatus").textContent = statusText(p);
+  if(p && $("lightbox").classList.contains("open")){ setLbStatus(p); paintLightbox(); }
 }
 
 /* ---------- lightbox operatore ---------- */
@@ -928,7 +942,7 @@ async function paintLightbox(){
   const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
   const my=++lbSeq;
   $("lbCode").textContent=p.code;
-  $("lbStatus").textContent = statusText(p);
+  setLbStatus(p);
   $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
   const c=$("lbCanvas"), ctx=c.getContext("2d");
 
@@ -941,7 +955,7 @@ async function paintLightbox(){
       ctx.imageSmoothingEnabled=true;
       ctx.drawImage(t,0,0,c.width,c.height);
       drawOverlay(ctx,c.width,c.height);
-      drawCodeBadge(ctx,c.width,c.height,p.code);
+      drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
     }catch(_){}
   }else{
     c.width=800; c.height=600;
@@ -960,7 +974,7 @@ async function paintLightbox(){
     c.width=bmp.width; c.height=bmp.height;
     ctx.drawImage(bmp,0,0);
     drawOverlay(ctx,c.width,c.height);
-    drawCodeBadge(ctx,c.width,c.height,p.code);
+    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
     if(my!==lbSeq) return;
     toast(friendlyErr(err, p.code));
