@@ -126,9 +126,48 @@
   .toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;z-index:50;opacity:0;transition:opacity .25s}
   .toast.show{opacity:1}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  /* ---------- schermata sedi ---------- */
+  #startScreen{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center}
+  #startScreen.hidden{display:none}
+  .startCard{width:min(460px,92vw);background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px}
+  .startCard h1{font-size:26px;margin-bottom:4px}
+  .startCard h1 span{color:var(--accent)}
+  #startMsg{color:var(--muted);margin-bottom:18px}
+  #sedeList{display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;margin-bottom:14px}
+  .sedeItem{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-weight:600;font-size:15px}
+  .sedeItem:hover{border-color:var(--accent)}
+  #sedeNewWrap{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  #sedeNewWrap input{flex:1 1 100%}
+  #sedeNewBtn{width:100%;margin-bottom:8px}
+  button.ghost{width:100%;background:transparent;border-color:transparent;color:var(--muted)}
+  button.ghost:hover{color:var(--ink);border-color:var(--line)}
+
+  /* ---------- stato sincronizzazione ---------- */
+  #syncState{display:flex;align-items:center;gap:6px}
+  #syncDot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  #syncDot.online{background:var(--ok)}
+  #syncDot.offline{background:var(--danger)}
+  #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+<div id="startScreen">
+  <div class="startCard">
+    <h1>Fay <span>Live</span></h1>
+    <p id="startMsg">Scegli la sede di lavoro</p>
+    <div id="sedeList"></div>
+    <div id="sedeNewWrap" hidden>
+      <input type="text" id="sedeNewName" placeholder="Nome della nuova sede (es. Nammos)" maxlength="40">
+      <button id="sedeNewSave" class="primary">Crea sede</button>
+      <button id="sedeNewCancel">Annulla</button>
+    </div>
+    <button id="sedeNewBtn">+ Nuova sede</button>
+    <button id="startOffline" class="ghost">Continua offline (solo questo PC)</button>
+  </div>
+</div>
 <div id="app">
   <header>
     <h1>Fay <span>Live</span></h1>
@@ -249,6 +288,7 @@
     <span>Archivio: <b id="stArch">non impostato</b></span>
     <span>Miniature: <b id="stThumbs">0</b></span>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
+    <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
     <div class="spacer"></div>
     <span id="stMode">—</span>
   </div>
@@ -287,6 +327,44 @@
    ===================================================================== */
 
 const $ = id => document.getElementById(id);
+
+/* =====================================================================
+   CLOUD — Supabase: sedi, servizi, rulli, foto sincronizzati tra postazioni
+   Local-first: se il cloud non risponde, l'app lavora comunque e sincronizza
+   appena la linea torna.
+   ===================================================================== */
+const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
+let sb = null;
+try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){ sb=null; }
+
+const cloud = {
+  sede: null,        // {id, nome}
+  servizio: null,    // {id, ...}
+  rulli: {},         // lettera -> {id, ultimo_num}
+  online: false,
+  channel: null,
+};
+
+function setSync(mode, label){
+  const d=$("syncDot"); if(!d) return;
+  d.className=""; if(mode) d.classList.add(mode);
+  $("syncLabel").textContent = label || (mode==="online"?"Sincronizzato":mode==="offline"?"Offline — riprende da solo":mode==="syncing"?"Sincronizzo…":"Solo locale");
+}
+
+async function sbTry(fn, label){
+  if(!sb || !cloud.sede){ return null; }
+  try{
+    setSync("syncing", label);
+    const r = await fn();
+    cloud.online = true; setSync("online");
+    return r;
+  }catch(err){
+    cloud.online = false; setSync("offline");
+    console.warn("cloud", label||"", err);
+    return null;
+  }
+}
 
 const state = {
   event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null}, // configurabile dal pannello Servizio, tutto facoltativo
@@ -438,7 +516,9 @@ $("fileInput").onchange = async e=>{
   await ensureArchive();
 
   files.sort((a,b)=>a.lastModified-b.lastModified || a.name.localeCompare(b.name));
-  let n = state.counters[L]||0;
+  // se online, riserva i numeri dal cloud (atomico tra postazioni); altrimenti locali
+  const startN = await nextNumber(L, files.length);
+  let n = (startN!=null) ? startN : (state.counters[L]||0);
   const batch=[];
   for(const f of files){
     n++;
@@ -447,6 +527,10 @@ $("fileInput").onchange = async e=>{
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
   state.counters[L]=n;
+  // salva/aggiorna la descrizione rullo sul cloud
+  if(sb && cloud.rulli[L] && state.letterDesc[L]){
+    sbTry(()=>sb.from("rulli").update({descrizione:state.letterDesc[L]}).eq("id",cloud.rulli[L].id), "descrizione rullo");
+  }
   $("stTotal").textContent = state.photos.length;
   renderTabs(); layoutGrid();
   toast(`Importate ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code})`);
@@ -538,7 +622,10 @@ async function getImportDir(letter){
 // restituisce sempre la versione più affidabile del file (archivio prima, poi origine)
 async function freshFile(p){
   if(p.arch){ try{ return await p.arch.getFile(); }catch(_){} }
-  return p.file;
+  if(p.file) return p.file;
+  // foto remota senza originale locale: usa l'anteprima (ripiego)
+  if(p.preview) return new File([p.preview], p.code+"_anteprima.jpg", {type:"image/jpeg"});
+  throw new Error("originale non disponibile su questa postazione");
 }
 
 function toBlobAsync(c, q){ return new Promise(res=>c.toBlob(res,"image/jpeg",q)); }
@@ -608,13 +695,35 @@ async function processBatch(batch){
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       p.preview = await toBlobAsync(c, 0.85);
+      thumbCache.set(p.code, p.preview);
     }catch(err){ console.warn("anteprima", p.code, err); }
+    // sincronizza sul cloud: carica l'anteprima e registra la foto
+    await syncPhotoUp(p);
     buf=null;
     prog.done++;
     if((prog.done & 7)===0){ progUpdate(); await new Promise(r=>setTimeout(r,0)); }
   }
   progUpdate();
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
+}
+
+// carica anteprima su storage + riga foto nel DB (per le altre postazioni)
+async function syncPhotoUp(p){
+  if(!sb || !cloud.servizio || !cloud.rulli[p.letter] || !p.preview || p.remote) return;
+  await sbTry(async ()=>{
+    const path = cloud.servizio.id+"/"+p.code+".jpg";
+    const up = await sb.storage.from("anteprime").upload(path, p.preview, {contentType:"image/jpeg", upsert:true});
+    if(up.error) throw up.error;
+    const {data:pub} = sb.storage.from("anteprime").getPublicUrl(path);
+    p.anteprimaUrl = pub.publicUrl;
+    const {data,error} = await sb.from("foto").upsert({
+      rullo_id: cloud.rulli[p.letter].id, codice: p.code,
+      scattata_il: new Date(p.ts).toISOString(),
+      anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
+    }, {onConflict:"rullo_id,codice"}).select().single();
+    if(error) throw error;
+    p.dbId = data.id;
+  }, "carico "+p.code);
 }
 
 /* ---------- immagini piene on-demand (per lightbox e monitor) ---------- */
@@ -884,6 +993,7 @@ async function printPhotos(set){
   w.focus(); w.print();
   set.forEach(p=>{ p.prints++; });
   renderTabs(); paintVisible(); refreshLbStatus();
+  set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
   toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
 }
 async function exportPhotos(set){
@@ -900,6 +1010,7 @@ async function exportPhotos(set){
     document.body.append(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 5000);
     p.exported=true;
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export");
   }
   renderTabs(); paintVisible(); refreshLbStatus();
   toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ${fallback} dall'anteprima interna: originale non leggibile` : ""));
@@ -1220,13 +1331,187 @@ addEventListener("keydown", e=>{
     else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
   }
 });
-function ensureVisible(i){
-  const y=PADX+Math.floor(i/cols)*(CELL+GAP);
-  if(y<wrap.scrollTop) wrap.scrollTop=y-10;
-  else if(y+CELL>wrap.scrollTop+wrap.clientHeight) wrap.scrollTop=y+CELL-wrap.clientHeight+10;
+/* =====================================================================
+   AVVIO — scelta sede, servizio del giorno, sincronizzazione
+   ===================================================================== */
+
+// cache locale delle anteprime (IndexedDB) per l'offline
+const thumbCache = {
+  db:null,
+  open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
+    const r=indexedDB.open("faylive-thumbs",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("t");
+    r.onsuccess=()=>{ this.db=r.result; res(this.db); };
+    r.onerror=()=>rej(r.error);
+  });},
+  async get(k){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t").objectStore("t").get(k); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error);
+  }); }catch(_){ return null; } },
+  async set(k,v){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t","readwrite").objectStore("t").put(v,k); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
+  }); }catch(_){ } },
+};
+
+async function loadSedi(){
+  const list=$("sedeList");
+  if(!sb){ $("startMsg").textContent="Cloud non disponibile: puoi lavorare solo su questo PC."; list.innerHTML=""; return; }
+  $("startMsg").textContent="Carico le sedi…";
+  try{
+    const {data,error}=await sb.from("sedi").select("*").order("nome");
+    if(error) throw error;
+    if(!data.length){ $("startMsg").textContent="Nessuna sede ancora. Creane una con \"+ Nuova sede\"."; }
+    else $("startMsg").textContent="Scegli la sede di lavoro";
+    list.innerHTML="";
+    data.forEach(s=>{
+      const d=document.createElement("div"); d.className="sedeItem";
+      d.innerHTML=`<span>${s.nome.replace(/[<>&]/g,"")}</span><span style="color:var(--muted)">›</span>`;
+      d.onclick=()=>chooseSede(s);
+      list.append(d);
+    });
+  }catch(err){
+    $("startMsg").textContent="Cloud non raggiungibile. Puoi continuare offline su questo PC.";
+    console.warn("sedi", err);
+  }
 }
 
-layoutGrid();
+$("sedeNewBtn").onclick=()=>{ $("sedeNewWrap").hidden=false; $("sedeNewName").focus(); };
+$("sedeNewCancel").onclick=()=>{ $("sedeNewWrap").hidden=true; };
+$("sedeNewSave").onclick=async ()=>{
+  const nome=$("sedeNewName").value.trim();
+  if(!nome){ $("sedeNewName").focus(); return; }
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  try{
+    const codice = nome.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12) + Math.floor(Math.random()*90+10);
+    const {data,error}=await sb.from("sedi").insert({nome,codice}).select().single();
+    if(error) throw error;
+    chooseSede(data);
+  }catch(err){ toast("Errore creando la sede: "+(err.message||err)); }
+};
+$("startOffline").onclick=()=>{ cloud.sede=null; setSync(null,"Solo locale"); startApp(); };
+
+async function chooseSede(s){
+  cloud.sede=s;
+  setSync("syncing","Apro il servizio…");
+  // servizio del giorno di servizio per questa sede: riusa se già esiste
+  const d = serviceDateStr();
+  try{
+    let {data:serv} = await sb.from("servizi").select("*").eq("sede_id",s.id).eq("data_servizio",d).limit(1);
+    if(serv && serv.length){ cloud.servizio=serv[0]; }
+    else {
+      const {data:ins,error}=await sb.from("servizi").insert({sede_id:s.id, data_servizio:d}).select().single();
+      if(error) throw error;
+      cloud.servizio=ins;
+    }
+    cloud.online=true; setSync("online");
+    await loadServizioFoto();
+    subscribeRealtime();
+  }catch(err){
+    cloud.online=false; setSync("offline");
+    console.warn("servizio", err);
+  }
+  startApp();
+}
+
+// carica dal cloud i rulli e le foto già presenti nel servizio (per postazioni che si aggiungono)
+async function loadServizioFoto(){
+  if(!sb || !cloud.servizio) return;
+  const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
+  (rulli||[]).forEach(r=>{ cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
+    if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
+    state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
+  const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
+  const {data:foto} = await sb.from("foto").select("*").order("codice");
+  for(const f of (foto||[])){
+    if(state.byCode.has(f.codice)) continue;
+    const r=rulliById[f.rullo_id]; if(!r) continue;
+    await addRemotePhoto(f, r.lettera);
+  }
+  renderTabs(); layoutGrid();
+}
+
+// inserisce nella griglia una foto che arriva dal cloud (senza file originale locale)
+async function addRemotePhoto(f, letter){
+  if(state.byCode.has(f.codice)) return;
+  const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
+            file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
+            prints:f.stampe||0, exported:!!f.esportata, anteprimaUrl:f.anteprima_url, remote:true };
+  // prova la cache locale, poi la rete
+  let blob = await thumbCache.get(f.codice);
+  if(!blob && f.anteprima_url){
+    try{ const r=await fetch(f.anteprima_url); if(r.ok){ blob=await r.blob(); thumbCache.set(f.codice, blob); } }catch(_){}
+  }
+  if(blob){ p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}}
+  state.photos.push(p); state.byCode.set(p.code,p);
+}
+function blobToThumb(blob){
+  return new Promise(async (res,rej)=>{
+    try{ const bmp=await decodeScaled(blob,260); const c=document.createElement("canvas");
+      c.width=bmp.width;c.height=bmp.height;c.getContext("2d").drawImage(bmp,0,0);bmp.close();
+      res(c.toDataURL("image/jpeg",0.78)); }catch(e){ rej(e); }
+  });
+}
+
+// realtime: nuove foto delle altre postazioni compaiono da sole
+function subscribeRealtime(){
+  if(!sb || !cloud.servizio || cloud.channel) return;
+  cloud.channel = sb.channel("foto-"+cloud.servizio.id)
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"foto"}, async payload=>{
+      const f=payload.new;
+      const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
+      if(!r || r.servizio_id!==cloud.servizio.id) return;
+      if(state.byCode.has(f.codice)) return;
+      await addRemotePhoto(f, r.lettera);
+      renderTabs(); layoutGrid();
+      const M=state.monitor; if(M.win && !M.win.closed) M.queue=buildSlideshowQueue();
+    })
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
+      const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
+      if(p){ p.prints=f.stampe; p.exported=!!f.esportata; renderTabs(); paintVisible(); }
+    })
+    .subscribe();
+}
+
+// assegna il prossimo numero dal cloud (atomico) o localmente se offline
+async function nextNumber(letter, count){
+  if(sb && cloud.servizio){
+    try{
+      // assicura il rullo
+      if(!cloud.rulli[letter]){
+        const {data,error}=await sb.from("rulli")
+          .upsert({servizio_id:cloud.servizio.id, lettera:letter, descrizione:state.letterDesc[letter]||null},
+                  {onConflict:"servizio_id,lettera"}).select().single();
+        if(error) throw error;
+        cloud.rulli[letter]={id:data.id, ultimo_num:data.ultimo_num};
+      }
+      // riserva "count" numeri in blocco
+      const {data,error}=await sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count});
+      if(!error && typeof data==="number"){ cloud.rulli[letter].ultimo_num=data; return data-count; }
+      // fallback: uno alla volta
+      let start=null;
+      for(let i=0;i<count;i++){ const {data:n}=await sb.rpc("prossimo_codice",{p_rullo_id:cloud.rulli[letter].id});
+        if(i===0) start=n-1; }
+      if(start!=null){ cloud.rulli[letter].ultimo_num=start+count; return start; }
+    }catch(err){ console.warn("nextNumber cloud", err); cloud.online=false; setSync("offline"); }
+  }
+  // offline: numerazione locale
+  const base=state.counters[letter]||0; return base;
+}
+
+function startApp(){
+  $("startScreen").classList.add("hidden");
+  if(cloud.sede){
+    $("eventInfo").textContent = cloud.sede.nome + " — " + serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  } else updateEventInfo();
+  layoutGrid();
+}
+
+// stato connessione del browser
+addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); } });
+addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
+
+// avvio: mostra la scelta sede
+loadSedi();
+
 </script>
 </body>
 </html>
