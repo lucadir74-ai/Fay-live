@@ -47,6 +47,8 @@
   .ltab .lt{font-family:var(--mono);font-weight:800;font-size:15px;letter-spacing:.5px}
   .ltab .stat{font-size:11.5px;font-weight:600;color:var(--muted)}
   .ltab.active .stat{color:var(--accent-ink);opacity:.75}
+  .ltab .ldesc{font-size:12px;color:var(--muted);font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ltab.active .ldesc{color:var(--accent-ink);opacity:.8}
   .ltab .stat.pr{color:var(--ok)}
   .ltab .stat.ex{color:#7FB8F0}
   .ltab.active .stat.pr,.ltab.active .stat.ex{color:var(--accent-ink);opacity:.8}
@@ -125,14 +127,14 @@
 <div id="app">
   <header>
     <h1>Fay <span>Live</span></h1>
-    <span id="eventInfo">Nessuna serata attiva</span>
-    <button id="btnEvent">Serata…</button>
+    <span id="eventInfo"></span>
+    <button id="btnEvent">Servizio…</button>
     <button id="btnArchive">Archivio…</button>
-    <button id="btnImport" class="primary" disabled>Importa cartella</button>
+    <button id="btnImport" class="primary">Importa cartella</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
-    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )" disabled>
-    <button id="btnMonitor" disabled>Apri monitor cliente</button>
+    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
+    <button id="btnMonitor">Apri monitor cliente</button>
   </header>
 
   <nav id="letterTabs" hidden></nav>
@@ -146,7 +148,7 @@
     <div id="gridWrap"><div id="gridSpacer"></div></div>
 
     <div id="empty">
-      <div>Crea la serata, poi importa la cartella della SD: i codici vengono assegnati in automatico.</div>
+      <div>Importa la cartella della SD: i codici vengono assegnati in automatico. Logo, scritte e slideshow si regolano da "Servizio…" (facoltativo).</div>
       <div id="shortcuts">
         <span><kbd>frecce</kbd></span><span>naviga tra le foto</span>
         <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
@@ -187,11 +189,11 @@
       </div>
     </div>
 
-    <!-- Pannello serata -->
+    <!-- Pannello servizio -->
     <div class="panel" id="eventPanel">
-      <h2>Serata</h2>
+      <h2>Servizio</h2>
       <div class="body">
-        <div class="field"><label>Nome evento</label><input type="text" id="evName" placeholder="Es. Sabato — Sottovento"></div>
+        <div class="field"><label>Nome servizio (facoltativo)</label><input type="text" id="evName"></div>
         <div class="row">
           <div class="field"><label>Slideshow: secondi per scatto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
           <div class="field"><label>Foto insieme sullo schermo</label>
@@ -206,6 +208,8 @@
           <input type="file" id="evLogo" accept="image/*"></div>
         <div class="field"><label>Scritta — in basso a sinistra</label>
           <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo"></div>
+        <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
+          <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo"></div>
         <div class="field"><label>Anteprima overlay (orizzontale / verticale)</label>
           <div id="ovPreview">
             <canvas id="pvH" width="220" height="147"></canvas>
@@ -243,12 +247,24 @@
   </div>
 </div>
 
+<dialog id="descDlg">
+  <h3 style="margin-bottom:10px">Descrizione rullo <span id="ddLetter" class="badge"></span></h3>
+  <input type="text" id="ddInput" maxlength="40" style="width:100%;margin-bottom:16px">
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="ddNo">Annulla</button><button id="ddYes" class="primary">Salva</button>
+  </div>
+</dialog>
+
 <dialog id="confirmImport">
   <h3 style="margin-bottom:10px">Conferma import</h3>
   <p id="ciText" style="margin-bottom:14px"></p>
-  <div class="field" id="ciLetterField" style="margin-bottom:16px">
-    <label>Lettera per questa importazione (fotografo)</label>
+  <div class="field" id="ciLetterField" style="margin-bottom:12px">
+    <label>Lettera del rullo (fotografo)</label>
     <input type="text" id="ciLetter" maxlength="1" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:70px;text-align:center">
+  </div>
+  <div class="field" style="margin-bottom:16px">
+    <label>Descrizione rullo (facoltativa, modificabile dopo)</label>
+    <input type="text" id="ciDesc" maxlength="40" style="width:100%">
   </div>
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="ciNo">Annulla</button><button id="ciYes" class="primary">Importa</button>
@@ -266,10 +282,11 @@
 const $ = id => document.getElementById(id);
 
 const state = {
-  event: null,            // {name, secs, logoImg, text}
+  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null}, // configurabile dal pannello Servizio, tutto facoltativo
   photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
+  letterDesc: {},         // lettera -> descrizione rullo
   selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
   activeLetter: null,     // null = tutte
   focusIdx: -1,
@@ -321,8 +338,9 @@ let pendingLogo = null;
 $("btnEvent").onclick = ()=>{ openEventPanel(); };
 function openEventPanel(){
   const ev = state.event;
-  if(ev){ $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text; $("evTiles").value=String(ev.tiles||6); }
-  pendingLogo = ev ? ev.logoImg : null;
+  $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
+  $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
+  pendingLogo = ev.logoImg;
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
 }
@@ -350,19 +368,22 @@ function renderOverlayPreview(){
 }
 $("evSave").onclick = ()=>{
   const name=$("evName").value.trim();
-  if(!name){ toast("Dai un nome alla serata"); return; }
   state.event = {
     name, secs: Math.max(2, +$("evSecs").value||4),
     tiles: +$("evTiles").value||6,
-    text: $("evText").value.trim(), logoImg: pendingLogo,
+    text: $("evText").value.trim(),
+    infoLine: $("evInfoLine").value.trim(),
+    logoImg: pendingLogo,
   };
-  $("eventInfo").textContent = name + " — " + new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
-  $("btnImport").disabled = false;
-  $("btnMonitor").disabled = false;
-  $("searchBox").disabled = false;
+  updateEventInfo();
   $("eventPanel").classList.remove("open");
-  toast("Serata salvata");
+  toast("Servizio salvato");
 };
+function updateEventInfo(){
+  const d = new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  $("eventInfo").textContent = state.event.name ? state.event.name+" — "+d : d;
+}
+updateEventInfo();
 
 /* ---------- import ---------- */
 $("btnImport").onclick = ()=> $("fileInput").click();
@@ -385,6 +406,7 @@ $("fileInput").onchange = async e=>{
   const suggested = detectLetter(files[0]);
   $("ciText").textContent = `${files.length} foto trovate.`;
   $("ciLetter").value = suggested || "";
+  $("ciDesc").value = suggested ? (state.letterDesc[suggested]||"") : "";
 
   const dlg=$("confirmImport"); dlg.showModal();
   $("ciLetter").focus();
@@ -392,6 +414,8 @@ $("fileInput").onchange = async e=>{
     $("ciYes").onclick=()=>{
       const v=$("ciLetter").value.trim().toUpperCase();
       if(!/^[A-Z]$/.test(v)){ toast("Inserisci una lettera (A–Z)"); $("ciLetter").focus(); return; }
+      const d=$("ciDesc").value.trim();
+      if(d) state.letterDesc[v]=d;
       dlg.close(); res(v);
     };
     $("ciNo").onclick=()=>{ dlg.close(); res(null); };
@@ -665,11 +689,13 @@ function renderTabs(){
              pr:ph.filter(p=>p.prints>0).length,
              ex:ph.filter(p=>p.exported).length };
   };
+  const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
   const tab=(L,label)=>{
     const s=stats(L);
     const active = state.activeLetter===L;
-    return `<button class="ltab${active?" active":""}" data-l="${L||""}">
-      <span class="lt">${label}</span>
+    const desc = L && state.letterDesc[L] ? `<span class="ldesc">${esc(state.letterDesc[L])}</span>` : "";
+    return `<button class="ltab${active?" active":""}" data-l="${L||""}" title="${L?"Doppio clic per la descrizione del rullo":""}">
+      <span class="lt">${label}</span>${desc}
       <span class="stat">${s.n} foto</span>
       <span class="stat pr">🖨 ${s.pr}</span>
       <span class="stat ex">⇩ ${s.ex}</span>
@@ -684,7 +710,20 @@ function renderTabs(){
       wrap.scrollTop=0;
       renderTabs(); layoutGrid();
     };
+    if(b.dataset.l) b.ondblclick=()=>editRulloDesc(b.dataset.l);
   });
+}
+function editRulloDesc(L){
+  $("ddLetter").textContent=L;
+  $("ddInput").value = state.letterDesc[L]||"";
+  const dlg=$("descDlg"); dlg.showModal();
+  $("ddInput").focus();
+  $("ddYes").onclick=()=>{
+    const v=$("ddInput").value.trim();
+    if(v) state.letterDesc[L]=v; else delete state.letterDesc[L];
+    dlg.close(); renderTabs();
+  };
+  $("ddNo").onclick=()=>dlg.close();
 }
 function layoutGrid(){
   const list=filteredPhotos();
@@ -1037,6 +1076,20 @@ async function paintMonitorMosaic(start){
     drawOverlay(M.ctx,dw,dh);
     drawCodeBadge(M.ctx,dw,dh,p.code);
     M.ctx.restore();
+  }
+  // riga informativa centrale (prezzi/info)
+  const info = state.event && state.event.infoLine;
+  if(info){
+    const bh = Math.round(ch*0.075);
+    const by = Math.round(ch/2 - bh/2);
+    M.ctx.fillStyle = "rgba(11,14,20,.88)";
+    M.ctx.fillRect(0, by, cw, bh);
+    M.ctx.fillStyle = "#F5B942";
+    const fs = Math.round(bh*0.52);
+    M.ctx.font = `700 ${fs}px "Segoe UI", sans-serif`;
+    M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
+    M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
+    M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
   }
   M._page=start;
   // precarica le prossime
