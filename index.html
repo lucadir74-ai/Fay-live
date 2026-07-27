@@ -707,23 +707,105 @@ async function processBatch(batch){
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
 }
 
-// carica anteprima su storage + riga foto nel DB (per le altre postazioni)
+// carica anteprima + ORIGINALE su storage e registra la foto nel DB (soluzione A)
 async function syncPhotoUp(p){
-  if(!sb || !cloud.servizio || !cloud.rulli[p.letter] || !p.preview || p.remote) return;
+  if(!sb || !cloud.servizio || !cloud.rulli[p.letter] || p.remote) return;
   await sbTry(async ()=>{
-    const path = cloud.servizio.id+"/"+p.code+".jpg";
-    const up = await sb.storage.from("anteprime").upload(path, p.preview, {contentType:"image/jpeg", upsert:true});
-    if(up.error) throw up.error;
-    const {data:pub} = sb.storage.from("anteprime").getPublicUrl(path);
-    p.anteprimaUrl = pub.publicUrl;
+    // 1) anteprima (leggera) — serve alle altre postazioni per vedere subito
+    let anteprimaUrl = p.anteprimaUrl;
+    if(p.preview && !anteprimaUrl){
+      const ap = cloud.servizio.id+"/"+p.code+".jpg";
+      const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
+      if(up.error) throw up.error;
+      anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+      p.anteprimaUrl = anteprimaUrl;
+    }
+    // 2) riga foto nel DB
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
-      anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
+      anteprima_url: anteprimaUrl, stampe: p.prints, esportata: p.exported
     }, {onConflict:"rullo_id,codice"}).select().single();
     if(error) throw error;
     p.dbId = data.id;
   }, "carico "+p.code);
+  // 3) ORIGINALE a piena risoluzione — in coda, così ogni postazione stampa in alta qualità
+  queueOriginalUpload(p);
+}
+
+/* coda di caricamento originali: non blocca l'import, riprende da sola se la linea cade */
+const origQueue = [];
+let origWorking = false;
+function queueOriginalUpload(p){
+  if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
+  origQueue.push(p); runOrigQueue();
+}
+async function runOrigQueue(){
+  if(origWorking) return; origWorking=true;
+  while(origQueue.length){
+    const p=origQueue[0];
+    try{
+      const f = p.arch ? await p.arch.getFile() : p.file;
+      if(!f){ origQueue.shift(); continue; }
+      const buf = await f.arrayBuffer();
+      const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+      const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+      if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
+      p.origUploaded = true;
+      if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+      origQueue.shift();
+      const done = state.photos.filter(x=>x.origUploaded).length;
+      $("stArch").textContent = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—")) + " · originali cloud: " + done;
+    }catch(err){
+      // linea caduta: fermo la coda, riprenderà al prossimo import o rientro online
+      console.warn("upload originale", err); cloud.online=false; setSync("offline");
+      break;
+    }
+  }
+  origWorking=false;
+}
+// al rientro online, riprova a svuotare la coda
+addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); runOrigQueue(); } });
+
+/* ---------- originali on-demand (soluzione B) ----------
+   Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
+   Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
+   Se nessuna via è possibile (foto di un'altra postazione, non ancora sul cloud, e io non ho il file),
+   torna null e il chiamante ripiega sull'anteprima avvisando l'operatore. */
+const origPath = p => cloud.servizio ? cloud.servizio.id+"/"+p.code+".jpg" : p.code+".jpg";
+
+async function ensureOriginalBlob(p){
+  // 1) ho il file in locale (l'ho importato io)?
+  try{
+    const f = p.arch ? await p.arch.getFile() : p.file;
+    if(f){
+      const buf = await f.arrayBuffer();
+      const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+      // se online e non ancora caricato, lo metto sul cloud per le altre postazioni
+      if(sb && cloud.servizio && !p.origUploaded){
+        sbTry(async ()=>{
+          const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+          if(up.error && up.error.statusCode!=="409") throw up.error;
+          p.origUploaded = true;
+          if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+        }, "sync originale "+p.code);
+      }
+      return blob;
+    }
+  }catch(_){ /* passo al cloud */ }
+
+  // 2) l'originale è già sul cloud (caricato da un'altra postazione)?
+  if(sb && cloud.servizio){
+    const got = await sbTry(async ()=>{
+      const dl = await sb.storage.from("originali").download(origPath(p));
+      if(dl.error) throw dl.error;
+      return dl.data;
+    }, "scarico originale "+p.code);
+    if(got) return got;
+  }
+
+  // 3) niente da fare
+  return null;
 }
 
 /* ---------- immagini piene on-demand (per lightbox e monitor) ---------- */
@@ -955,17 +1037,21 @@ $("cmpShow").onclick = ()=> presentMosaicSet(selSet());
 
 /* ---------- stampa ed esportazione ---------- */
 async function renderFull(p, withOverlay=true){
-  let src;
-  try{
-    src = await decodeBig(p, 100000); // originale a piena risoluzione dal disco
-  }catch(err){
-    if(!p.preview) throw err;
-    toast(p.code+": originale non leggibile dal disco, stampo dall'anteprima interna (1800px)");
+  let src, lowQuality=false;
+  const blob = await ensureOriginalBlob(p); // originale: locale → cloud → (null)
+  if(blob){
+    try{ src = await createImageBitmap(blob, {imageOrientation:"from-image"}); }
+    catch(_){ src=null; }
+  }
+  if(!src){
+    if(!p.preview) throw new Error(p.code+": originale non disponibile su nessuna postazione");
+    lowQuality=true;
     src = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
   }
   const c=document.createElement("canvas"); c.width=src.width; c.height=src.height;
   const ctx=c.getContext("2d"); ctx.drawImage(src,0,0); src.close();
   if(withOverlay) drawOverlay(ctx,c.width,c.height);
+  c._lowQuality = lowQuality;
   return c;
 }
 async function printPhotos(set){
@@ -980,9 +1066,12 @@ async function printPhotos(set){
   </style></head><body></body></html>`);
   w.document.close();
   toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
-  const loads=[];
+  const loads=[]; let low=0;
   for(const p of set){
-    const c=await renderFull(p,true);
+    let c;
+    try{ c=await renderFull(p,true); }
+    catch(err){ toast(err.message||("Impossibile stampare "+p.code)); continue; }
+    if(c._lowQuality) low++;
     const img=w.document.createElement("img");
     img.src=c.toDataURL("image/jpeg",0.95);
     loads.push(img.decode().catch(()=>{}));
@@ -994,16 +1083,16 @@ async function printPhotos(set){
   set.forEach(p=>{ p.prints++; });
   renderTabs(); paintVisible(); refreshLbStatus();
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
-  toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
+  if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile (la postazione che le ha importate è offline?)`);
+  else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
 }
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
   let fallback=0;
   for(const p of set){
-    const f = await freshFile(p);
-    let blob=f, name=p.code+"_"+(f.name||p.file.name);
-    try{ await f.slice(0,16).arrayBuffer(); }
-    catch(_){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } }
+    let blob = await ensureOriginalBlob(p);
+    let name = p.code+".jpg";
+    if(!blob){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } else { toast(p.code+": originale non disponibile"); continue; } }
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
     a.href=url; a.download=name;
@@ -1013,7 +1102,7 @@ async function exportPhotos(set){
     if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export");
   }
   renderTabs(); paintVisible(); refreshLbStatus();
-  toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ${fallback} dall'anteprima interna: originale non leggibile` : ""));
+  toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ⚠ ${fallback} in bassa qualità: originale non disponibile` : ""));
 }
 function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
 function statusText(p){
@@ -1405,6 +1494,7 @@ async function chooseSede(s){
     cloud.online=true; setSync("online");
     await loadServizioFoto();
     subscribeRealtime();
+    cleanupOld();   // rimuove gli originali oltre la finestra (default 30 giorni)
   }catch(err){
     cloud.online=false; setSync("offline");
     console.warn("servizio", err);
@@ -1497,6 +1587,24 @@ async function nextNumber(letter, count){
   const base=state.counters[letter]||0; return base;
 }
 
+// finestra di conservazione: gli originali più vecchi vengono rimossi dal cloud
+const GIORNI_CONSERVAZIONE = 30;
+async function cleanupOld(){
+  if(!sb) return;
+  try{
+    const limite = new Date(Date.now() - GIORNI_CONSERVAZIONE*86400*1000).toISOString().slice(0,10);
+    const {data:vecchi} = await sb.from("servizi").select("id,data_servizio").lt("data_servizio", limite);
+    if(!vecchi || !vecchi.length) return;
+    for(const s of vecchi){
+      const {data:files} = await sb.storage.from("originali").list(s.id);
+      if(files && files.length){
+        await sb.storage.from("originali").remove(files.map(f=>s.id+"/"+f.name));
+      }
+    }
+    console.log("cleanup: rimossi originali di", vecchi.length, "servizi oltre", GIORNI_CONSERVAZIONE, "giorni");
+  }catch(err){ console.warn("cleanup", err); }
+}
+
 function startApp(){
   $("startScreen").classList.add("hidden");
   if(cloud.sede){
@@ -1506,7 +1614,6 @@ function startApp(){
 }
 
 // stato connessione del browser
-addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); } });
 addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
 
 // avvio: mostra la scelta sede
