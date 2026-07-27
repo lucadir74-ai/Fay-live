@@ -301,6 +301,11 @@ const state = {
 /* ---------- utilità ---------- */
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
 function pad3(n){ return String(n).padStart(3,"0"); }
+// "giorno di servizio": la giornata cambia alle 8:00, non a mezzanotte.
+// Un import all'1:30 di notte appartiene ancora alla data della sera prima.
+const SERVICE_DAY_CUTOFF_H = 8;
+function serviceDate(){ return new Date(Date.now() - SERVICE_DAY_CUTOFF_H*3600*1000); }
+function serviceDateStr(){ return serviceDate().toISOString().slice(0,10); }
 function fmtCode(letter,num){ return letter+"-"+pad3(num); }
 function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 
@@ -382,7 +387,7 @@ $("evSave").onclick = ()=>{
   toast("Servizio salvato");
 };
 function updateEventInfo(){
-  const d = new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  const d = serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
   $("eventInfo").textContent = state.event.name ? state.event.name+" — "+d : d;
 }
 updateEventInfo();
@@ -509,7 +514,7 @@ async function getImportDir(letter){
   if(!state.archive) return null;
   try{
     const now = new Date();
-    const dateStr = now.toISOString().slice(0,10);
+    const dateStr = serviceDateStr();
     const dayDir = await state.archive.getDirectoryHandle(dateStr, {create:true});
     const letDir = await dayDir.getDirectoryHandle(letter, {create:true});
     let n=0;
