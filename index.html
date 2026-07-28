@@ -31,7 +31,8 @@
   #searchBox{width:180px;font-family:var(--mono);text-transform:uppercase}
   .spacer{flex:1}
   #statusBar{display:flex;gap:18px;align-items:center;padding:6px 16px;background:var(--surface);border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
-  #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto}
+  #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
+  .ltab{flex:0 0 auto}
   #progWrap{display:none;align-items:center;gap:12px;padding:7px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
   #progWrap.show{display:flex}
   #progTrack{flex:1;height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
@@ -1056,6 +1057,7 @@ function renderTabs(){
   const nav=$("letterTabs");
   const letters=[...new Set(state.photos.map(p=>p.letter))].sort();
   nav.hidden = letters.length===0;
+  const cd=$("btnClearDay"); if(cd) cd.textContent = state.activeLetter ? "Svuota rullo "+state.activeLetter : "Svuota giornata";
   const stats=L=>{
     const ph = L? state.photos.filter(p=>p.letter===L) : state.photos;
     return { n:ph.length,
@@ -1876,45 +1878,61 @@ $("giornoSelect").onchange = e=>{
 /* ---------- svuota giornata (solo cloud) ---------- */
 $("btnClearDay").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
-  const n = state.photos.length;
+  const L = state.activeLetter; // null = tutte
+  const foto = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  const n = foto.length;
   const dataStr = cloud.servizio.data_servizio;
-  $("clearText").innerHTML = `Verranno cancellate <b>dal cloud</b> tutte le foto di questa giornata`+
+  const ambito = L ? `il rullo <b>${L}</b>` : `tutti i rulli`;
+  $("clearText").innerHTML = `Verranno cancellate <b>dal cloud</b> le foto di ${ambito}`+
     (cloud.sede?` (${cloud.sede.nome}, ${dataStr})`:"")+`: <b>${n}</b> foto, con anteprime e originali caricati.<br><br>`+
-    `Gli originali salvati sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
+    `Gli originali sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
   const dlg=$("clearDlg"); dlg.showModal();
   $("clearNo").onclick=()=>dlg.close();
   $("clearYes").onclick=async ()=>{
     dlg.close();
-    await clearCurrentDay();
+    await clearCurrentDay(L);
   };
 };
 
-async function clearCurrentDay(){
+async function clearCurrentDay(onlyLetter){
   if(!sb || !cloud.servizio) return;
-  setSync("syncing","Svuoto la giornata…");
+  setSync("syncing","Svuoto…");
   const sid = cloud.servizio.id;
   try{
-    // 1) cancella i file storage (anteprime + originali) della giornata
+    // rulli interessati: tutti, o solo quello attivo
+    const {data:rulli} = await sb.from("rulli").select("id,lettera").eq("servizio_id",sid);
+    const target = (rulli||[]).filter(r=>!onlyLetter || r.lettera===onlyLetter);
+    const ids = target.map(r=>r.id);
+    // cancella i file storage delle foto interessate
+    const codici = state.photos.filter(p=>!onlyLetter || p.letter===onlyLetter).map(p=>p.code);
     for(const bucket of ["anteprime","originali"]){
       try{
-        const {data:files} = await sb.storage.from(bucket).list(sid);
-        if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>sid+"/"+f.name));
+        const paths = codici.map(c=>sid+"/"+c+".jpg");
+        if(paths.length) await sb.storage.from(bucket).remove(paths);
       }catch(_){}
     }
-    // 2) cancella le righe foto dei rulli di questa giornata
-    const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id",sid);
-    const ids=(rulli||[]).map(r=>r.id);
-    if(ids.length){ await sb.from("foto").delete().in("rullo_id", ids); }
-    // 3) cancella i rulli
-    await sb.from("rulli").delete().eq("servizio_id", sid);
-    // 4) svuota lo stato locale in memoria
-    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
-    cloud.rulli={}; state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    // cancella righe foto e rulli interessati
+    if(ids.length){
+      await sb.from("foto").delete().in("rullo_id", ids);
+      await sb.from("rulli").delete().in("id", ids);
+    }
+    // aggiorna stato locale
+    if(onlyLetter){
+      state.photos = state.photos.filter(p=>p.letter!==onlyLetter);
+      state.byCode = new Map(state.photos.map(p=>[p.code,p]));
+      delete state.counters[onlyLetter]; delete state.letterDesc[onlyLetter]; delete cloud.rulli[onlyLetter];
+      for(const id of [...state.selection]){ if(!state.photos.find(p=>p.id===id)) state.selection.delete(id); }
+      if(state.activeLetter===onlyLetter) state.activeLetter=null;
+    } else {
+      state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+      cloud.rulli={}; state.selection.clear(); state.activeLetter=null;
+    }
+    state.filter=""; state.focusIdx=-1;
     cellPool.forEach(el=>el.remove()); cellPool.clear();
-    $("stTotal").textContent="0";
-    renderTabs(); layoutGrid();
+    $("stTotal").textContent=String(state.photos.length);
+    renderTabs(); layoutGrid(); updateThumbCloud();
     cloud.online=true; setSync("online");
-    toast("Giornata svuotata dal cloud");
+    toast(onlyLetter? `Rullo ${onlyLetter} svuotato` : "Giornata svuotata dal cloud");
   }catch(err){
     cloud.online=false; setSync("offline");
     toast("Errore svuotando: "+(err.message||err));
