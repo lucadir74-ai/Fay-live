@@ -151,6 +151,8 @@
   #syncDot.online{background:var(--ok)}
   #syncDot.offline{background:var(--danger)}
   #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
+  #btnDelSede{border-color:var(--line);color:var(--muted)}
+  #btnDelSede:hover{border-color:var(--danger);color:var(--danger)}
   #btnClearDay{border-color:var(--line);color:var(--muted)}
   #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
@@ -164,6 +166,7 @@
   <header>
     <h1>Fay <span>Live</span></h1>
     <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
+    <button id="btnDelSede" title="Cancella la sede selezionata" style="padding:7px 9px">🗑</button>
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
@@ -294,6 +297,15 @@
     <span id="stMode">—</span>
   </div>
 </div>
+
+<dialog id="delSedeDlg">
+  <h3 style="margin-bottom:10px">Cancella sede</h3>
+  <p id="delSedeText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="delSedeNo">Annulla</button>
+    <button id="delSedeYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Cancella sede</button>
+  </div>
+</dialog>
 
 <dialog id="clearDlg">
   <h3 style="margin-bottom:10px">Svuota giornata</h3>
@@ -1744,6 +1756,64 @@ $("sedeNewSave").onclick=async ()=>{
     chooseSede(data);
   }catch(err){ toast("Errore creando la sede: "+(err.message||err)); }
 };
+
+// --- cancella sede selezionata ---
+$("btnDelSede").onclick = async ()=>{
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  const s = cloud.sede;
+  if(!s){ toast("Seleziona prima una sede da cancellare"); return; }
+  // conta servizi e foto della sede
+  let nServizi=0, nFoto=0;
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id",s.id);
+    nServizi=(servizi||[]).length;
+    if(nServizi){
+      const {data:rulli} = await sb.from("rulli").select("id").in("servizio_id",(servizi||[]).map(x=>x.id));
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length){ const {count}=await sb.from("foto").select("id",{count:"exact",head:true}).in("rullo_id",rids); nFoto=count||0; }
+    }
+  }catch(_){}
+  $("delSedeText").innerHTML = nFoto
+    ? `La sede <b>${s.nome}</b> contiene <b>${nServizi}</b> giornate e <b>${nFoto}</b> foto.<br><br>`+
+      `Verranno cancellate <b>dal cloud</b> (righe, anteprime e originali caricati). Gli originali sui PC in locale <b>non</b> vengono toccati. Azione irreversibile.`
+    : `Cancellare la sede <b>${s.nome}</b>? È vuota, nessuna foto da rimuovere.`;
+  const dlg=$("delSedeDlg"); dlg.showModal();
+  $("delSedeNo").onclick=()=>dlg.close();
+  $("delSedeYes").onclick=async ()=>{
+    dlg.close();
+    await deleteSede(s);
+  };
+};
+
+async function deleteSede(s){
+  setSync("syncing","Cancello la sede…");
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id",s.id);
+    for(const sv of (servizi||[])){
+      for(const bucket of ["anteprime","originali"]){
+        try{ const {data:files}=await sb.storage.from(bucket).list(sv.id);
+          if(files&&files.length) await sb.storage.from(bucket).remove(files.map(f=>sv.id+"/"+f.name)); }catch(_){}
+      }
+      const {data:rulli}=await sb.from("rulli").select("id").eq("servizio_id",sv.id);
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length) await sb.from("foto").delete().in("rullo_id",rids);
+      await sb.from("rulli").delete().eq("servizio_id",sv.id);
+    }
+    await sb.from("servizi").delete().eq("sede_id",s.id);
+    await sb.from("sedi").delete().eq("id",s.id);
+    // reset stato locale
+    cloud.sede=null; cloud.servizio=null; cloud.rulli={};
+    if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0"; $("giornoSelect").hidden=true;
+    await loadSedi();
+    setSync(null,"Scegli una sede");
+    renderTabs(); layoutGrid(); updateEventInfo();
+    toast(`Sede "${s.nome}" cancellata`);
+  }catch(err){ setSync("offline"); toast("Errore cancellando: "+(err.message||err)); console.warn("deleteSede",err); }
+}
 
 async function chooseSede(s){
   cloud.sede=s;
