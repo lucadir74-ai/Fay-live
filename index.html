@@ -149,8 +149,8 @@
   #syncDot.online{background:var(--ok)}
   #syncDot.offline{background:var(--danger)}
   #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
-  #sedeSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
-  #sedeSelect:hover{border-color:var(--accent)}
+  #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
+  #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
   @keyframes pulse{50%{opacity:.35}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -160,6 +160,7 @@
   <header>
     <h1>Fay <span>Live</span></h1>
     <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
+    <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
     <button id="btnArchive">Archivio…</button>
@@ -481,8 +482,14 @@ $("evSave").onclick = ()=>{
   toast("Servizio salvato");
 };
 function updateEventInfo(){
-  const d = serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  let d;
+  if(cloud.servizio && cloud.servizio.data_servizio){
+    d = new Date(cloud.servizio.data_servizio+"T12:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  } else {
+    d = serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  }
   const parts=[];
+  if(cloud.sede) parts.push(cloud.sede.nome);
   if(state.event.name) parts.push(state.event.name);
   parts.push(d);
   $("eventInfo").textContent = parts.join(" — ");
@@ -1573,26 +1580,60 @@ $("sedeNewSave").onclick=async ()=>{
 async function chooseSede(s){
   cloud.sede=s;
   $("sedeSelect").value=s.id;
-  setSync("syncing","Apro il servizio…");
-  const d = serviceDateStr();
+  setSync("syncing","Carico le giornate…");
+  const oggi = serviceDateStr();
   try{
-    let {data:serv} = await sb.from("servizi").select("*").eq("sede_id",s.id).eq("data_servizio",d).limit(1);
-    if(serv && serv.length){ cloud.servizio=serv[0]; }
-    else {
-      const {data:ins,error}=await sb.from("servizi").insert({sede_id:s.id, data_servizio:d}).select().single();
-      if(error) throw error;
-      cloud.servizio=ins;
+    // elenco delle giornate (servizi) di questa sede, più recente in cima
+    const {data:giorni} = await sb.from("servizi").select("*").eq("sede_id",s.id).order("data_servizio",{ascending:false});
+    let lista = giorni||[];
+    // assicura che "oggi" esista sempre come voce apribile
+    if(!lista.find(x=>x.data_servizio===oggi)){
+      const {data:ins} = await sb.from("servizi").insert({sede_id:s.id, data_servizio:oggi}).select().single();
+      if(ins){ lista.unshift(ins); }
     }
-    cloud.online=true; setSync("online");
+    // popola la tendina giornate
+    const gsel=$("giornoSelect");
+    gsel.hidden=false;
+    gsel.innerHTML = lista.map(sv=>{
+      const d=new Date(sv.data_servizio+"T12:00:00");
+      const et=(sv.data_servizio===oggi)?"Oggi":d.toLocaleDateString("it-IT",{weekday:"short",day:"2-digit",month:"2-digit"});
+      return `<option value="${sv.id}" data-date="${sv.data_servizio}">${et}</option>`;
+    }).join("");
+    gsel._servizi = lista;
+    // apri la giornata di oggi
+    const today = lista.find(x=>x.data_servizio===oggi) || lista[0];
+    gsel.value = today.id;
+    await openServizio(today);
+  }catch(err){
+    cloud.online=false; setSync("offline");
+    console.warn("sede", err);
+  }
+}
+
+// apre un servizio specifico (oggi o una data passata) e ne carica le foto
+async function openServizio(sv){
+  // pulisci lo stato foto corrente prima di caricare un'altra giornata
+  if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
+  cloud.servizio = sv;
+  cloud.rulli = {};
+  state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+  state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+  cellPool.forEach(el=>el.remove()); cellPool.clear();
+  $("stTotal").textContent="0";
+  setSync("syncing","Apro la giornata…");
+  try{
     await loadServizioFoto();
     subscribeRealtime();
     cleanupOld();
-  }catch(err){
-    cloud.online=false; setSync("offline");
-    console.warn("servizio", err);
-  }
-  updateEventInfo();
+    cloud.online=true; setSync("online");
+  }catch(err){ cloud.online=false; setSync("offline"); console.warn("apri servizio", err); }
+  renderTabs(); layoutGrid(); updateEventInfo();
 }
+
+$("giornoSelect").onchange = e=>{
+  const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
+  if(sv) openServizio(sv);
+};
 
 // carica dal cloud i rulli e le foto già presenti nel servizio (per postazioni che si aggiungono)
 async function loadServizioFoto(){
