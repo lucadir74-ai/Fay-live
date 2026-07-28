@@ -858,8 +858,16 @@ addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 // carica SOLO l'anteprima + riga foto nel DB (leggero, adatto all'hotspot).
 // L'originale NON sale all'import: sale solo quando la foto viene selezionata o stampata.
 async function syncPhotoUp(p){
-  if(!sb || !cloud.servizio || !cloud.rulli[p.letter] || p.remote) return;
+  if(!sb || !cloud.servizio || p.remote) return;
   await sbTry(async ()=>{
+    // assicura il rullo sul cloud (se l'import era offline o il rullo non è ancora registrato)
+    if(!cloud.rulli[p.letter]){
+      const {data:r,error:re}=await sb.from("rulli")
+        .upsert({servizio_id:cloud.servizio.id, lettera:p.letter, descrizione:state.letterDesc[p.letter]||null},
+                {onConflict:"servizio_id,lettera"}).select().single();
+      if(re) throw re;
+      cloud.rulli[p.letter]={id:r.id, ultimo_num:r.ultimo_num};
+    }
     let anteprimaUrl = p.anteprimaUrl;
     if(p.preview && !anteprimaUrl){
       const ap = cloud.servizio.id+"/"+p.code+".jpg";
@@ -875,6 +883,7 @@ async function syncPhotoUp(p){
     }, {onConflict:"rullo_id,codice"}).select().single();
     if(error) throw error;
     p.dbId = data.id;
+    updateThumbCloud();
   }, "carico "+p.code);
 }
 
@@ -1962,14 +1971,14 @@ async function loadServizioFoto(){
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
-  $("stTotal").textContent = state.photos.length;  // tieni allineato anche il contatore foto
+  $("stTotal").textContent = state.photos.length;
   const el=$("stThumbCloud"); if(!el) return;
   if(!cloud.servizio){ el.textContent="—"; return; }
   const tot=state.photos.length;
-  const withThumb=state.photos.filter(p=>p.anteprimaUrl || p.preview || !p.remote).length;
+  const onCloud=state.photos.filter(p=>p.anteprimaUrl).length;  // davvero caricate sul cloud
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
-  el.textContent = withThumb+"/"+tot + (withThumb<tot? " ⚠" : " ✓");
-  el.style.color = withThumb<tot ? "var(--danger)" : "var(--ok)";
+  el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
+  el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
 }
 
 // inserisce nella griglia una foto che arriva dal cloud (senza file originale locale)
