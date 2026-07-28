@@ -37,6 +37,8 @@
   #progTrack{flex:1;height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
   #progFill{height:100%;width:0%;background:var(--accent);border-radius:99px;transition:width .2s}
   #progLabel{font-size:12.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
+  #progCancel{padding:5px 12px;font-size:12.5px;border-color:var(--line);color:var(--muted)}
+  #progCancel:hover{border-color:var(--danger);color:var(--danger)}
   #lbLoading{position:absolute;top:62px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted);z-index:2}
   #lbLoading.show{display:flex}
   #lbLoading::before{content:"";width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite}
@@ -179,6 +181,7 @@
   <div id="progWrap">
     <span id="progLabel">0/0</span>
     <div id="progTrack"><div id="progFill"></div></div>
+    <button id="progCancel">Annulla</button>
   </div>
 
   <main>
@@ -578,14 +581,23 @@ $("fileInput").onchange = async e=>{
   processBatch(batch);
 };
 
-const prog = { total:0, done:0 };
+const prog = { total:0, done:0, cancel:false };
 function progUpdate(){
   const w=$("progWrap");
-  if(prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
+  if(prog.cancel || prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
   w.classList.add("show");
   $("progLabel").textContent = `Anteprime ${prog.done}/${prog.total}`;
   $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
 }
+$("progCancel").onclick = ()=>{
+  prog.cancel = true;
+  // ferma anche le code cloud in sospeso
+  origQueue.length = 0; origSet.clear();
+  thumbQueue.length = 0;
+  $("progWrap").classList.remove("show");
+  setSync(cloud.online?"online":null, cloud.online?"":"Solo locale");
+  toast("Import interrotto");
+};
 /* ---------- archivio su cartella dedicata ---------- */
 state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
 
@@ -689,11 +701,13 @@ async function decodeScaled(blob, maxSide){
 
 async function processBatch(batch){
   const TH=260, PV=1800;
+  prog.cancel=false;
   prog.total += batch.length*2; progUpdate();
   let fails=0;
 
   // FASE 1 — miniature veloci: la griglia si riempie subito
   for(const p of batch){
+    if(prog.cancel) return;
     try{
       const bmp = await decodeScaled(p.file, TH);
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
@@ -716,6 +730,7 @@ async function processBatch(batch){
   // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
   const evDir = await getImportDir(batch[0].letter);
   for(const p of batch){
+    if(prog.cancel) return;
     let buf=null;
     try{ buf = await p.file.arrayBuffer(); }
     catch(err){ console.warn("lettura", p.code, err); }
