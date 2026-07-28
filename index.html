@@ -291,7 +291,7 @@
     <span>Archivio: <b id="stArch">non impostato</b></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
-    <span>Miniature: <b id="stThumbs">0</b></span>
+    <b id="stThumbs" hidden></b>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
     <div class="spacer"></div>
@@ -1099,7 +1099,7 @@ function renderTabs(){
       state.focusIdx = -1;
       cellPool.forEach(el=>el.remove()); cellPool.clear();
       wrap.scrollTop=0;
-      renderTabs(); layoutGrid();
+      renderTabs(); layoutGrid(); updateThumbCloud();
     };
     if(b.dataset.l) b.ondblclick=()=>editRulloDesc(b.dataset.l);
   });
@@ -1978,11 +1978,13 @@ async function loadServizioFoto(){
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
-  $("stTotal").textContent = state.photos.length;
+  const L=state.activeLetter;
+  const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  $("stTotal").textContent = scope.length;
   const el=$("stThumbCloud"); if(!el) return;
   if(!cloud.servizio){ el.textContent="—"; return; }
-  const tot=state.photos.length;
-  const onCloud=state.photos.filter(p=>p.anteprimaUrl).length;  // davvero caricate sul cloud
+  const tot=scope.length;
+  const onCloud=scope.filter(p=>p.anteprimaUrl).length;
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
   el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
