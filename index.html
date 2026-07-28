@@ -149,28 +149,17 @@
   #syncDot.online{background:var(--ok)}
   #syncDot.offline{background:var(--danger)}
   #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
+  #sedeSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
+  #sedeSelect:hover{border-color:var(--accent)}
   @keyframes pulse{50%{opacity:.35}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-<div id="startScreen">
-  <div class="startCard">
-    <h1>Fay <span>Live</span></h1>
-    <p id="startMsg">Scegli la sede di lavoro</p>
-    <div id="sedeList"></div>
-    <div id="sedeNewWrap" hidden>
-      <input type="text" id="sedeNewName" placeholder="Nome della nuova sede (es. Nammos)" maxlength="40">
-      <button id="sedeNewSave" class="primary">Crea sede</button>
-      <button id="sedeNewCancel">Annulla</button>
-    </div>
-    <button id="sedeNewBtn">+ Nuova sede</button>
-    <button id="startOffline" class="ghost">Continua offline (solo questo PC)</button>
-  </div>
-</div>
 <div id="app">
   <header>
     <h1>Fay <span>Live</span></h1>
+    <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
     <button id="btnArchive">Archivio…</button>
@@ -293,6 +282,27 @@
     <span id="stMode">—</span>
   </div>
 </div>
+
+<dialog id="sedeDlg">
+  <h3 style="margin-bottom:10px">Nuova sede</h3>
+  <input type="text" id="sedeNewName" placeholder="Nome (es. Nammos)" maxlength="40" style="width:100%;margin-bottom:16px">
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="sedeNewCancel">Annulla</button>
+    <button id="sedeNewSave" class="primary">Crea sede</button>
+  </div>
+</dialog>
+
+<dialog id="printDlg">
+  <h3 style="margin-bottom:10px">Stampa — qualità originali</h3>
+  <p id="pdText" style="margin-bottom:14px"></p>
+  <div id="pdWaiting" style="margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="pdCancel">Annulla</button>
+    <button id="pdReady">Stampa solo le pronte</button>
+    <button id="pdWait" class="primary">Aspetta gli originali</button>
+    <button id="pdAll">Stampa tutte ora</button>
+  </div>
+</dialog>
 
 <dialog id="descDlg">
   <h3 style="margin-bottom:10px">Descrizione rullo <span id="ddLetter" class="badge"></span></h3>
@@ -472,7 +482,10 @@ $("evSave").onclick = ()=>{
 };
 function updateEventInfo(){
   const d = serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
-  $("eventInfo").textContent = state.event.name ? state.event.name+" — "+d : d;
+  const parts=[];
+  if(state.event.name) parts.push(state.event.name);
+  parts.push(d);
+  $("eventInfo").textContent = parts.join(" — ");
 }
 updateEventInfo();
 
@@ -707,11 +720,11 @@ async function processBatch(batch){
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
 }
 
-// carica anteprima + ORIGINALE su storage e registra la foto nel DB (soluzione A)
+// carica SOLO l'anteprima + riga foto nel DB (leggero, adatto all'hotspot).
+// L'originale NON sale all'import: sale solo quando la foto viene selezionata o stampata.
 async function syncPhotoUp(p){
   if(!sb || !cloud.servizio || !cloud.rulli[p.letter] || p.remote) return;
   await sbTry(async ()=>{
-    // 1) anteprima (leggera) — serve alle altre postazioni per vedere subito
     let anteprimaUrl = p.anteprimaUrl;
     if(p.preview && !anteprimaUrl){
       const ap = cloud.servizio.id+"/"+p.code+".jpg";
@@ -720,7 +733,6 @@ async function syncPhotoUp(p){
       anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
       p.anteprimaUrl = anteprimaUrl;
     }
-    // 2) riga foto nel DB
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
@@ -729,43 +741,55 @@ async function syncPhotoUp(p){
     if(error) throw error;
     p.dbId = data.id;
   }, "carico "+p.code);
-  // 3) ORIGINALE a piena risoluzione — in coda, così ogni postazione stampa in alta qualità
-  queueOriginalUpload(p);
 }
 
-/* coda di caricamento originali: non blocca l'import, riprende da sola se la linea cade */
+/* coda upload ORIGINALI — solo per le foto che entrano nel giro vendita
+   (selezionate/preferite o messe in stampa). Parallela e non bloccante. */
 const origQueue = [];
-let origWorking = false;
+const origSet = new Set();
+let origActive = 0;
+const ORIG_PARALLEL = 3;
+
 function queueOriginalUpload(p){
   if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
-  origQueue.push(p); runOrigQueue();
+  if(origSet.has(p.code)) return;
+  origSet.add(p.code); origQueue.push(p);
+  pumpOrigQueue();
 }
-async function runOrigQueue(){
-  if(origWorking) return; origWorking=true;
-  while(origQueue.length){
-    const p=origQueue[0];
-    try{
-      const f = p.arch ? await p.arch.getFile() : p.file;
-      if(!f){ origQueue.shift(); continue; }
-      const buf = await f.arrayBuffer();
-      const blob = new Blob([buf], {type:f.type||"image/jpeg"});
-      const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
-      if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
-      p.origUploaded = true;
-      if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
-      origQueue.shift();
-      const done = state.photos.filter(x=>x.origUploaded).length;
-      $("stArch").textContent = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—")) + " · originali cloud: " + done;
-    }catch(err){
-      // linea caduta: fermo la coda, riprenderà al prossimo import o rientro online
-      console.warn("upload originale", err); cloud.online=false; setSync("offline");
-      break;
-    }
+function pumpOrigQueue(){
+  while(origActive < ORIG_PARALLEL && origQueue.length){
+    const p = origQueue.shift();
+    origActive++;
+    uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
   }
-  origWorking=false;
+  updateOrigCount();
 }
-// al rientro online, riprova a svuotare la coda
-addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); runOrigQueue(); } });
+async function uploadOneOriginal(p){
+  try{
+    const f = p.arch ? await p.arch.getFile() : p.file;
+    if(!f) return;
+    const buf = await f.arrayBuffer();
+    const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+    const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+    if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
+    p.origUploaded = true;
+    if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+    cloud.online=true;
+  }catch(err){
+    console.warn("upload originale", p.code, err);
+    // rimetti in coda per un nuovo tentativo più tardi
+    if(!origSet.has(p.code)){ origSet.add(p.code); origQueue.push(p); }
+    cloud.online=false; setSync("offline");
+  }
+}
+function updateOrigCount(){
+  const pend = origQueue.length + origActive;
+  const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
+  $("stArch").textContent = pend? base+" · carico originali: "+pend+" in coda" : base;
+  if(pend) setSync("syncing","Carico originali ("+pend+")"); else if(cloud.online) setSync("online");
+}
+// al rientro online riprova la coda
+addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); pumpOrigQueue(); } });
 
 /* ---------- originali on-demand (soluzione B) ----------
    Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
@@ -995,7 +1019,7 @@ $("searchBox").addEventListener("keydown", e=>{
 /* ---------- selezione ---------- */
 function toggleSel(p){
   if(state.selection.has(p.id)) state.selection.delete(p.id);
-  else state.selection.add(p.id);
+  else { state.selection.add(p.id); queueOriginalUpload(p); } // selezionata = probabile stampa → sale l'originale
   updateSelBar();
 }
 function selSet(){ return [...state.selection].map(id=>state.photos.find(p=>p.id===id)).filter(Boolean); }
@@ -1054,8 +1078,74 @@ async function renderFull(p, withOverlay=true){
   c._lowQuality = lowQuality;
   return c;
 }
+// verifica se l'originale è disponibile (locale o già sul cloud) senza scaricarlo tutto
+async function originalReady(p){
+  if(p.arch || p.file) return true;                 // ce l'ho in locale
+  if(!sb || !cloud.servizio) return false;
+  if(p.origUploaded) return true;
+  try{
+    const {data} = await sb.from("foto").select("originale_url").eq("id",p.dbId).single();
+    if(data && data.originale_url){ p.origReadyCloud=true; return true; }
+  }catch(_){}
+  return false;
+}
+
 async function printPhotos(set){
   if(!set.length){ toast("Nessuna foto da stampare"); return; }
+  // assicura che gli originali delle foto da stampare siano in coda di caricamento
+  set.forEach(p=>queueOriginalUpload(p));
+  // pre-controllo disponibilità
+  const checks = await Promise.all(set.map(async p=>({p, ready: await originalReady(p)})));
+  const ready = checks.filter(x=>x.ready).map(x=>x.p);
+  const missing = checks.filter(x=>!x.ready).map(x=>x.p);
+
+  if(!missing.length){ return doPrint(set); }
+
+  // finestra decisione
+  const dlg=$("printDlg");
+  $("pdText").innerHTML = `<b>${ready.length}</b> foto pronte in alta qualità, <b>${missing.length}</b> in attesa dell'originale `+
+    `(${missing.map(p=>p.code).join(", ")}).`;
+  $("pdWaiting").innerHTML="";
+  $("pdReady").style.display = ready.length? "" : "none";
+  dlg.showModal();
+
+  const choice = await new Promise(res=>{
+    $("pdCancel").onclick=()=>{dlg.close();res("cancel");};
+    $("pdReady").onclick =()=>{dlg.close();res("ready");};
+    $("pdAll").onclick   =()=>{dlg.close();res("all");};
+    $("pdWait").onclick  =()=>res("wait");   // non chiude: mostra attesa
+  });
+
+  if(choice==="cancel") return;
+  if(choice==="ready"){ if(ready.length) doPrint(ready); return; }
+  if(choice==="all"){ doPrint(set); return; }
+
+  // choice === "wait": aspetta gli originali mancanti, con avanzamento
+  const wrap=$("pdWaiting");
+  wrap.innerHTML = missing.map(p=>`<div id="pw_${p.code}" class="hint">⏳ ${p.code} — in arrivo…</div>`).join("");
+  const stillMissing = new Set(missing.map(p=>p.code));
+  const deadline = Date.now()+90000; // max 90s di attesa
+  while(stillMissing.size && Date.now()<deadline){
+    for(const p of missing){
+      if(!stillMissing.has(p.code)) continue;
+      if(await originalReady(p)){
+        stillMissing.delete(p.code);
+        const el=$("pw_"+p.code); if(el){ el.innerHTML=`✓ ${p.code} — pronta`; el.style.color="var(--ok)"; }
+      }
+    }
+    if(stillMissing.size) await new Promise(r=>setTimeout(r,1500));
+  }
+  $("printDlg").close();
+  if(stillMissing.size){
+    toast(`${stillMissing.size} originali non arrivati: stampo il resto in alta qualità`);
+    doPrint(set.filter(p=>!stillMissing.has(p.code)));
+  } else {
+    doPrint(set);
+  }
+}
+
+async function doPrint(set){
+  if(!set.length){ toast("Niente da stampare"); return; }
   const w=window.open("","faylive_print","width=900,height=700");
   if(!w){ toast("Popup bloccato: consenti i popup"); return; }
   w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Stampa</title><style>
@@ -1083,7 +1173,7 @@ async function printPhotos(set){
   set.forEach(p=>{ p.prints++; });
   renderTabs(); paintVisible(); refreshLbStatus();
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
-  if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile (la postazione che le ha importate è offline?)`);
+  if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
   else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
 }
 async function exportPhotos(set){
@@ -1441,30 +1531,30 @@ const thumbCache = {
   }); }catch(_){ } },
 };
 
+const NEW_SEDE = "__new__";
 async function loadSedi(){
-  const list=$("sedeList");
-  if(!sb){ $("startMsg").textContent="Cloud non disponibile: puoi lavorare solo su questo PC."; list.innerHTML=""; return; }
-  $("startMsg").textContent="Carico le sedi…";
+  const sel=$("sedeSelect");
+  if(!sb){ sel.innerHTML='<option value="">Solo locale</option>'; return; }
   try{
     const {data,error}=await sb.from("sedi").select("*").order("nome");
     if(error) throw error;
-    if(!data.length){ $("startMsg").textContent="Nessuna sede ancora. Creane una con \"+ Nuova sede\"."; }
-    else $("startMsg").textContent="Scegli la sede di lavoro";
-    list.innerHTML="";
-    data.forEach(s=>{
-      const d=document.createElement("div"); d.className="sedeItem";
-      d.innerHTML=`<span>${s.nome.replace(/[<>&]/g,"")}</span><span style="color:var(--muted)">›</span>`;
-      d.onclick=()=>chooseSede(s);
-      list.append(d);
-    });
+    sel.innerHTML='<option value="">Sede…</option>' +
+      data.map(s=>`<option value="${s.id}">${s.nome.replace(/[<>&"]/g,"")}</option>`).join("") +
+      `<option value="${NEW_SEDE}">+ Nuova sede…</option>`;
+    sel._sedi = data;
   }catch(err){
-    $("startMsg").textContent="Cloud non raggiungibile. Puoi continuare offline su questo PC.";
+    sel.innerHTML='<option value="">Sede… (cloud non raggiungibile)</option>';
     console.warn("sedi", err);
   }
 }
-
-$("sedeNewBtn").onclick=()=>{ $("sedeNewWrap").hidden=false; $("sedeNewName").focus(); };
-$("sedeNewCancel").onclick=()=>{ $("sedeNewWrap").hidden=true; };
+$("sedeSelect").onchange = e=>{
+  const v=e.target.value;
+  if(v===NEW_SEDE){ e.target.value=""; $("sedeNewName").value=""; $("sedeDlg").showModal(); $("sedeNewName").focus(); return; }
+  if(!v){ return; }
+  const s=(e.target._sedi||[]).find(x=>x.id===v);
+  if(s) chooseSede(s);
+};
+$("sedeNewCancel").onclick=()=>$("sedeDlg").close();
 $("sedeNewSave").onclick=async ()=>{
   const nome=$("sedeNewName").value.trim();
   if(!nome){ $("sedeNewName").focus(); return; }
@@ -1473,15 +1563,17 @@ $("sedeNewSave").onclick=async ()=>{
     const codice = nome.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12) + Math.floor(Math.random()*90+10);
     const {data,error}=await sb.from("sedi").insert({nome,codice}).select().single();
     if(error) throw error;
+    $("sedeDlg").close();
+    await loadSedi();
+    $("sedeSelect").value=data.id;
     chooseSede(data);
   }catch(err){ toast("Errore creando la sede: "+(err.message||err)); }
 };
-$("startOffline").onclick=()=>{ cloud.sede=null; setSync(null,"Solo locale"); startApp(); };
 
 async function chooseSede(s){
   cloud.sede=s;
+  $("sedeSelect").value=s.id;
   setSync("syncing","Apro il servizio…");
-  // servizio del giorno di servizio per questa sede: riusa se già esiste
   const d = serviceDateStr();
   try{
     let {data:serv} = await sb.from("servizi").select("*").eq("sede_id",s.id).eq("data_servizio",d).limit(1);
@@ -1494,12 +1586,12 @@ async function chooseSede(s){
     cloud.online=true; setSync("online");
     await loadServizioFoto();
     subscribeRealtime();
-    cleanupOld();   // rimuove gli originali oltre la finestra (default 30 giorni)
+    cleanupOld();
   }catch(err){
     cloud.online=false; setSync("offline");
     console.warn("servizio", err);
   }
-  startApp();
+  updateEventInfo();
 }
 
 // carica dal cloud i rulli e le foto già presenti nel servizio (per postazioni che si aggiungono)
@@ -1605,19 +1697,12 @@ async function cleanupOld(){
   }catch(err){ console.warn("cleanup", err); }
 }
 
-function startApp(){
-  $("startScreen").classList.add("hidden");
-  if(cloud.sede){
-    $("eventInfo").textContent = cloud.sede.nome + " — " + serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
-  } else updateEventInfo();
-  layoutGrid();
-}
-
 // stato connessione del browser
 addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
 
-// avvio: mostra la scelta sede
+// avvio: popola la tendina sedi; l'app è già utilizzabile
 loadSedi();
+if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
 
 </script>
 </body>
