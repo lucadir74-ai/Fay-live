@@ -1714,7 +1714,7 @@ async function clearCurrentDay(){
   }
 }
 
-// carica dal cloud i rulli e le foto già presenti nel servizio (per postazioni che si aggiungono)
+// carica dal cloud i rulli e le foto della GIORNATA corrente (filtra per i rulli di questo servizio)
 async function loadServizioFoto(){
   if(!sb || !cloud.servizio) return;
   const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
@@ -1722,7 +1722,10 @@ async function loadServizioFoto(){
     if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
     state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
   const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
-  const {data:foto} = await sb.from("foto").select("*").order("codice");
+  const ids=(rulli||[]).map(r=>r.id);
+  if(!ids.length){ renderTabs(); layoutGrid(); return; }
+  // SOLO le foto dei rulli di questa giornata
+  const {data:foto} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice");
   for(const f of (foto||[])){
     if(state.byCode.has(f.codice)) continue;
     const r=rulliById[f.rullo_id]; if(!r) continue;
