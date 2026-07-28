@@ -149,6 +149,8 @@
   #syncDot.online{background:var(--ok)}
   #syncDot.offline{background:var(--danger)}
   #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
+  #btnClearDay{border-color:var(--line);color:var(--muted)}
+  #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
   #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
   @keyframes pulse{50%{opacity:.35}}
@@ -163,6 +165,7 @@
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
+    <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
@@ -284,6 +287,15 @@
   </div>
 </div>
 
+<dialog id="clearDlg">
+  <h3 style="margin-bottom:10px">Svuota giornata</h3>
+  <p id="clearText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="clearNo">Annulla</button>
+    <button id="clearYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Svuota dal cloud</button>
+  </div>
+</dialog>
+
 <dialog id="sedeDlg">
   <h3 style="margin-bottom:10px">Nuova sede</h3>
   <input type="text" id="sedeNewName" placeholder="Nome (es. Nammos)" maxlength="40" style="width:100%;margin-bottom:16px">
@@ -397,9 +409,16 @@ function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("sho
 function pad3(n){ return String(n).padStart(3,"0"); }
 // "giorno di servizio": la giornata cambia alle 8:00, non a mezzanotte.
 // Un import all'1:30 di notte appartiene ancora alla data della sera prima.
-const SERVICE_DAY_CUTOFF_H = 8;
+const SERVICE_DAY_CUTOFF_H = 6;
 function serviceDate(){ return new Date(Date.now() - SERVICE_DAY_CUTOFF_H*3600*1000); }
-function serviceDateStr(){ return serviceDate().toISOString().slice(0,10); }
+// data del giorno di servizio in ORA LOCALE (non UTC), formato AAAA-MM-GG
+function serviceDateStr(){
+  const d = serviceDate();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const g = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${g}`;
+}
 function fmtCode(letter,num){ return letter+"-"+pad3(num); }
 function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 
@@ -1645,6 +1664,55 @@ $("giornoSelect").onchange = e=>{
   const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
   if(sv) openServizio(sv);
 };
+
+/* ---------- svuota giornata (solo cloud) ---------- */
+$("btnClearDay").onclick = ()=>{
+  if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
+  const n = state.photos.length;
+  const dataStr = cloud.servizio.data_servizio;
+  $("clearText").innerHTML = `Verranno cancellate <b>dal cloud</b> tutte le foto di questa giornata`+
+    (cloud.sede?` (${cloud.sede.nome}, ${dataStr})`:"")+`: <b>${n}</b> foto, con anteprime e originali caricati.<br><br>`+
+    `Gli originali salvati sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
+  const dlg=$("clearDlg"); dlg.showModal();
+  $("clearNo").onclick=()=>dlg.close();
+  $("clearYes").onclick=async ()=>{
+    dlg.close();
+    await clearCurrentDay();
+  };
+};
+
+async function clearCurrentDay(){
+  if(!sb || !cloud.servizio) return;
+  setSync("syncing","Svuoto la giornata…");
+  const sid = cloud.servizio.id;
+  try{
+    // 1) cancella i file storage (anteprime + originali) della giornata
+    for(const bucket of ["anteprime","originali"]){
+      try{
+        const {data:files} = await sb.storage.from(bucket).list(sid);
+        if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>sid+"/"+f.name));
+      }catch(_){}
+    }
+    // 2) cancella le righe foto dei rulli di questa giornata
+    const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id",sid);
+    const ids=(rulli||[]).map(r=>r.id);
+    if(ids.length){ await sb.from("foto").delete().in("rullo_id", ids); }
+    // 3) cancella i rulli
+    await sb.from("rulli").delete().eq("servizio_id", sid);
+    // 4) svuota lo stato locale in memoria
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    cloud.rulli={}; state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0";
+    renderTabs(); layoutGrid();
+    cloud.online=true; setSync("online");
+    toast("Giornata svuotata dal cloud");
+  }catch(err){
+    cloud.online=false; setSync("offline");
+    toast("Errore svuotando: "+(err.message||err));
+    console.warn("clearDay", err);
+  }
+}
 
 // carica dal cloud i rulli e le foto già presenti nel servizio (per postazioni che si aggiungono)
 async function loadServizioFoto(){
