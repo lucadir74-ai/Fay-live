@@ -169,6 +169,7 @@
     <button id="btnEvent">Servizio…</button>
     <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
+    <button id="btnExportDir">Cartella export…</button>
     <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
@@ -285,6 +286,7 @@
     <span>Foto: <b id="stTotal">0</b></span>
     <span>Archivio: <b id="stArch">non impostato</b></span>
     <span>Anteprime cloud: <b id="stThumbCloud">—</b></span>
+    <span>Export: <b id="stExport">Download</b></span>
     <span>Miniature: <b id="stThumbs">0</b></span>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
@@ -700,6 +702,12 @@ async function ensureArchive(){
   }catch(_){ return null; }
 }
 $("btnArchive").onclick = ()=> ensureArchive();
+$("btnExportDir").onclick = async ()=>{
+  state.exportDir=null;                 // forza una nuova scelta
+  const d=await ensureExportDir();
+  if(d) toast(`Cartella export: ${d.name}`);
+};
+idb.get("exportDir").then(h=>{ if(h) $("stExport").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
 idb.get("archiveDir").then(h=>{ if(h && !state.archive) $("stArch").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
 
@@ -1312,21 +1320,54 @@ async function doPrint(set){
 }
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
-  let fallback=0;
+  const dir = await ensureExportDir();  // cartella fissa scelta una volta
+  let fallback=0, saved=0;
   for(const p of set){
     let blob = await ensureOriginalBlob(p);
     let name = p.code+".jpg";
     if(!blob){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } else { toast(p.code+": originale non disponibile"); continue; } }
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=url; a.download=name;
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    if(dir){
+      // scrive direttamente nella cartella scelta (niente popup download)
+      try{
+        const fh=await dir.getFileHandle(name,{create:true});
+        const w=await fh.createWritable(); await w.write(blob); await w.close();
+        saved++;
+      }catch(err){ console.warn("export su cartella", p.code, err); }
+    } else {
+      // ripiego: download del browser
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download=name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 5000); saved++;
+    }
     p.exported=true;
     if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export");
   }
   renderTabs(); paintVisible(); refreshLbStatus();
-  toast(`Esportat${set.length===1?"a":"e"} ${set.length===1?set[0].code:set.length+" foto"} (cartella Download)` + (fallback? ` — ⚠ ${fallback} in bassa qualità: originale non disponibile` : ""));
+  const dove = dir ? `cartella "${dir.name}"` : "cartella Download";
+  toast(`Esportate ${saved} foto (${dove})` + (fallback? ` — ⚠ ${fallback} in bassa qualità` : ""));
+}
+
+// cartella di esportazione fissa (scelta una volta, ricordata tra le sessioni)
+state.exportDir = null;
+async function ensureExportDir(){
+  if(state.exportDir) return state.exportDir;
+  if(!window.showDirectoryPicker) return null; // browser senza supporto → download classico
+  try{
+    const saved = await idb.get("exportDir");
+    if(saved){
+      let perm=await saved.queryPermission({mode:"readwrite"});
+      if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
+      if(perm==="granted"){ state.exportDir=saved; $("stExport").textContent=saved.name; return saved; }
+    }
+  }catch(_){}
+  toast("Scegli la cartella dove salvare le foto esportate (una volta sola)");
+  try{
+    state.exportDir = await showDirectoryPicker({mode:"readwrite"});
+    $("stExport").textContent = state.exportDir.name;
+    idb.set("exportDir", state.exportDir).catch(()=>{});
+    return state.exportDir;
+  }catch(_){ return null; }
 }
 function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
 function statusText(p){
