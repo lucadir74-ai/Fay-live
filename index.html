@@ -169,8 +169,10 @@
     <button id="btnEvent">Servizio…</button>
     <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
+    <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
+    <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
     <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
     <button id="btnMonitor">Apri monitor cliente</button>
@@ -282,6 +284,7 @@
   <div id="statusBar">
     <span>Foto: <b id="stTotal">0</b></span>
     <span>Archivio: <b id="stArch">non impostato</b></span>
+    <span>Anteprime cloud: <b id="stThumbCloud">—</b></span>
     <span>Miniature: <b id="stThumbs">0</b></span>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
@@ -520,6 +523,56 @@ updateEventInfo();
 
 /* ---------- import ---------- */
 $("btnImport").onclick = ()=> $("fileInput").click();
+
+// --- Ripristino anteprime dagli originali locali (stessi codici dal nome file) ---
+$("btnRestore").onclick = ()=>{
+  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
+  $("restoreInput").click();
+};
+$("restoreInput").onchange = async e=>{
+  const files=[...e.target.files].filter(isImage);
+  e.target.value="";
+  if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
+  // mappa codice -> file, leggendo il codice dal nome (es. A-047.jpg)
+  const byCode=new Map();
+  for(const f of files){
+    const m=(f.name.match(/([A-Z])-?(\d{1,4})/i));
+    if(m){ const code=m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0"); byCode.set(code,f); }
+  }
+  // quali foto della giornata hanno bisogno dell'anteprima?
+  const need = state.photos.filter(p=>!(p.anteprimaUrl) && byCode.has(p.code));
+  const missingFile = state.photos.filter(p=>!(p.anteprimaUrl) && !byCode.has(p.code));
+  if(!need.length){
+    toast(missingFile.length? `Nessun originale corrispondente trovato (${missingFile.length} anteprime mancanti)` : "Anteprime già tutte presenti");
+    return;
+  }
+  prog.cancel=false; prog.total+=need.length; progUpdate();
+  let done=0;
+  for(const p of need){
+    if(prog.cancel) break;
+    const f=byCode.get(p.code);
+    try{
+      const buf=await f.arrayBuffer();
+      const bmp=await decodeScaled(new Blob([buf],{type:f.type||"image/jpeg"}), 1800);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      const prevBlob=await toBlobAsync(c,0.85);
+      p.preview=prevBlob; thumbCache.set(p.code, prevBlob);
+      if(!p.thumb){ try{ p.thumb=await blobToThumb(prevBlob); }catch(_){} }
+      // ricarica sul cloud mantenendo lo stesso codice/riga
+      const ap=cloud.servizio.id+"/"+p.code+".jpg";
+      const up=await sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true});
+      if(!up.error){
+        p.anteprimaUrl=sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+        if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
+      }
+    }catch(err){ console.warn("ripristino", p.code, err); }
+    done++; prog.done++;
+    if((done&3)===0){ progUpdate(); paintVisible(); updateThumbCloud(); await new Promise(r=>setTimeout(r,0)); }
+  }
+  progUpdate(); paintVisible(); updateThumbCloud();
+  toast(`Ripristinate ${done} anteprime` + (missingFile.length? ` — ${missingFile.length} senza originale nella cartella` : ""));
+};
 
 // lettera suggerita dal nome della cartella che contiene la foto (es. ".../25-07/B/IMG_001.jpg" -> B)
 function detectLetter(f){
@@ -1766,7 +1819,18 @@ async function loadServizioFoto(){
     const r=rulliById[f.rullo_id]; if(!r) continue;
     await addRemotePhoto(f, r.lettera);
   }
-  renderTabs(); layoutGrid();
+  renderTabs(); layoutGrid(); updateThumbCloud();
+}
+
+// indicatore: quante foto della giornata hanno l'anteprima sul cloud
+function updateThumbCloud(){
+  const el=$("stThumbCloud"); if(!el) return;
+  if(!cloud.servizio){ el.textContent="—"; return; }
+  const tot=state.photos.length;
+  const withThumb=state.photos.filter(p=>p.anteprimaUrl || p.preview || !p.remote).length;
+  if(!tot){ el.textContent="0"; el.style.color=""; return; }
+  el.textContent = withThumb+"/"+tot + (withThumb<tot? " ⚠" : " ✓");
+  el.style.color = withThumb<tot ? "var(--danger)" : "var(--ok)";
 }
 
 // inserisce nella griglia una foto che arriva dal cloud (senza file originale locale)
