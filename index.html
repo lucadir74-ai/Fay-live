@@ -736,15 +736,35 @@ async function processBatch(batch){
       p.preview = await toBlobAsync(c, 0.85);
       thumbCache.set(p.code, p.preview);
     }catch(err){ console.warn("anteprima", p.code, err); }
-    // sincronizza sul cloud: carica l'anteprima e registra la foto
-    await syncPhotoUp(p);
+    // sincronizzazione cloud NON bloccante: va in coda parallela, l'import prosegue
+    queueThumbSync(p);
     buf=null;
     prog.done++;
-    if((prog.done & 7)===0){ progUpdate(); await new Promise(r=>setTimeout(r,0)); }
+    if((prog.done & 3)===0){ progUpdate(); paintVisible(); await new Promise(r=>setTimeout(r,0)); }
   }
-  progUpdate();
+  progUpdate(); paintVisible();
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
 }
+
+/* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
+const thumbQueue = [];
+let thumbActive = 0;
+const THUMB_PARALLEL = 4;
+function queueThumbSync(p){
+  if(!sb || !cloud.servizio || p.remote) return;
+  thumbQueue.push(p); pumpThumbQueue();
+}
+function pumpThumbQueue(){
+  while(thumbActive < THUMB_PARALLEL && thumbQueue.length){
+    const p = thumbQueue.shift();
+    thumbActive++;
+    syncPhotoUp(p).finally(()=>{ thumbActive--; pumpThumbQueue();
+      const pend = thumbQueue.length + thumbActive;
+      if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else if(cloud.online) setSync("online");
+    });
+  }
+}
+addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 
 // carica SOLO l'anteprima + riga foto nel DB (leggero, adatto all'hotspot).
 // L'originale NON sale all'import: sale solo quando la foto viene selezionata o stampata.
