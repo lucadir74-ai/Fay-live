@@ -1005,21 +1005,32 @@ addEventListener("resize", layoutGrid);
 
 /* ---------- ricerca ---------- */
 $("searchBox").oninput = e=>{
-  state.filter = e.target.value.trim().toUpperCase();
-  cellPool.forEach(el=>el.remove()); cellPool.clear();
-  state.focusIdx = state.filter? 0 : state.focusIdx;
-  wrap.scrollTop=0; layoutGrid();
-  // se la ricerca identifica la foto, la mostro subito in grande (griglia visibile dietro)
-  const list=filteredPhotos(), ex=parseQuery(state.filter);
-  const exact = ex? list.find(p=>p.num===ex.num) : null;
-  if(exact) openLightbox(list.indexOf(exact));
-  else if(list.length===1) openLightbox(0);
-  else if($("lightbox").classList.contains("open")) closeLightbox();
+  const raw = e.target.value.trim().toUpperCase();
+  const ex = parseQuery(raw);
+  // ricerca per codice completo: apre la foto SENZA filtrare la griglia (che resta intera dietro)
+  if(ex){
+    const p = state.byCode.get(fmtCode(ex.letter, ex.num)) ||
+              state.photos.find(x=>x.letter===ex.letter && x.num===ex.num);
+    if(p){
+      const idx = filteredPhotos().indexOf(p);
+      if(idx>=0){ state.focusIdx=idx; openLightbox(idx); }
+      return;
+    }
+    if($("lightbox").classList.contains("open")) closeLightbox();
+    return;
+  }
+  // testo parziale: nessun codice completo → chiudo eventuale foto aperta, griglia intera
+  if($("lightbox").classList.contains("open")) closeLightbox();
 };
+function resetSearch(){
+  $("searchBox").value="";
+  state.filter="";
+}
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
     e.target.blur();
     if($("lightbox").classList.contains("open")) closeLightbox();
+    resetSearch();
   }
 });
 
@@ -1281,7 +1292,7 @@ async function paintLightbox(){
   }
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
-function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; paintVisible(); }
+function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; if($("searchBox").value){ resetSearch(); } paintVisible(); }
 $("lbClose").onclick=closeLightbox;
 $("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
 $("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); } };
