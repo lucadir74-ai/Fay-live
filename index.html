@@ -1962,6 +1962,7 @@ async function loadServizioFoto(){
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
+  $("stTotal").textContent = state.photos.length;  // tieni allineato anche il contatore foto
   const el=$("stThumbCloud"); if(!el) return;
   if(!cloud.servizio){ el.textContent="—"; return; }
   const tot=state.photos.length;
@@ -2003,7 +2004,7 @@ function subscribeRealtime(){
       if(!r || r.servizio_id!==cloud.servizio.id) return;
       if(state.byCode.has(f.codice)) return;
       await addRemotePhoto(f, r.lettera);
-      renderTabs(); layoutGrid();
+      renderTabs(); layoutGrid(); updateThumbCloud();
       const M=state.monitor; if(M.win && !M.win.closed) M.queue=buildSlideshowQueue();
     })
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
