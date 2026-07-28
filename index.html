@@ -844,17 +844,35 @@ function queueThumbSync(p){
   p._thumbTries = 0;
   thumbQueue.push(p); pumpThumbQueue();
 }
+// crea il rullo una sola volta (evita che 8 upload in parallelo lo creino insieme)
+const rulloLocks = {};
+async function ensureRullo(letter){
+  if(cloud.rulli[letter]) return cloud.rulli[letter];
+  if(!rulloLocks[letter]){
+    rulloLocks[letter] = (async ()=>{
+      const {data:r,error}=await sb.from("rulli")
+        .upsert({servizio_id:cloud.servizio.id, lettera:letter, descrizione:state.letterDesc[letter]||null},
+                {onConflict:"servizio_id,lettera"}).select().single();
+      if(error) throw error;
+      cloud.rulli[letter]={id:r.id, ultimo_num:r.ultimo_num};
+      return cloud.rulli[letter];
+    })();
+  }
+  return rulloLocks[letter];
+}
 function pumpThumbQueue(){
   while(thumbActive < THUMB_PARALLEL && thumbQueue.length){
     const p = thumbQueue.shift();
     thumbActive++;
-    syncPhotoUp(p).then(()=>{
-      // se non è salita (errore), riprova fino a 4 volte
-      if(!p.anteprimaUrl && (p._thumbTries||0) < 4){ p._thumbTries=(p._thumbTries||0)+1; thumbQueue.push(p); }
+    syncPhotoUp(p).then(ok=>{
+      if(!ok && (p._thumbTries||0) < 6){
+        p._thumbTries=(p._thumbTries||0)+1;
+        setTimeout(()=>{ thumbQueue.push(p); pumpThumbQueue(); }, 800*p._thumbTries); // backoff
+      }
     }).finally(()=>{
       thumbActive--;
       const pend = thumbQueue.length + thumbActive;
-      if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else if(cloud.online) setSync("online");
+      if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else setSync("online");
       updateThumbCloud();
       pumpThumbQueue();
     });
@@ -862,36 +880,30 @@ function pumpThumbQueue(){
 }
 addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 
-// carica SOLO l'anteprima + riga foto nel DB (leggero, adatto all'hotspot).
-// L'originale NON sale all'import: sale solo quando la foto viene selezionata o stampata.
+// carica anteprima + riga foto. Ritorna true se ok, false se da riprovare. Non forza offline.
 async function syncPhotoUp(p){
-  if(!sb || !cloud.servizio || p.remote) return;
-  await sbTry(async ()=>{
-    // assicura il rullo sul cloud (se l'import era offline o il rullo non è ancora registrato)
-    if(!cloud.rulli[p.letter]){
-      const {data:r,error:re}=await sb.from("rulli")
-        .upsert({servizio_id:cloud.servizio.id, lettera:p.letter, descrizione:state.letterDesc[p.letter]||null},
-                {onConflict:"servizio_id,lettera"}).select().single();
-      if(re) throw re;
-      cloud.rulli[p.letter]={id:r.id, ultimo_num:r.ultimo_num};
-    }
-    let anteprimaUrl = p.anteprimaUrl;
-    if(p.preview && !anteprimaUrl){
+  if(!sb || !cloud.servizio || p.remote) return true;
+  try{
+    await ensureRullo(p.letter);
+    if(p.preview && !p.anteprimaUrl){
       const ap = cloud.servizio.id+"/"+p.code+".jpg";
       const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
       if(up.error) throw up.error;
-      anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
-      p.anteprimaUrl = anteprimaUrl;
+      p.anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
     }
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
-      anteprima_url: anteprimaUrl, stampe: p.prints, esportata: p.exported
+      anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
     }, {onConflict:"rullo_id,codice"}).select().single();
     if(error) throw error;
     p.dbId = data.id;
-    updateThumbCloud();
-  }, "carico "+p.code);
+    cloud.online=true;
+    return true;
+  }catch(err){
+    console.warn("syncPhotoUp", p.code, err);
+    return false; // verrà rimessa in coda
+  }
 }
 
 /* coda upload ORIGINALI — solo per le foto che entrano nel giro vendita
