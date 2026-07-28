@@ -1008,8 +1008,19 @@ let cols=1, visible=[], cellPool=new Map(); // idx foto filtrata -> div
 
 function parseQuery(q){
   const clean=q.replace(/[^A-Z0-9]/g,"");
-  const m=clean.match(/^([A-Z])(\d{1,4})$/);
-  return m? {letter:m[1], num:parseInt(m[2],10)} : null;
+  let m=clean.match(/^([A-Z])(\d{1,4})$/);
+  if(m) return {letter:m[1], num:parseInt(m[2],10)};
+  // solo numero: usa la lettera attiva, oppure l'unica lettera presente
+  m=clean.match(/^(\d{1,4})$/);
+  if(m){
+    let L = state.activeLetter;
+    if(!L){
+      const letters=[...new Set(state.photos.map(p=>p.letter))];
+      if(letters.length===1) L=letters[0];
+    }
+    if(L) return {letter:L, num:parseInt(m[1],10)};
+  }
+  return null;
 }
 function filteredPhotos(){
   let list = state.activeLetter? state.photos.filter(p=>p.letter===state.activeLetter) : state.photos;
@@ -1113,20 +1124,18 @@ addEventListener("resize", layoutGrid);
 /* ---------- ricerca ---------- */
 $("searchBox").oninput = e=>{
   const raw = e.target.value.trim().toUpperCase();
+  if(!raw){ if($("lightbox").classList.contains("open")) closeLightbox(); return; }
   const ex = parseQuery(raw);
-  // ricerca per codice completo: apre la foto SENZA filtrare la griglia (che resta intera dietro)
   if(ex){
-    const p = state.byCode.get(fmtCode(ex.letter, ex.num)) ||
-              state.photos.find(x=>x.letter===ex.letter && x.num===ex.num);
+    const code = fmtCode(ex.letter, ex.num);
+    const p = state.byCode.get(code) || state.photos.find(x=>x.letter===ex.letter && x.num===ex.num);
     if(p){
-      const idx = filteredPhotos().indexOf(p);
-      if(idx>=0){ state.focusIdx=idx; openLightbox(idx); }
-      return;
-    }
-    if($("lightbox").classList.contains("open")) closeLightbox();
+      // apri la foto anche se è filtrata da una scheda lettera diversa: passo alla lista completa
+      const idx = state.photos.indexOf(p);
+      openLightboxList(state.photos, idx);
+    } else if($("lightbox").classList.contains("open")){ closeLightbox(); }
     return;
   }
-  // testo parziale: nessun codice completo → chiudo eventuale foto aperta, griglia intera
   if($("lightbox").classList.contains("open")) closeLightbox();
 };
 function resetSearch(){
