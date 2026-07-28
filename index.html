@@ -1628,7 +1628,7 @@ function repaintMonitor(){
   const M=state.monitor;
   if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
   else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
-  else if(M._last) paintMonitorPhoto(M._last, false);
+  else if(M._last) paintMonitorPhoto(M._last, M.mode!=="off"); // in presentazione il codice resta visibile
 }
 
 /* ---------- presentazione (foto singola o set) ---------- */
