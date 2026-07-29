@@ -260,6 +260,14 @@
           <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo"></div>
         <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
           <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo"></div>
+        <div class="field"><label>Cornice bianca in stampa</label>
+          <label style="font-weight:400"><input type="checkbox" id="evFrameOn" checked> Aggiungi bordo bianco alle stampe</label>
+          <div style="display:flex;gap:12px;margin-top:6px">
+            <span style="flex:1">Bordo <input type="range" id="evFrameBorder" min="0" max="6" step="0.5" value="2.5" style="width:100%"></span>
+            <span style="flex:1">Spazio sotto <input type="range" id="evFrameBottom" min="0" max="14" step="1" value="6" style="width:100%"></span>
+          </div>
+          <p class="hint">Solo in stampa: bordo sottile su 4 lati e più spazio sotto per la scritta. Non cambia lo slideshow né gli originali.</p>
+        </div>
         <div class="field"><label>Anteprima overlay (orizzontale / verticale)</label>
           <div id="ovPreview">
             <canvas id="pvH" width="220" height="147"></canvas>
@@ -445,21 +453,32 @@ function fmtCode(letter,num){ return letter+"-"+pad3(num); }
 function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 
 /* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
-function drawOverlay(ctx, w, h){
+function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
   const ev = state.event; if(!ev) return;
-  const S = Math.min(w,h), m = S*0.035;
+  const S = Math.min(iw,ih), m = S*0.035;
+  // logo: angolo in alto a destra della FOTO (dentro la cornice)
   if(ev.logoImg){
     const lw = S*0.20, lh = lw * (ev.logoImg.height/ev.logoImg.width);
-    ctx.drawImage(ev.logoImg, w-m-lw, m, lw, lh);
+    ctx.drawImage(ev.logoImg, border+iw-m-lw, border+m, lw, lh);
   }
+  // scritta: se c'è banda bianca sotto, la centro lì in nero; altrimenti sulla foto in bianco
   if(ev.text){
-    const fs = Math.max(10, S*0.042);
-    ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
-    ctx.textBaseline = "bottom";
-    ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
-    ctx.fillStyle="#fff";
-    ctx.fillText(ev.text, m, h-m);
-    ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+    if(bottomExtra>0){
+      const fs = Math.max(10, bottomExtra*0.5);
+      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = "middle"; ctx.textAlign="center";
+      ctx.fillStyle = ev.frameTextColor || "#111";
+      ctx.fillText(ev.text, border+iw/2, border+ih+bottomExtra/2);
+      ctx.textAlign="left";
+    } else {
+      const fs = Math.max(10, S*0.042);
+      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = "bottom";
+      ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
+      ctx.fillStyle="#fff";
+      ctx.fillText(ev.text, border+m, border+ih-m);
+      ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+    }
   }
 }
 function drawCodeBadge(ctx, w, h, code, status){
@@ -483,6 +502,9 @@ function openEventPanel(){
   const ev = state.event;
   $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
   $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
+  $("evFrameOn").checked = ev.frameOn!==false;
+  $("evFrameBorder").value = ev.frameBorder ?? 2.5;
+  $("evFrameBottom").value = ev.frameBottom ?? 6;
   pendingLogo = ev.logoImg;
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
@@ -517,6 +539,9 @@ $("evSave").onclick = ()=>{
     text: $("evText").value.trim(),
     infoLine: $("evInfoLine").value.trim(),
     logoImg: pendingLogo,
+    frameOn: $("evFrameOn").checked,
+    frameBorder: +$("evFrameBorder").value,
+    frameBottom: +$("evFrameBottom").value,
   };
   updateEventInfo();
   $("eventPanel").classList.remove("open");
@@ -1271,9 +1296,22 @@ async function renderFull(p, withOverlay=true){
     lowQuality=true;
     src = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
   }
-  const c=document.createElement("canvas"); c.width=src.width; c.height=src.height;
-  const ctx=c.getContext("2d"); ctx.drawImage(src,0,0); src.close();
-  if(withOverlay) drawOverlay(ctx,c.width,c.height);
+  const ev = state.event || {};
+  const iw=src.width, ih=src.height, S=Math.min(iw,ih);
+  // cornice bianca: bordo sottile su 4 lati + banda extra sotto per la scritta
+  const border = ev.frameOn===false ? 0 : Math.round(S * ((ev.frameBorder ?? 2.5)/100)); // % del lato corto
+  const bottomExtra = (ev.frameOn===false || !ev.text) ? 0 : Math.round(S * ((ev.frameBottom ?? 6)/100));
+  const c=document.createElement("canvas");
+  c.width = iw + border*2;
+  c.height = ih + border*2 + bottomExtra;
+  const ctx=c.getContext("2d");
+  // sfondo cornice
+  ctx.fillStyle = ev.frameColor || "#ffffff";
+  ctx.fillRect(0,0,c.width,c.height);
+  // foto dentro la cornice
+  ctx.drawImage(src, border, border, iw, ih); src.close();
+  // logo + scritta, posizionati rispetto alla foto e alla banda inferiore
+  if(withOverlay) drawOverlay(ctx, iw, ih, border, bottomExtra);
   c._lowQuality = lowQuality;
   return c;
 }
