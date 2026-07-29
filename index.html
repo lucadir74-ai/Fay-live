@@ -175,6 +175,7 @@
     <button id="btnArchive">Archivio…</button>
     <button id="btnExportDir">Cartella export…</button>
     <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
+    <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
@@ -543,6 +544,20 @@ $("btnImport").onclick = ()=> $("fileInput").click();
 $("btnRestore").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
   $("restoreInput").click();
+};
+$("btnClearCache").onclick = async ()=>{
+  if(!confirm("Svuota la memoria locale delle anteprime su questo PC e ricarica dal cloud.\nLe foto sul cloud NON vengono toccate. Procedere?")) return;
+  try{
+    await thumbCache.clear();
+    // svuota lo stato in memoria e ricarica la giornata dal cloud
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    cloud.rulli={}; state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0";
+    if(cloud.servizio){ await loadServizioFoto(); }
+    renderTabs(); layoutGrid(); updateThumbCloud();
+    toast("Cache locale svuotata e ricaricata dal cloud");
+  }catch(err){ toast("Errore pulizia cache: "+(err.message||err)); }
 };
 $("restoreInput").onchange = async e=>{
   const files=[...e.target.files].filter(isImage);
@@ -1745,6 +1760,9 @@ const thumbCache = {
   }); }catch(_){ return null; } },
   async set(k,v){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
     const t=db.transaction("t","readwrite").objectStore("t").put(v,k); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
+  }); }catch(_){ } },
+  async clear(){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t","readwrite").objectStore("t").clear(); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
   }); }catch(_){ } },
 };
 
