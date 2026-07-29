@@ -1347,11 +1347,18 @@ async function doPrint(set){
   if(!set.length){ toast("Niente da stampare"); return; }
   const w=window.open("","faylive_print","width=900,height=700");
   if(!w){ toast("Popup bloccato: consenti i popup"); return; }
+  // ogni pagina prende l'orientamento della propria foto (orizzontale/verticale)
   w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Stampa</title><style>
+    html,body{margin:0;padding:0}
+    .pg{page-break-after:always;display:flex;align-items:center;justify-content:center}
+    .pg:last-child{page-break-after:auto}
+    .pg.land{page:land}
+    .pg.port{page:port}
+    @page land{size:landscape;margin:0}
+    @page port{size:portrait;margin:0}
     @page{margin:0}
-    html,body{margin:0}
-    .pg{page-break-after:always;display:flex;align-items:center;justify-content:center;width:100vw;height:100vh}
-    img{max-width:100%;max-height:100%}
+    img{display:block;max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}
+    .pg{width:100vw;height:100vh}
   </style></head><body></body></html>`);
   w.document.close();
   toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
@@ -1361,14 +1368,19 @@ async function doPrint(set){
     try{ c=await renderFull(p,true); }
     catch(err){ toast(err.message||("Impossibile stampare "+p.code)); continue; }
     if(c._lowQuality) low++;
+    const land = c.width >= c.height;       // foto orizzontale?
     const img=w.document.createElement("img");
     img.src=c.toDataURL("image/jpeg",0.95);
     loads.push(img.decode().catch(()=>{}));
-    const d=w.document.createElement("div"); d.className="pg"; d.append(img);
+    const d=w.document.createElement("div");
+    d.className="pg "+(land?"land":"port");
+    d.append(img);
     w.document.body.append(d);
   }
   await Promise.all(loads);
   w.focus(); w.print();
+  // chiudi la foto aperta in grande dopo la stampa
+  if($("lightbox").classList.contains("open")) closeLightbox();
   set.forEach(p=>{ p.prints++; });
   renderTabs(); paintVisible(); refreshLbStatus();
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
