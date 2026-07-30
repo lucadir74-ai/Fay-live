@@ -36,15 +36,14 @@
   .rtab .cnt{font-size:13px;opacity:.7}
 
   /* griglia a tocco */
-  #grid{flex:1;overflow-y:auto;padding:10px;display:grid;gap:10px;
-    grid-template-columns:repeat(auto-fill,minmax(150px,1fr));align-content:start;-webkit-overflow-scrolling:touch}
-  .cell{position:relative;background:var(--surface2);border-radius:12px;overflow:hidden;
-    aspect-ratio:3/4}
-  .cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
-  .cell .code{position:absolute;left:6px;bottom:6px;background:rgba(11,14,20,.82);color:var(--accent);
-    font-weight:700;font-size:12px;padding:2px 7px;border-radius:6px;font-family:ui-monospace,monospace;z-index:2}
-  .cell .fav{position:absolute;right:6px;top:6px;width:34px;height:34px;border-radius:50%;
-    background:rgba(11,14,20,.55);display:flex;align-items:center;justify-content:center;font-size:19px;z-index:2}
+  #grid{flex:1;overflow-y:auto;padding:8px;display:grid;gap:8px;
+    grid-template-columns:repeat(auto-fill,minmax(110px,1fr));align-content:start;-webkit-overflow-scrolling:touch}
+  .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:3/4}
+  .cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+  .cell .code{position:absolute;left:5px;bottom:5px;background:rgba(11,14,20,.85);color:var(--accent);
+    font-weight:700;font-size:11px;padding:2px 6px;border-radius:5px;font-family:ui-monospace,monospace;z-index:2}
+  .cell .fav{position:absolute;right:4px;top:4px;width:30px;height:30px;border-radius:50%;
+    background:rgba(11,14,20,.6);display:flex;align-items:center;justify-content:center;font-size:17px;z-index:2}
   .cell .fav.on{color:var(--fav)}
   .cell .fav:not(.on){color:rgba(255,255,255,.85)}
   .cell.isfav{outline:3px solid var(--fav);outline-offset:-3px}
