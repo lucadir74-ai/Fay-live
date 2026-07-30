@@ -86,6 +86,8 @@
     <select id="giornoSel" hidden></select>
     <div class="spacer"></div>
     <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
+    <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
+    <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
   </header>
 
   <nav id="tabs" hidden></nav>
@@ -167,7 +169,7 @@ async function openServizio(sv){
     const {data:foto}=await sb.from("foto").select("*").in("rullo_id",ids).order("codice");
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, fav:!!f.preferito };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito };
       S.photos.push(p); S.byId.set(p.id,p);
     });
   }
@@ -185,7 +187,7 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, fav:!!f.preferito };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
@@ -279,6 +281,63 @@ async function toggleFav(p){
   if(sb){ try{ await sb.from("foto").update({preferito:p.fav}).eq("id",p.id); }catch(_){ toast("Preferito salvato localmente, sincronizzo appena possibile"); } }
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
+
+// condividi i preferiti del rullo attivo tramite il menu Android (Gmail, FileMail, WhatsApp…)
+$("btnShare").onclick = async ()=>{
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const favs = scope.filter(p=>p.fav);
+  if(!favs.length){ toast("Nessun preferito da condividere"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  if(!navigator.canShare){ toast("Condivisione non supportata su questo dispositivo — usa Esporta"); return; }
+  toast(`Preparo ${favs.length} foto…`);
+  const files=[];
+  for(const p of favs){
+    try{
+      let blob=null;
+      if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) blob=dl.data; }catch(_){} }
+      if(!blob){ const r=await fetch(p.url); if(r.ok) blob=await r.blob(); }
+      if(blob) files.push(new File([blob], p.code+".jpg", {type:"image/jpeg"}));
+    }catch(_){}
+  }
+  if(!files.length){ toast("Impossibile preparare le foto"); return; }
+  // alcuni dispositivi limitano il numero di file: provo tutte, poi ripiego
+  try{
+    if(navigator.canShare({files})){
+      await navigator.share({files, title:"Foto Fay Live"});
+      return;
+    }
+  }catch(err){ if(err && err.name==="AbortError") return; }
+  // ripiego: condividi una sola foto per volta non è comodo → suggerisci esporta
+  toast("Troppe foto per la condivisione diretta — usa Esporta e allega dai Download");
+};
+
+// esporta i PREFERITI del rullo attivo nei Download del tablet
+$("btnExport").onclick = async ()=>{
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const favs = scope.filter(p=>p.fav);
+  if(!favs.length){ toast("Nessun preferito da esportare"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  toast(`Esporto ${favs.length} foto…`);
+  let ok=0;
+  for(const p of favs){
+    try{
+      let blob=null, name=p.code+".jpg";
+      // 1) originale a piena risoluzione dal bucket privato, se disponibile
+      if(p.origPath && sb){
+        try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) blob=dl.data; }catch(_){}
+      }
+      // 2) ripiego: anteprima pubblica
+      if(!blob){ const r=await fetch(p.url); if(r.ok) blob=await r.blob(); }
+      if(!blob) throw 0;
+      const a=document.createElement("a");
+      const obj=URL.createObjectURL(blob);
+      a.href=obj; a.download=name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(obj), 8000);
+      ok++;
+      await new Promise(r=>setTimeout(r,300));
+    }catch(_){ }
+  }
+  toast(`Esportate ${ok} foto nei Download`);
+};
 
 /* ---------- visore con zoom (pinch) e swipe ---------- */
 const V = { list:[], idx:0, img:null, scale:1, tx:0, ty:0, canvas:null, ctx:null };
