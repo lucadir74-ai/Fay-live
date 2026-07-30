@@ -37,10 +37,10 @@
 
   /* griglia a tocco */
   #grid{flex:1;overflow-y:auto;padding:8px;display:grid;gap:8px;
-    grid-template-columns:repeat(auto-fill,minmax(110px,1fr));align-content:start;-webkit-overflow-scrolling:touch}
-  .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:3/4}
-  .cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
-  .cell canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+    grid-template-columns:repeat(auto-fill,minmax(110px,1fr));
+    grid-auto-rows:170px;align-content:start;-webkit-overflow-scrolling:touch}
+  .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;height:170px;width:100%}
+  .cell canvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
   .cell .code{position:absolute;left:5px;bottom:5px;background:rgba(11,14,20,.85);color:var(--accent);
     font-weight:700;font-size:11px;padding:2px 6px;border-radius:5px;font-family:ui-monospace,monospace;z-index:2}
   .cell .fav{position:absolute;right:4px;top:4px;width:30px;height:30px;border-radius:50%;
@@ -252,13 +252,14 @@ async function drawThumb(cv, p){
       bmp = im; thumbBmpCache.set(p.url, im);
       if(thumbBmpCache.size>400){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
     }
+    await new Promise(r=>requestAnimationFrame(r)); // aspetta che il layout sia pronto
     const rect=cv.getBoundingClientRect();
+    if(rect.width<2 || rect.height<2) return;
     const dpr=Math.min(devicePixelRatio||1, 2);
-    cv.width=Math.max(1,Math.round(rect.width*dpr));
-    cv.height=Math.max(1,Math.round(rect.height*dpr));
+    cv.width=Math.round(rect.width*dpr);
+    cv.height=Math.round(rect.height*dpr);
     const ctx=cv.getContext("2d");
     ctx.fillStyle="#000"; ctx.fillRect(0,0,cv.width,cv.height);
-    // contain
     const k=Math.min(cv.width/bmp.naturalWidth, cv.height/bmp.naturalHeight);
     const w=bmp.naturalWidth*k, h=bmp.naturalHeight*k;
     ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
