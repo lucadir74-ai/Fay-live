@@ -40,6 +40,7 @@
     grid-template-columns:repeat(auto-fill,minmax(110px,1fr));
     grid-auto-rows:170px;align-content:start;-webkit-overflow-scrolling:touch}
   .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;height:170px;width:100%}
+  .cell.wide{grid-column:span 2}
   .cell canvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
   .cell .code{position:absolute;left:5px;bottom:5px;background:rgba(11,14,20,.85);color:var(--accent);
     font-weight:700;font-size:11px;padding:2px 6px;border-radius:5px;font-family:ui-monospace,monospace;z-index:2}
@@ -209,15 +210,16 @@ function visible(){
 function render(){
   // schede rullo
   const ls=letters(); const nav=$("tabs"); nav.hidden=ls.length===0;
-  const favN=S.photos.filter(p=>p.fav).length;
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const favN=scope.filter(p=>p.fav).length;   // preferiti del rullo attivo (o di tutti su "Tutte")
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     `<div class="rtab ${!S.letter?'on':''}" data-l="">Tutte <span class="cnt">${S.photos.length}</span></div>`+
     ls.map(L=>`<div class="rtab ${S.letter===L?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("");
   nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{ S.letter=b.dataset.l||null; render(); $("grid").scrollTop=0; });
 
-  // conteggio preferiti
-  $("favCount").textContent = favN? `♥ ${favN} preferiti` : "";
+  // conteggio preferiti (del rullo attivo)
+  $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
   $("favOnly").classList.toggle("on", S.favOnly);
 
   // griglia
@@ -253,6 +255,10 @@ async function drawThumb(cv, p){
       if(thumbBmpCache.size>400){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
     }
     await new Promise(r=>requestAnimationFrame(r)); // aspetta che il layout sia pronto
+    // foto orizzontale → cella larga (span 2) così non resta piccola
+    if(bmp.naturalWidth > bmp.naturalHeight*1.15){
+      const cell=cv.closest(".cell"); if(cell && !cell.classList.contains("wide")){ cell.classList.add("wide"); await new Promise(r=>requestAnimationFrame(r)); }
+    }
     const rect=cv.getBoundingClientRect();
     if(rect.width<2 || rect.height<2) return;
     const dpr=Math.min(devicePixelRatio||1, 2);
