@@ -1,0 +1,2174 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Fay Live — Gestione serata</title>
+<style>
+  :root{
+    --bg:#0B0E14; --surface:#141926; --surface2:#1B2233; --line:#252E44;
+    --ink:#E8ECF4; --muted:#8A94A8; --accent:#F5B942; --accent-ink:#1A1204;
+    --ok:#5BC98A; --danger:#E4574F;
+    --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+  button{font:inherit;color:inherit;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input[type=text],input[type=number],select{background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 10px}
+  .badge{font-family:var(--mono);font-weight:700;background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:2px 8px;letter-spacing:.5px}
+
+  /* ---------- Layout ---------- */
+  #app{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;font-weight:700;letter-spacing:.3px}
+  header h1 span{color:var(--accent)}
+  #eventInfo{color:var(--muted);font-size:13px}
+  #searchBox{width:180px;font-family:var(--mono);text-transform:uppercase}
+  .spacer{flex:1}
+  #statusBar{display:flex;gap:18px;align-items:center;padding:6px 16px;background:var(--surface);border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+  #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
+  .ltab{flex:0 0 auto}
+  #progWrap{display:none;align-items:center;gap:12px;padding:7px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  #progWrap.show{display:flex}
+  #progTrack{flex:1;height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+  #progFill{height:100%;width:0%;background:var(--accent);border-radius:99px;transition:width .2s}
+  #progLabel{font-size:12.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
+  #progCancel{padding:5px 12px;font-size:12.5px;border-color:var(--line);color:var(--muted)}
+  #progCancel:hover{border-color:var(--danger);color:var(--danger)}
+  #lbLoading{position:absolute;top:62px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted);z-index:2}
+  #lbLoading.show{display:flex}
+  #lbLoading::before{content:"";width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ltab{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:9px;background:var(--surface2);border:1px solid var(--line);cursor:pointer;white-space:nowrap;font-weight:600}
+  .ltab:hover{border-color:var(--accent)}
+  .ltab.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .ltab .lt{font-family:var(--mono);font-weight:800;font-size:15px;letter-spacing:.5px}
+  .ltab .stat{font-size:11.5px;font-weight:600;color:var(--muted)}
+  .ltab.active .stat{color:var(--accent-ink);opacity:.75}
+  .ltab .ldesc{font-size:12px;color:var(--muted);font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ltab.active .ldesc{color:var(--accent-ink);opacity:.8}
+  .ltab .stat.pr{color:var(--ok)}
+  .ltab .stat.ex{color:#7FB8F0}
+  .ltab.active .stat.pr,.ltab.active .stat.ex{color:var(--accent-ink);opacity:.8}
+  #statusBar b{color:var(--ink)}
+  #monitorState{display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--danger)}
+  .dot.on{background:var(--ok)}
+
+  main{flex:1;position:relative;overflow:hidden}
+
+  /* ---------- Griglia virtualizzata ---------- */
+  #gridWrap{position:absolute;inset:0;overflow-y:auto}
+  #gridSpacer{position:relative;width:100%}
+  .cell{position:absolute;border-radius:10px;overflow:hidden;background:var(--surface);cursor:pointer;border:2px solid transparent}
+  .cell img{width:100%;height:100%;object-fit:cover;display:block}
+  .cell .code{position:absolute;left:6px;bottom:6px;font-family:var(--mono);font-size:12px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 7px;border-radius:5px;letter-spacing:.5px}
+  .cell.sel{border-color:var(--accent)}
+  .cell.sel::after{content:"✓";position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-weight:800;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .cell.focused{box-shadow:0 0 0 2px var(--ink) inset}
+  .cell .flags{position:absolute;top:6px;left:6px;display:flex;gap:4px}
+  .flag{font-family:var(--mono);font-size:11px;font-weight:700;background:rgba(11,14,20,.85);border-radius:5px;padding:1px 6px}
+  .cell .code.pr, .cmp .code.pr{background:var(--ok);color:#06210f}
+  .cell .code.ex, .cmp .code.ex{background:#7FB8F0;color:#0a1f33}
+  .chip{font-size:12.5px;font-weight:700;border-radius:6px;padding:3px 10px;margin-left:4px}
+  .chip.pr{background:var(--ok);color:#06210f}
+  .chip.ex{background:#7FB8F0;color:#0a1f33}
+  .flag.print{color:var(--ok)}
+  .flag.exp{color:#7FB8F0}
+
+  /* ---------- vista insieme ---------- */
+  #compare{position:absolute;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:18}
+  #compare.open{display:flex}
+  #cmpTop{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+  #cmpGrid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:14px 16px;align-content:start}
+  .cmp{position:relative;border-radius:10px;overflow:hidden;background:#000;cursor:pointer;aspect-ratio:3/2}
+  .cmp img{width:100%;height:100%;object-fit:contain}
+  .cmp .code{position:absolute;left:8px;bottom:8px;font-family:var(--mono);font-size:13px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 8px;border-radius:5px;letter-spacing:.5px}
+
+  /* ---------- Lightbox operatore ---------- */
+  #lightbox{position:absolute;inset:0;background:rgba(6,8,12,.6);backdrop-filter:blur(3px);display:none;z-index:20}
+  #lightbox.open{display:block}
+  #lbTop{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:12px;padding:10px 16px;background:linear-gradient(rgba(6,8,12,.92),rgba(6,8,12,0))}
+  #lbCode{font-family:var(--mono);font-size:20px;font-weight:800;color:var(--accent);letter-spacing:1px}
+  #lbStage{position:absolute;inset:0}
+  #lbStage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
+  #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
+
+  /* ---------- Pannelli ---------- */
+  .panel{position:absolute;top:0;right:0;bottom:0;width:400px;background:var(--surface);border-left:1px solid var(--line);z-index:30;display:none;flex-direction:column}
+  .panel.open{display:flex}
+  .panel h2{font-size:15px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .panel .body{padding:16px 18px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:14px}
+  .field label{display:block;color:var(--muted);font-size:12.5px;margin-bottom:5px}
+  .field input[type=text],.field select{width:100%}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  #ovPreview{display:flex;gap:10px}
+  #ovPreview canvas{background:#000;border-radius:8px;border:1px solid var(--line)}
+  .hint{color:var(--muted);font-size:12px}
+  .panel footer{padding:14px 18px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
+
+  /* ---------- Barra selezione ---------- */
+  #selBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--accent);border-radius:14px;padding:10px 16px;display:none;align-items:center;gap:12px;z-index:15;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  #selBar.show{display:flex}
+  #selCount{font-weight:700;color:var(--accent)}
+
+  /* ---------- Vuoto / drop ---------- */
+  #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)}
+  #empty .big{font-size:44px;font-family:var(--mono);color:var(--accent);font-weight:800;letter-spacing:2px}
+  kbd{font-family:var(--mono);background:var(--surface2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px}
+  #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
+  dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
+  dialog::backdrop{background:rgba(6,8,12,.7)}
+  .toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;z-index:50;opacity:0;transition:opacity .25s}
+  .toast.show{opacity:1}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  /* ---------- schermata sedi ---------- */
+  #startScreen{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center}
+  #startScreen.hidden{display:none}
+  .startCard{width:min(460px,92vw);background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px}
+  .startCard h1{font-size:26px;margin-bottom:4px}
+  .startCard h1 span{color:var(--accent)}
+  #startMsg{color:var(--muted);margin-bottom:18px}
+  #sedeList{display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;margin-bottom:14px}
+  .sedeItem{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-weight:600;font-size:15px}
+  .sedeItem:hover{border-color:var(--accent)}
+  #sedeNewWrap{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  #sedeNewWrap input{flex:1 1 100%}
+  #sedeNewBtn{width:100%;margin-bottom:8px}
+  button.ghost{width:100%;background:transparent;border-color:transparent;color:var(--muted)}
+  button.ghost:hover{color:var(--ink);border-color:var(--line)}
+
+  /* ---------- stato sincronizzazione ---------- */
+  #syncState{display:flex;align-items:center;gap:6px}
+  #syncDot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  #syncDot.online{background:var(--ok)}
+  #syncDot.offline{background:var(--danger)}
+  #syncDot.syncing{background:var(--accent);animation:pulse 1s infinite}
+  #btnDelSede{border-color:var(--line);color:var(--muted)}
+  #btnDelSede:hover{border-color:var(--danger);color:var(--danger)}
+  #btnClearDay{border-color:var(--line);color:var(--muted)}
+  #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
+  #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
+  #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
+  @keyframes pulse{50%{opacity:.35}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Fay <span>Live</span></h1>
+    <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
+    <button id="btnDelSede" title="Cancella la sede selezionata" style="padding:7px 9px">🗑</button>
+    <select id="giornoSelect" title="Giornata" hidden></select>
+    <span id="eventInfo"></span>
+    <button id="btnEvent">Servizio…</button>
+    <button id="btnClearDay">Svuota giornata</button>
+    <button id="btnArchive">Archivio…</button>
+    <button id="btnExportDir">Cartella export…</button>
+    <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
+    <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
+    <button id="btnImport" class="primary">Importa cartella</button>
+    <input type="file" id="fileInput" webkitdirectory multiple hidden>
+    <input type="file" id="restoreInput" webkitdirectory multiple hidden>
+    <div class="spacer"></div>
+    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
+    <button id="btnMonitor">Avvia slideshow</button>
+  </header>
+
+  <nav id="letterTabs" hidden></nav>
+
+  <div id="progWrap">
+    <span id="progLabel">0/0</span>
+    <div id="progTrack"><div id="progFill"></div></div>
+    <button id="progCancel">Annulla</button>
+  </div>
+
+  <main>
+    <div id="gridWrap"><div id="gridSpacer"></div></div>
+
+    <div id="empty">
+      <div>Importa la cartella della SD: i codici vengono assegnati in automatico. Logo, scritte e slideshow si regolano da "Servizio…" (facoltativo).</div>
+      <div id="shortcuts">
+        <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
+        <span><kbd>doppio clic</kbd></span><span>ingrandisce la foto (anche clic destro)</span>
+        <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · in presentazione fa ripartire lo slideshow</span>
+        <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
+        <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
+        <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
+        <span><kbd>M</kbd></span><span>mostra sul monitor cliente la foto o la selezione</span>
+        <span><kbd>esc</kbd></span><span>chiude · in presentazione fa ripartire lo slideshow</span>
+        <span><kbd>doppio clic</kbd></span><span>su una scheda lettera: descrizione del rullo</span>
+      </div>
+    </div>
+
+    <!-- Vista insieme (selezione) -->
+    <div id="compare">
+      <div id="cmpTop">
+        <b id="cmpCount"></b>
+        <div class="spacer"></div>
+        <button id="cmpShow" class="primary">Mostra sul monitor</button>
+        <button id="cmpClose">Chiudi <kbd>esc</kbd></button>
+      </div>
+      <div id="cmpGrid"></div>
+    </div>
+
+    <!-- Lightbox operatore -->
+    <div id="lightbox">
+      <div id="lbTop">
+        <span id="lbCode">—</span>
+        <span id="lbStatus" class="hint"></span>
+        <div class="spacer"></div>
+        <button id="lbSelect">Seleziona <kbd>spazio</kbd></button>
+        <button id="lbPrint">Stampa</button>
+        <button id="lbExport">Esporta file</button>
+        <button id="lbShow">Mostra sul monitor <kbd>M</kbd></button>
+        <button id="lbClose">Chiudi <kbd>esc</kbd></button>
+      </div>
+      <div id="lbStage"><canvas id="lbCanvas"></canvas>
+        <div id="lbLoading">Carico la versione nitida…</div>
+        <div id="lbNav"><button id="lbPrev">‹</button><button id="lbNext">›</button></div>
+      </div>
+    </div>
+
+    <!-- Pannello servizio -->
+    <div class="panel" id="eventPanel">
+      <h2>Servizio</h2>
+      <div class="body">
+        <div class="field"><label>Nome servizio (facoltativo)</label><input type="text" id="evName"></div>
+        <div class="row">
+          <div class="field"><label>Slideshow: secondi per scatto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
+          <div class="field"><label>Foto insieme sullo schermo</label>
+            <select id="evTiles">
+              <option value="4">4 (2×2)</option>
+              <option value="6" selected>6 (3×2)</option>
+              <option value="8">8 (4×2)</option>
+              <option value="9">9 (3×3)</option>
+            </select></div>
+        </div>
+        <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
+          <input type="file" id="evLogo" accept="image/*"></div>
+        <div class="field"><label>Scritta — in basso a sinistra</label>
+          <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo"></div>
+        <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
+          <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo"></div>
+        <div class="field"><label>Cornice bianca in stampa</label>
+          <label style="font-weight:400"><input type="checkbox" id="evFrameOn" checked> Aggiungi bordo bianco alle stampe</label>
+          <div style="display:flex;gap:12px;margin-top:6px">
+            <span style="flex:1">Bordo <input type="range" id="evFrameBorder" min="0" max="6" step="0.5" value="2.5" style="width:100%"></span>
+            <span style="flex:1">Spazio sotto <input type="range" id="evFrameBottom" min="0" max="14" step="1" value="6" style="width:100%"></span>
+          </div>
+          <p class="hint">Solo in stampa: bordo sottile su 4 lati e più spazio sotto per la scritta. Non cambia lo slideshow né gli originali.</p>
+        </div>
+        <div class="field"><label>Anteprima overlay (orizzontale / verticale)</label>
+          <div id="ovPreview">
+            <canvas id="pvH" width="220" height="147"></canvas>
+            <canvas id="pvV" width="110" height="165"></canvas>
+          </div>
+          <p class="hint">Logo e scritta sono ancorati agli angoli in proporzione al lato corto: la posizione resta corretta su entrambi gli orientamenti. Gli originali non vengono toccati.</p>
+        </div>
+      </div>
+      <footer>
+        <button id="evCancel">Annulla</button>
+        <button id="evSave" class="primary">Salva serata</button>
+      </footer>
+    </div>
+
+    <!-- Barra selezione -->
+    <div id="selBar">
+      <span><span id="selCount">0</span> selezionate</span>
+      <button id="selCompare" class="primary">Vedi insieme</button>
+      <button id="selShow">Mostra sul monitor</button>
+      <button id="selPrint">Stampa</button>
+      <button id="selExport">Esporta file</button>
+      <button id="selClear">Svuota</button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </main>
+
+  <div id="statusBar">
+    <span>Foto: <b id="stTotal">0</b></span>
+    <span>Archivio: <b id="stArch">non impostato</b></span>
+    <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
+    <span>Export: <b id="stExport">Download</b></span>
+    <b id="stThumbs" hidden></b>
+    <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
+    <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
+    <div class="spacer"></div>
+    <span id="stMode">—</span>
+  </div>
+</div>
+
+<dialog id="delSedeDlg">
+  <h3 style="margin-bottom:10px">Cancella sede</h3>
+  <p id="delSedeText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="delSedeNo">Annulla</button>
+    <button id="delSedeYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Cancella sede</button>
+  </div>
+</dialog>
+
+<dialog id="clearDlg">
+  <h3 style="margin-bottom:10px">Svuota giornata</h3>
+  <p id="clearText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="clearNo">Annulla</button>
+    <button id="clearYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Svuota dal cloud</button>
+  </div>
+</dialog>
+
+<dialog id="sedeDlg">
+  <h3 style="margin-bottom:10px">Nuova sede</h3>
+  <input type="text" id="sedeNewName" placeholder="Nome (es. Nammos)" maxlength="40" style="width:100%;margin-bottom:16px">
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="sedeNewCancel">Annulla</button>
+    <button id="sedeNewSave" class="primary">Crea sede</button>
+  </div>
+</dialog>
+
+<dialog id="printDlg">
+  <h3 style="margin-bottom:10px">Stampa — qualità originali</h3>
+  <p id="pdText" style="margin-bottom:14px"></p>
+  <div id="pdWaiting" style="margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="pdCancel">Annulla</button>
+    <button id="pdReady">Stampa solo le pronte</button>
+    <button id="pdWait" class="primary">Aspetta gli originali</button>
+    <button id="pdAll">Stampa tutte ora</button>
+  </div>
+</dialog>
+
+<dialog id="descDlg">
+  <h3 style="margin-bottom:10px">Descrizione rullo <span id="ddLetter" class="badge"></span></h3>
+  <input type="text" id="ddInput" maxlength="40" style="width:100%;margin-bottom:16px">
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="ddNo">Annulla</button><button id="ddYes" class="primary">Salva</button>
+  </div>
+</dialog>
+
+<dialog id="confirmImport">
+  <h3 style="margin-bottom:10px">Conferma import</h3>
+  <p id="ciText" style="margin-bottom:14px"></p>
+  <div class="field" id="ciLetterField" style="margin-bottom:12px">
+    <label>Lettera del rullo (fotografo)</label>
+    <input type="text" id="ciLetter" maxlength="1" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:70px;text-align:center">
+  </div>
+  <div class="field" style="margin-bottom:16px">
+    <label>Descrizione rullo (facoltativa, modificabile dopo)</label>
+    <input type="text" id="ciDesc" maxlength="40" style="width:100%">
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="ciNo">Annulla</button><button id="ciYes" class="primary">Importa</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+/* =====================================================================
+   Fay Live — nucleo v1
+   Stato in memoria: serata, foto (File + miniatura), selezione.
+   Monitor cliente: finestra secondaria pilotata dall'operatore via canvas.
+   ===================================================================== */
+
+const $ = id => document.getElementById(id);
+
+/* =====================================================================
+   CLOUD — Supabase: sedi, servizi, rulli, foto sincronizzati tra postazioni
+   Local-first: se il cloud non risponde, l'app lavora comunque e sincronizza
+   appena la linea torna.
+   ===================================================================== */
+const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
+let sb = null;
+try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){ sb=null; }
+
+const cloud = {
+  sede: null,        // {id, nome}
+  servizio: null,    // {id, ...}
+  rulli: {},         // lettera -> {id, ultimo_num}
+  online: false,
+  channel: null,
+};
+
+function setSync(mode, label){
+  const d=$("syncDot"); if(!d) return;
+  d.className=""; if(mode) d.classList.add(mode);
+  $("syncLabel").textContent = label || (mode==="online"?"Sincronizzato":mode==="offline"?"Offline — riprende da solo":mode==="syncing"?"Sincronizzo…":"Solo locale");
+}
+
+async function sbTry(fn, label){
+  if(!sb || !cloud.sede){ return null; }
+  try{
+    setSync("syncing", label);
+    const r = await fn();
+    cloud.online = true; setSync("online");
+    return r;
+  }catch(err){
+    cloud.online = false; setSync("offline");
+    console.warn("cloud", label||"", err);
+    return null;
+  }
+}
+
+const state = {
+  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null}, // configurabile dal pannello Servizio, tutto facoltativo
+  photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
+  byCode: new Map(),
+  counters: {},           // lettera -> ultimo numero
+  letterDesc: {},         // lettera -> descrizione rullo
+  selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
+  activeLetter: null,     // null = tutte
+  focusIdx: -1,
+  filter: "",
+  lightboxIdx: -1,
+  lbCustom: null,        // lista personalizzata per il lightbox (vista insieme)
+  monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0 },
+};
+
+/* ---------- utilità ---------- */
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
+function pad3(n){ return String(n).padStart(3,"0"); }
+// "giorno di servizio": la giornata cambia alle 8:00, non a mezzanotte.
+// Un import all'1:30 di notte appartiene ancora alla data della sera prima.
+const SERVICE_DAY_CUTOFF_H = 6;
+function serviceDate(){ return new Date(Date.now() - SERVICE_DAY_CUTOFF_H*3600*1000); }
+// data del giorno di servizio in ORA LOCALE (non UTC), formato AAAA-MM-GG
+function serviceDateStr(){
+  const d = serviceDate();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const g = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${g}`;
+}
+function fmtCode(letter,num){ return letter+"-"+pad3(num); }
+function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
+
+/* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
+function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
+  const ev = state.event; if(!ev) return;
+  const S = Math.min(iw,ih), m = S*0.035;
+  // logo: angolo in alto a destra della FOTO (dentro la cornice)
+  if(ev.logoImg){
+    const lw = S*0.20, lh = lw * (ev.logoImg.height/ev.logoImg.width);
+    ctx.drawImage(ev.logoImg, border+iw-m-lw, border+m, lw, lh);
+  }
+  // scritta: se c'è banda bianca sotto, la centro lì in nero; altrimenti sulla foto in bianco
+  if(ev.text){
+    if(bottomExtra>0){
+      const fs = Math.max(10, bottomExtra*0.5);
+      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = "middle"; ctx.textAlign="center";
+      ctx.fillStyle = ev.frameTextColor || "#111";
+      ctx.fillText(ev.text, border+iw/2, border+ih+bottomExtra/2);
+      ctx.textAlign="left";
+    } else {
+      const fs = Math.max(10, S*0.042);
+      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.textBaseline = "bottom";
+      ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
+      ctx.fillStyle="#fff";
+      ctx.fillText(ev.text, border+m, border+ih-m);
+      ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+    }
+  }
+}
+function drawCodeBadge(ctx, w, h, code, status){
+  const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
+  ctx.font=`800 ${fs}px ui-monospace, Consolas, monospace`;
+  const tw = ctx.measureText(code).width, pad=fs*0.35;
+  const bx=w/2-tw/2-pad, by=h-m-fs-pad*2, bw=tw+pad*2, bh=fs+pad*1.6;
+  ctx.fillStyle = status==="pr" ? "rgba(91,201,138,.95)" : status==="ex" ? "rgba(127,184,240,.95)" : "rgba(11,14,20,.82)";
+  if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,fs*0.25); ctx.fill(); }
+  else ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle = status==="pr" ? "#06210f" : status==="ex" ? "#0a1f33" : "#F5B942";
+  ctx.textBaseline="top";
+  ctx.fillText(code, w/2-tw/2, by+pad*0.8);
+}
+
+/* ---------- pannello serata ---------- */
+
+let pendingLogo = null;
+$("btnEvent").onclick = ()=>{ openEventPanel(); };
+function openEventPanel(){
+  const ev = state.event;
+  $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
+  $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
+  $("evFrameOn").checked = ev.frameOn!==false;
+  $("evFrameBorder").value = ev.frameBorder ?? 2.5;
+  $("evFrameBottom").value = ev.frameBottom ?? 6;
+  pendingLogo = ev.logoImg;
+  $("eventPanel").classList.add("open");
+  renderOverlayPreview();
+}
+$("evCancel").onclick = ()=> $("eventPanel").classList.remove("open");
+$("evLogo").onchange = async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  pendingLogo = await loadImg(URL.createObjectURL(f));
+  renderOverlayPreview();
+};
+$("evText").oninput = renderOverlayPreview;
+function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
+
+function renderOverlayPreview(){
+  const saved = state.event;
+  const tmp = { logoImg: pendingLogo, text: $("evText").value };
+  state.event = Object.assign({}, saved||{}, tmp);
+  for(const id of ["pvH","pvV"]){
+    const c=$(id), ctx=c.getContext("2d");
+    ctx.fillStyle="#2A3550"; ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle="#3A4768";
+    ctx.beginPath(); ctx.arc(c.width*0.45,c.height*0.42,Math.min(c.width,c.height)*0.18,0,7); ctx.fill();
+    drawOverlay(ctx,c.width,c.height);
+  }
+  state.event = saved;
+}
+$("evSave").onclick = ()=>{
+  const name=$("evName").value.trim();
+  state.event = {
+    name, secs: Math.max(2, +$("evSecs").value||4),
+    tiles: +$("evTiles").value||6,
+    text: $("evText").value.trim(),
+    infoLine: $("evInfoLine").value.trim(),
+    logoImg: pendingLogo,
+    frameOn: $("evFrameOn").checked,
+    frameBorder: +$("evFrameBorder").value,
+    frameBottom: +$("evFrameBottom").value,
+  };
+  updateEventInfo();
+  $("eventPanel").classList.remove("open");
+  toast("Servizio salvato");
+};
+function updateEventInfo(){
+  let d;
+  if(cloud.servizio && cloud.servizio.data_servizio){
+    d = new Date(cloud.servizio.data_servizio+"T12:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  } else {
+    d = serviceDate().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"});
+  }
+  const parts=[];
+  if(cloud.sede) parts.push(cloud.sede.nome);
+  if(state.event.name) parts.push(state.event.name);
+  parts.push(d);
+  $("eventInfo").textContent = parts.join(" — ");
+}
+updateEventInfo();
+
+/* ---------- import ---------- */
+$("btnImport").onclick = ()=> $("fileInput").click();
+
+// --- Ripristino anteprime dagli originali locali (stessi codici dal nome file) ---
+$("btnRestore").onclick = ()=>{
+  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
+  $("restoreInput").click();
+};
+$("btnClearCache").onclick = async ()=>{
+  if(!confirm("Svuota la memoria locale delle anteprime su questo PC e ricarica dal cloud.\nLe foto sul cloud NON vengono toccate. Procedere?")) return;
+  try{
+    await thumbCache.clear();
+    // svuota lo stato in memoria e ricarica la giornata dal cloud
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    cloud.rulli={}; state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0";
+    if(cloud.servizio){ await loadServizioFoto(); }
+    renderTabs(); layoutGrid(); updateThumbCloud();
+    toast("Cache locale svuotata e ricaricata dal cloud");
+  }catch(err){ toast("Errore pulizia cache: "+(err.message||err)); }
+};
+$("restoreInput").onchange = async e=>{
+  const files=[...e.target.files].filter(isImage);
+  e.target.value="";
+  if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
+  // mappa codice -> file, leggendo il codice dal nome (es. A-047.jpg)
+  const byCode=new Map();
+  for(const f of files){
+    const m=(f.name.match(/([A-Z])-?(\d{1,4})/i));
+    if(m){ const code=m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0"); byCode.set(code,f); }
+  }
+  // quali foto della giornata hanno bisogno dell'anteprima?
+  const need = state.photos.filter(p=>!(p.anteprimaUrl) && byCode.has(p.code));
+  const missingFile = state.photos.filter(p=>!(p.anteprimaUrl) && !byCode.has(p.code));
+  if(!need.length){
+    toast(missingFile.length? `Nessun originale corrispondente trovato (${missingFile.length} anteprime mancanti)` : "Anteprime già tutte presenti");
+    return;
+  }
+  prog.cancel=false; prog.total+=need.length; progUpdate();
+  let done=0;
+  for(const p of need){
+    if(prog.cancel) break;
+    const f=byCode.get(p.code);
+    try{
+      const buf=await f.arrayBuffer();
+      const bmp=await decodeScaled(new Blob([buf],{type:f.type||"image/jpeg"}), 1800);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      const prevBlob=await toBlobAsync(c,0.85);
+      p.preview=prevBlob; thumbCache.set(p.code, prevBlob);
+      if(!p.thumb){ try{ p.thumb=await blobToThumb(prevBlob); }catch(_){} }
+      // ricarica sul cloud mantenendo lo stesso codice/riga
+      const ap=cloud.servizio.id+"/"+p.code+".jpg";
+      const up=await sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true});
+      if(!up.error){
+        p.anteprimaUrl=sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+        if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
+      }
+    }catch(err){ console.warn("ripristino", p.code, err); }
+    done++; prog.done++;
+    if((done&3)===0){ progUpdate(); paintVisible(); updateThumbCloud(); await new Promise(r=>setTimeout(r,0)); }
+  }
+  progUpdate(); paintVisible(); updateThumbCloud();
+  toast(`Ripristinate ${done} anteprime` + (missingFile.length? ` — ${missingFile.length} senza originale nella cartella` : ""));
+};
+
+// lettera suggerita dal nome della cartella che contiene la foto (es. ".../25-07/B/IMG_001.jpg" -> B)
+function detectLetter(f){
+  const parts=(f.webkitRelativePath||"").split("/");
+  if(parts.length>=2){
+    const parent=parts[parts.length-2].trim().toUpperCase();
+    if(/^[A-Z]$/.test(parent)) return parent;
+  }
+  return null;
+}
+
+$("fileInput").onchange = async e=>{
+  const files=[...e.target.files].filter(isImage);
+  e.target.value="";
+  if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
+
+  const suggested = detectLetter(files[0]);
+  $("ciText").textContent = `${files.length} foto trovate.`;
+  $("ciLetter").value = suggested || "";
+  $("ciDesc").value = suggested ? (state.letterDesc[suggested]||"") : "";
+
+  const dlg=$("confirmImport"); dlg.showModal();
+  $("ciLetter").focus();
+  const L = await new Promise(res=>{
+    $("ciYes").onclick=()=>{
+      const v=$("ciLetter").value.trim().toUpperCase();
+      if(!/^[A-Z]$/.test(v)){ toast("Inserisci una lettera (A–Z)"); $("ciLetter").focus(); return; }
+      const d=$("ciDesc").value.trim();
+      if(d) state.letterDesc[v]=d;
+      dlg.close(); res(v);
+    };
+    $("ciNo").onclick=()=>{ dlg.close(); res(null); };
+  });
+  if(!L) return;
+
+  await ensureArchive();
+
+  files.sort((a,b)=>a.lastModified-b.lastModified || a.name.localeCompare(b.name));
+  // se online, riserva i numeri dal cloud (atomico tra postazioni); altrimenti locali
+  const startN = await nextNumber(L, files.length);
+  let n = (startN!=null) ? startN : (state.counters[L]||0);
+  const batch=[];
+  for(const f of files){
+    n++;
+    const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
+              file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
+    state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
+  }
+  state.counters[L]=n;
+  // salva/aggiorna la descrizione rullo sul cloud
+  if(sb && cloud.rulli[L] && state.letterDesc[L]){
+    sbTry(()=>sb.from("rulli").update({descrizione:state.letterDesc[L]}).eq("id",cloud.rulli[L].id), "descrizione rullo");
+  }
+  $("stTotal").textContent = state.photos.length;
+  renderTabs(); layoutGrid(); updateThumbCloud();
+  toast(`Importate ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code})`);
+  const M=state.monitor;
+  M.queue = buildSlideshowQueue();
+  processBatch(batch);
+};
+
+const prog = { total:0, done:0, cancel:false };
+function progUpdate(){
+  const w=$("progWrap");
+  if(prog.cancel || prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
+  w.classList.add("show");
+  $("progLabel").textContent = `Anteprime ${prog.done}/${prog.total}`;
+  $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
+}
+$("progCancel").onclick = ()=>{
+  prog.cancel = true;
+  // ferma anche le code cloud in sospeso
+  origQueue.length = 0; origSet.clear();
+  thumbQueue.length = 0;
+  $("progWrap").classList.remove("show");
+  setSync(cloud.online?"online":null, cloud.online?"":"Solo locale");
+  toast("Import interrotto");
+};
+/* ---------- archivio su cartella dedicata ---------- */
+state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
+
+// mini archivio chiave-valore per ricordare la cartella tra le sessioni (funziona su https)
+const idb = {
+  db:null,
+  open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
+    const r=indexedDB.open("faylive",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("kv");
+    r.onsuccess=()=>{ this.db=r.result; res(this.db); };
+    r.onerror=()=>rej(r.error);
+  });},
+  async get(k){ const db=await this.open(); return new Promise((res,rej)=>{
+    const t=db.transaction("kv").objectStore("kv").get(k);
+    t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); });},
+  async set(k,v){ const db=await this.open(); return new Promise((res,rej)=>{
+    const t=db.transaction("kv","readwrite").objectStore("kv").put(v,k);
+    t.onsuccess=()=>res(); t.onerror=()=>rej(t.error); });}
+};
+
+async function ensureArchive(){
+  if(state.archive) return state.archive;
+  if(!window.showDirectoryPicker){
+    toast("Questo browser non supporta l'archivio su cartella: continuo con le sole anteprime in memoria");
+    return null;
+  }
+  // 1) prova a riattivare la cartella salvata dalle sessioni precedenti
+  try{
+    const saved = await idb.get("archiveDir");
+    if(saved){
+      let perm = await saved.queryPermission({mode:"readwrite"});
+      if(perm!=="granted") perm = await saved.requestPermission({mode:"readwrite"});
+      if(perm==="granted"){
+        state.archive = saved;
+        $("stArch").textContent = saved.name;
+        return saved;
+      }
+    }
+  }catch(_){ /* si passa alla scelta manuale */ }
+  // 2) prima volta: scelta della cartella fissa
+  toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
+  try{
+    state.archive = await showDirectoryPicker({mode:"readwrite"});
+    $("stArch").textContent = state.archive.name;
+    idb.set("archiveDir", state.archive).catch(()=>{});
+    return state.archive;
+  }catch(_){ return null; }
+}
+$("btnArchive").onclick = ()=> ensureArchive();
+$("btnExportDir").onclick = async ()=>{
+  state.exportDir=null;                 // forza una nuova scelta
+  const d=await ensureExportDir();
+  if(d) toast(`Cartella export: ${d.name}`);
+};
+idb.get("exportDir").then(h=>{ if(h) $("stExport").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
+// all'avvio mostra la cartella ricordata (si riattiva al primo import)
+idb.get("archiveDir").then(h=>{ if(h && !state.archive) $("stArch").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
+
+// <archivio>/<AAAA-MM-GG>/<Lettera>/<NNN ore HH.MM>/  — NNN progressivo per lettera per giorno
+async function getImportDir(letter){
+  if(!state.archive) return null;
+  try{
+    const now = new Date();
+    const dateStr = serviceDateStr();
+    const dayDir = await state.archive.getDirectoryHandle(dateStr, {create:true});
+    const letDir = await dayDir.getDirectoryHandle(letter, {create:true});
+    let n=0;
+    for await (const entry of letDir.values()){ if(entry.kind==="directory") n++; }
+    const hm = String(now.getHours()).padStart(2,"0")+"."+String(now.getMinutes()).padStart(2,"0");
+    const impName = String(n+1).padStart(3,"0")+" ore "+hm;
+    return await letDir.getDirectoryHandle(impName, {create:true});
+  }catch(err){
+    console.error("archivio", err);
+    toast("Non riesco a scrivere nell'archivio: "+(err.message||err));
+    return null;
+  }
+}
+
+// restituisce sempre la versione più affidabile del file (archivio prima, poi origine)
+async function freshFile(p){
+  if(p.arch){ try{ return await p.arch.getFile(); }catch(_){} }
+  if(p.file) return p.file;
+  // foto remota senza originale locale: usa l'anteprima (ripiego)
+  if(p.preview) return new File([p.preview], p.code+"_anteprima.jpg", {type:"image/jpeg"});
+  throw new Error("originale non disponibile su questa postazione");
+}
+
+function toBlobAsync(c, q){ return new Promise(res=>c.toBlob(res,"image/jpeg",q)); }
+
+// decodifica ridimensionata con tripla scorta (opzioni piene → senza orientamento → via <img>)
+async function decodeScaled(blob, maxSide){
+  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium", imageOrientation:"from-image"}); }
+  catch(_){ }
+  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium"}); }
+  catch(_){ }
+  const url=URL.createObjectURL(blob);
+  try{
+    const img=await loadImg(url);
+    const k=Math.min(1, maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement("canvas");
+    c.width=Math.max(1,Math.round(img.naturalWidth*k));
+    c.height=Math.max(1,Math.round(img.naturalHeight*k));
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return await createImageBitmap(c);
+  }finally{ URL.revokeObjectURL(url); }
+}
+
+async function processBatch(batch){
+  const TH=260, PV=1280;
+  prog.cancel=false;
+  prog.total += batch.length*2; progUpdate();
+  let fails=0;
+
+  // FASE 1 — miniature veloci: la griglia si riempie subito
+  for(const p of batch){
+    if(prog.cancel) return;
+    try{
+      const bmp = await decodeScaled(p.file, TH);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      p.thumb = c.toDataURL("image/jpeg",0.78);
+      p.w=c.width; p.h=c.height;
+    }catch(err){ fails++; console.warn("miniatura", p.code, err); }
+    prog.done++;
+    if((prog.done & 7)===0){
+      progUpdate();
+      $("stThumbs").textContent = state.photos.filter(x=>x.thumb).length;
+      paintVisible();
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  progUpdate();
+  $("stThumbs").textContent = state.photos.filter(x=>x.thumb).length;
+  paintVisible();
+
+  // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
+  const evDir = await getImportDir(batch[0].letter);
+  for(const p of batch){
+    if(prog.cancel) return;
+    let buf=null;
+    try{ buf = await p.file.arrayBuffer(); }
+    catch(err){ console.warn("lettura", p.code, err); }
+    if(evDir && buf){
+      try{
+        const ext = (p.file.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
+        const fh = await evDir.getFileHandle(p.code+ext, {create:true});
+        const w = await fh.createWritable();
+        await w.write(buf); await w.close();
+        p.arch = fh;
+      }catch(err){ console.warn("copia archivio", p.code, err); }
+    }
+    try{
+      const srcBlob = buf? new Blob([buf], {type:p.file.type||"image/jpeg"}) : p.file;
+      const bmp = await decodeScaled(srcBlob, PV);
+      const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      p.preview = await toBlobAsync(c, 0.85);
+      thumbCache.set(p.code, p.preview);
+    }catch(err){ console.warn("anteprima", p.code, err); }
+    // sincronizzazione cloud NON bloccante: va in coda parallela, l'import prosegue
+    queueThumbSync(p);
+    buf=null;
+    prog.done++;
+    if((prog.done & 3)===0){ progUpdate(); paintVisible(); await new Promise(r=>setTimeout(r,0)); }
+  }
+  progUpdate(); paintVisible();
+  if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
+}
+
+/* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
+const thumbQueue = [];
+let thumbActive = 0;
+const THUMB_PARALLEL = 8;
+function queueThumbSync(p){
+  if(!sb || !cloud.servizio || p.remote) return;
+  p._thumbTries = 0;
+  thumbQueue.push(p); pumpThumbQueue();
+}
+// crea il rullo una sola volta (evita che 8 upload in parallelo lo creino insieme)
+const rulloLocks = {};
+async function ensureRullo(letter){
+  if(cloud.rulli[letter]) return cloud.rulli[letter];
+  if(!rulloLocks[letter]){
+    rulloLocks[letter] = (async ()=>{
+      const {data:r,error}=await sb.from("rulli")
+        .upsert({servizio_id:cloud.servizio.id, lettera:letter, descrizione:state.letterDesc[letter]||null},
+                {onConflict:"servizio_id,lettera"}).select().single();
+      if(error) throw error;
+      cloud.rulli[letter]={id:r.id, ultimo_num:r.ultimo_num};
+      return cloud.rulli[letter];
+    })();
+  }
+  return rulloLocks[letter];
+}
+function pumpThumbQueue(){
+  while(thumbActive < THUMB_PARALLEL && thumbQueue.length){
+    const p = thumbQueue.shift();
+    thumbActive++;
+    syncPhotoUp(p).then(ok=>{
+      if(!ok && (p._thumbTries||0) < 6){
+        p._thumbTries=(p._thumbTries||0)+1;
+        setTimeout(()=>{ thumbQueue.push(p); pumpThumbQueue(); }, 800*p._thumbTries); // backoff
+      }
+    }).finally(()=>{
+      thumbActive--;
+      const pend = thumbQueue.length + thumbActive;
+      if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else setSync("online");
+      updateThumbCloud();
+      pumpThumbQueue();
+    });
+  }
+}
+addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
+
+// carica anteprima + riga foto. Ritorna true se ok, false se da riprovare. Non forza offline.
+async function syncPhotoUp(p){
+  if(!sb || !cloud.servizio || p.remote) return true;
+  try{
+    await ensureRullo(p.letter);
+    if(p.preview && !p.anteprimaUrl){
+      const ap = cloud.servizio.id+"/"+p.code+".jpg";
+      const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
+      if(up.error) throw up.error;
+      p.anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+    }
+    const {data,error} = await sb.from("foto").upsert({
+      rullo_id: cloud.rulli[p.letter].id, codice: p.code,
+      scattata_il: new Date(p.ts).toISOString(),
+      anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
+    }, {onConflict:"rullo_id,codice"}).select().single();
+    if(error) throw error;
+    p.dbId = data.id;
+    cloud.online=true;
+    return true;
+  }catch(err){
+    console.warn("syncPhotoUp", p.code, err);
+    return false; // verrà rimessa in coda
+  }
+}
+
+/* coda upload ORIGINALI — solo per le foto che entrano nel giro vendita
+   (selezionate/preferite o messe in stampa). Parallela e non bloccante. */
+const origQueue = [];
+const origSet = new Set();
+let origActive = 0;
+const ORIG_PARALLEL = 6;
+
+function queueOriginalUpload(p){
+  if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
+  if(origSet.has(p.code)) return;
+  origSet.add(p.code); origQueue.push(p);
+  pumpOrigQueue();
+}
+function pumpOrigQueue(){
+  while(origActive < ORIG_PARALLEL && origQueue.length){
+    const p = origQueue.shift();
+    origActive++;
+    uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
+  }
+  updateOrigCount();
+}
+async function uploadOneOriginal(p){
+  try{
+    const f = p.arch ? await p.arch.getFile() : p.file;
+    if(!f) return;
+    const buf = await f.arrayBuffer();
+    const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+    const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+    if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
+    p.origUploaded = true;
+    if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+    cloud.online=true;
+  }catch(err){
+    console.warn("upload originale", p.code, err);
+    // rimetti in coda per un nuovo tentativo più tardi
+    if(!origSet.has(p.code)){ origSet.add(p.code); origQueue.push(p); }
+    cloud.online=false; setSync("offline");
+  }
+}
+function updateOrigCount(){
+  const pend = origQueue.length + origActive;
+  const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
+  $("stArch").textContent = pend? base+" · carico originali: "+pend+" in coda" : base;
+  if(pend) setSync("syncing","Carico originali ("+pend+")"); else if(cloud.online) setSync("online");
+}
+// al rientro online riprova la coda
+addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); pumpOrigQueue(); } });
+
+/* ---------- originali on-demand (soluzione B) ----------
+   Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
+   Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
+   Se nessuna via è possibile (foto di un'altra postazione, non ancora sul cloud, e io non ho il file),
+   torna null e il chiamante ripiega sull'anteprima avvisando l'operatore. */
+const origPath = p => cloud.servizio ? cloud.servizio.id+"/"+p.code+".jpg" : p.code+".jpg";
+
+async function ensureOriginalBlob(p){
+  // 1) ho il file in locale (l'ho importato io)?
+  try{
+    const f = p.arch ? await p.arch.getFile() : p.file;
+    if(f){
+      const buf = await f.arrayBuffer();
+      const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+      // se online e non ancora caricato, lo metto sul cloud per le altre postazioni
+      if(sb && cloud.servizio && !p.origUploaded){
+        sbTry(async ()=>{
+          const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+          if(up.error && up.error.statusCode!=="409") throw up.error;
+          p.origUploaded = true;
+          if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+        }, "sync originale "+p.code);
+      }
+      return blob;
+    }
+  }catch(_){ /* passo al cloud */ }
+
+  // 2) l'originale è già sul cloud (caricato da un'altra postazione)?
+  if(sb && cloud.servizio){
+    const got = await sbTry(async ()=>{
+      const dl = await sb.storage.from("originali").download(origPath(p));
+      if(dl.error) throw dl.error;
+      return dl.data;
+    }, "scarico originale "+p.code);
+    if(got) return got;
+  }
+
+  // 3) niente da fare
+  return null;
+}
+
+/* ---------- immagini piene on-demand (per lightbox e monitor) ---------- */
+const bigCache = new Map(); // id -> ImageBitmap  (LRU semplice)
+async function decodeBig(p, maxSide){
+  const file = await freshFile(p);
+  // 1) decodifica diretta
+  try{
+    const bmp0 = await createImageBitmap(file, {imageOrientation:"from-image"});
+    const k = Math.min(1, maxSide/Math.max(bmp0.width,bmp0.height));
+    if(k>=1) return bmp0;
+    const bmp = await createImageBitmap(bmp0, {resizeWidth:Math.round(bmp0.width*k), resizeQuality:"high"});
+    bmp0.close();
+    return bmp;
+  }catch(e1){ /* continua */ }
+  // 2) rilettura fresca dei byte dal disco
+  try{
+    const buf = await file.arrayBuffer();
+    const bmp0 = await createImageBitmap(new Blob([buf],{type:file.type||"image/jpeg"}), {imageOrientation:"from-image"});
+    const k = Math.min(1, maxSide/Math.max(bmp0.width,bmp0.height));
+    if(k>=1) return bmp0;
+    const bmp = await createImageBitmap(bmp0, {resizeWidth:Math.round(bmp0.width*k), resizeQuality:"high"});
+    bmp0.close();
+    return bmp;
+  }catch(e2){
+    if(e2 && (e2.name==="NotReadableError" || e2.name==="NotFoundError")) throw e2;
+  }
+  // 3) decodifica via <img>
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await loadImg(url);
+    const k=Math.min(1, maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement("canvas");
+    c.width=Math.max(1,Math.round(img.naturalWidth*k));
+    c.height=Math.max(1,Math.round(img.naturalHeight*k));
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return await createImageBitmap(c);
+  }finally{ URL.revokeObjectURL(url); }
+}
+function friendlyErr(err, code){
+  if(err && (err.name==="NotReadableError" || err.name==="NotFoundError" || err instanceof Event))
+    return `${code}: il file su disco è cambiato o non è più raggiungibile dopo l'import (copia ancora in corso? cartella spostata?). Attendi la fine della copia e reimporta la cartella.`;
+  return `Errore aprendo ${code}: ${err && err.message ? err.message : err}`;
+}
+async function getBig(p, maxSide=1920){
+  if(bigCache.has(p.id)){ const b=bigCache.get(p.id); bigCache.delete(p.id); bigCache.set(p.id,b); return b; }
+  let bmp;
+  if(p.preview){
+    bmp = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+  }else{
+    bmp = await decodeBig(p, maxSide);
+  }
+  bigCache.set(p.id,bmp);
+  if(bigCache.size>24){ const [oldId, old]=bigCache.entries().next().value; old.close(); bigCache.delete(oldId); }
+  return bmp;
+}
+
+/* ---------- griglia virtualizzata ---------- */
+const wrap=$("gridWrap"), spacer=$("gridSpacer");
+const CELL=196, GAP=10, PADX=16;
+let cols=1, visible=[], cellPool=new Map(); // idx foto filtrata -> div
+
+function parseQuery(q){
+  const clean=q.replace(/[^A-Z0-9]/g,"");
+  let m=clean.match(/^([A-Z])(\d{1,4})$/);
+  if(m) return {letter:m[1], num:parseInt(m[2],10)};
+  // solo numero: usa la lettera attiva, oppure l'unica lettera presente
+  m=clean.match(/^(\d{1,4})$/);
+  if(m){
+    let L = state.activeLetter;
+    if(!L){
+      const letters=[...new Set(state.photos.map(p=>p.letter))];
+      if(letters.length===1) L=letters[0];
+    }
+    if(L) return {letter:L, num:parseInt(m[1],10)};
+  }
+  return null;
+}
+function filteredPhotos(){
+  let list = state.activeLetter? state.photos.filter(p=>p.letter===state.activeLetter) : state.photos;
+  if(!state.filter) return list;
+  const ex=parseQuery(state.filter);
+  // un codice completo (es. C12) cerca ovunque, anche fuori dalla lettera attiva
+  if(ex) return state.photos.filter(p=>p.letter===ex.letter && String(p.num).includes(String(ex.num)));
+  return list.filter(p=>p.code.includes(state.filter));
+}
+
+/* ---------- schede lettera ---------- */
+function renderTabs(){
+  const nav=$("letterTabs");
+  const letters=[...new Set(state.photos.map(p=>p.letter))].sort();
+  nav.hidden = letters.length===0;
+  const cd=$("btnClearDay"); if(cd) cd.textContent = state.activeLetter ? "Svuota rullo "+state.activeLetter : "Svuota giornata";
+  const stats=L=>{
+    const ph = L? state.photos.filter(p=>p.letter===L) : state.photos;
+    return { n:ph.length,
+             pr:ph.filter(p=>p.prints>0).length,
+             ex:ph.filter(p=>p.exported).length };
+  };
+  const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+  const tab=(L,label)=>{
+    const s=stats(L);
+    const active = state.activeLetter===L;
+    const desc = L && state.letterDesc[L] ? `<span class="ldesc">${esc(state.letterDesc[L])}</span>` : "";
+    return `<button class="ltab${active?" active":""}" data-l="${L||""}" title="${L?"Doppio clic per la descrizione del rullo":""}">
+      <span class="lt">${label}</span>${desc}
+      <span class="stat">${s.n} foto</span>
+      <span class="stat pr">🖨 ${s.pr}</span>
+      <span class="stat ex">⇩ ${s.ex}</span>
+    </button>`;
+  };
+  nav.innerHTML = tab(null,"Tutte") + letters.map(L=>tab(L,L)).join("");
+  nav.querySelectorAll(".ltab").forEach(b=>{
+    b.onclick=()=>{
+      state.activeLetter = b.dataset.l || null;
+      state.focusIdx = -1;
+      cellPool.forEach(el=>el.remove()); cellPool.clear();
+      wrap.scrollTop=0;
+      renderTabs(); layoutGrid(); updateThumbCloud();
+    };
+    if(b.dataset.l) b.ondblclick=()=>editRulloDesc(b.dataset.l);
+  });
+}
+function editRulloDesc(L){
+  $("ddLetter").textContent=L;
+  $("ddInput").value = state.letterDesc[L]||"";
+  const dlg=$("descDlg"); dlg.showModal();
+  $("ddInput").focus();
+  $("ddYes").onclick=()=>{
+    const v=$("ddInput").value.trim();
+    if(v) state.letterDesc[L]=v; else delete state.letterDesc[L];
+    dlg.close(); renderTabs();
+  };
+  $("ddNo").onclick=()=>dlg.close();
+}
+function layoutGrid(){
+  const list=filteredPhotos();
+  $("empty").style.display = state.photos.length? "none":"flex";
+  cols = Math.max(1, Math.floor((wrap.clientWidth-PADX*2+GAP)/(CELL+GAP)));
+  const rows = Math.ceil(list.length/cols);
+  spacer.style.height = (rows*(CELL+GAP)+PADX*2)+"px";
+  paintVisible();
+}
+function paintVisible(){
+  const list=filteredPhotos();
+  const top=wrap.scrollTop, vh=wrap.clientHeight;
+  const r0=Math.max(0, Math.floor((top-PADX)/(CELL+GAP))-1);
+  const r1=Math.floor((top+vh)/(CELL+GAP))+1;
+  const i0=r0*cols, i1=Math.min(list.length-1, (r1+1)*cols-1);
+  const need=new Set();
+  for(let i=i0;i<=i1;i++) need.add(i);
+  for(const [i,el] of cellPool){ if(!need.has(i)){ el.remove(); cellPool.delete(i); } }
+  for(let i=i0;i<=i1;i++){
+    const p=list[i]; if(!p) continue;
+    let el=cellPool.get(i);
+    if(!el){
+      el=document.createElement("div"); el.className="cell";
+      el.style.width=CELL+"px"; el.style.height=CELL+"px";
+      el.onclick=()=>{ state.focusIdx=i; toggleSel(p); paintVisible(); };
+      el.ondblclick=()=>{ state.focusIdx=i; openLightbox(i); };
+      el.oncontextmenu=(e)=>{ e.preventDefault(); state.focusIdx=i; openLightbox(i); };
+      spacer.append(el); cellPool.set(i,el);
+    }
+    el.style.left=(PADX+(i%cols)*(CELL+GAP))+"px";
+    el.style.top =(PADX+Math.floor(i/cols)*(CELL+GAP))+"px";
+    el.classList.toggle("sel", state.selection.has(p.id));
+    el.classList.toggle("focused", i===state.focusIdx);
+    let flags="";
+    if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
+    if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
+    const st=statusOf(p);
+    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
+    if(el._html!==html){ el.innerHTML=html; el._html=html; }
+  }
+}
+wrap.addEventListener("scroll", paintVisible, {passive:true});
+addEventListener("resize", layoutGrid);
+
+/* ---------- ricerca ---------- */
+$("searchBox").oninput = e=>{
+  const raw = e.target.value.trim().toUpperCase();
+  if(!raw){ if($("lightbox").classList.contains("open")) closeLightbox(); return; }
+  const ex = parseQuery(raw);
+  if(ex){
+    const code = fmtCode(ex.letter, ex.num);
+    const p = state.byCode.get(code) || state.photos.find(x=>x.letter===ex.letter && x.num===ex.num);
+    if(p){
+      // apri la foto anche se è filtrata da una scheda lettera diversa: passo alla lista completa
+      const idx = state.photos.indexOf(p);
+      openLightboxList(state.photos, idx);
+    } else if($("lightbox").classList.contains("open")){ closeLightbox(); }
+    return;
+  }
+  if($("lightbox").classList.contains("open")) closeLightbox();
+};
+function resetSearch(){
+  $("searchBox").value="";
+  state.filter="";
+}
+$("searchBox").addEventListener("keydown", e=>{
+  if(e.key==="Enter"){
+    e.target.blur();
+    if($("lightbox").classList.contains("open")) closeLightbox();
+    resetSearch();
+  }
+});
+
+/* ---------- selezione ---------- */
+function toggleSel(p){
+  if(state.selection.has(p.id)) state.selection.delete(p.id);
+  else { state.selection.add(p.id); queueOriginalUpload(p); } // selezionata = probabile stampa → sale l'originale
+  updateSelBar();
+}
+function selSet(){ return [...state.selection].map(id=>state.photos.find(p=>p.id===id)).filter(Boolean); }
+function updateSelBar(){
+  $("selCount").textContent = state.selection.size;
+  $("selBar").classList.toggle("show", state.selection.size>0);
+}
+$("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
+$("selShow").onclick = ()=> presentSelection();
+$("selPrint").onclick = ()=> printPhotos(selSet());
+$("selExport").onclick = ()=> exportPhotos(selSet());
+
+/* ---------- vista insieme (selezione affiancata) ---------- */
+const cmpUrls=[];
+function openCompare(){
+  const set=selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  $("cmpCount").textContent = set.length+" foto selezionate";
+  const g=$("cmpGrid"); g.innerHTML="";
+  set.forEach((p,i)=>{
+    const d=document.createElement("div"); d.className="cmp";
+    const img=document.createElement("img");
+    if(p.thumb) img.src=p.thumb;
+    if(p.preview){ const u=URL.createObjectURL(p.preview); cmpUrls.push(u); img.src=u; }
+    const c=document.createElement("span"); c.className="code"+(statusOf(p)?" "+statusOf(p):""); c.textContent=p.code;
+    d.append(img,c);
+    d.onclick=()=>openLightboxList(set, i);
+    g.append(d);
+  });
+  $("compare").classList.add("open");
+}
+function closeCompare(){
+  $("compare").classList.remove("open");
+  cmpUrls.splice(0).forEach(u=>URL.revokeObjectURL(u));
+}
+$("selCompare").onclick = openCompare;
+$("cmpClose").onclick = closeCompare;
+$("cmpShow").onclick = ()=> presentMosaicSet(selSet());
+
+/* ---------- stampa ed esportazione ---------- */
+async function renderFull(p, withOverlay=true){
+  let src, lowQuality=false;
+  const blob = await ensureOriginalBlob(p); // originale: locale → cloud → (null)
+  if(blob){
+    try{ src = await createImageBitmap(blob, {imageOrientation:"from-image"}); }
+    catch(_){ src=null; }
+  }
+  if(!src){
+    if(!p.preview) throw new Error(p.code+": originale non disponibile su nessuna postazione");
+    lowQuality=true;
+    src = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+  }
+  const ev = state.event || {};
+  const iw=src.width, ih=src.height, S=Math.min(iw,ih);
+  // cornice bianca: bordo sottile su 4 lati + banda extra sotto per la scritta
+  const border = ev.frameOn===false ? 0 : Math.round(S * ((ev.frameBorder ?? 2.5)/100)); // % del lato corto
+  const bottomExtra = (ev.frameOn===false || !ev.text) ? 0 : Math.round(S * ((ev.frameBottom ?? 6)/100));
+  const c=document.createElement("canvas");
+  c.width = iw + border*2;
+  c.height = ih + border*2 + bottomExtra;
+  const ctx=c.getContext("2d");
+  // sfondo cornice
+  ctx.fillStyle = ev.frameColor || "#ffffff";
+  ctx.fillRect(0,0,c.width,c.height);
+  // foto dentro la cornice
+  ctx.drawImage(src, border, border, iw, ih); src.close();
+  // logo + scritta, posizionati rispetto alla foto e alla banda inferiore
+  if(withOverlay) drawOverlay(ctx, iw, ih, border, bottomExtra);
+  c._lowQuality = lowQuality;
+  return c;
+}
+// verifica se l'originale è disponibile (locale o già sul cloud) senza scaricarlo tutto
+async function originalReady(p){
+  if(p.arch || p.file) return true;                 // ce l'ho in locale
+  if(!sb || !cloud.servizio) return false;
+  if(p.origUploaded) return true;
+  try{
+    const {data} = await sb.from("foto").select("originale_url").eq("id",p.dbId).single();
+    if(data && data.originale_url){ p.origReadyCloud=true; return true; }
+  }catch(_){}
+  return false;
+}
+
+async function printPhotos(set){
+  if(!set.length){ toast("Nessuna foto da stampare"); return; }
+  // assicura che gli originali delle foto da stampare siano in coda di caricamento
+  set.forEach(p=>queueOriginalUpload(p));
+  // pre-controllo disponibilità
+  const checks = await Promise.all(set.map(async p=>({p, ready: await originalReady(p)})));
+  const ready = checks.filter(x=>x.ready).map(x=>x.p);
+  const missing = checks.filter(x=>!x.ready).map(x=>x.p);
+
+  if(!missing.length){ return doPrint(set); }
+
+  // finestra decisione
+  const dlg=$("printDlg");
+  $("pdText").innerHTML = `<b>${ready.length}</b> foto pronte in alta qualità, <b>${missing.length}</b> in attesa dell'originale `+
+    `(${missing.map(p=>p.code).join(", ")}).`;
+  $("pdWaiting").innerHTML="";
+  $("pdReady").style.display = ready.length? "" : "none";
+  dlg.showModal();
+
+  const choice = await new Promise(res=>{
+    $("pdCancel").onclick=()=>{dlg.close();res("cancel");};
+    $("pdReady").onclick =()=>{dlg.close();res("ready");};
+    $("pdAll").onclick   =()=>{dlg.close();res("all");};
+    $("pdWait").onclick  =()=>res("wait");   // non chiude: mostra attesa
+  });
+
+  if(choice==="cancel") return;
+  if(choice==="ready"){ if(ready.length) doPrint(ready); return; }
+  if(choice==="all"){ doPrint(set); return; }
+
+  // choice === "wait": aspetta gli originali mancanti, con avanzamento
+  const wrap=$("pdWaiting");
+  wrap.innerHTML = missing.map(p=>`<div id="pw_${p.code}" class="hint">⏳ ${p.code} — in arrivo…</div>`).join("");
+  const stillMissing = new Set(missing.map(p=>p.code));
+  const deadline = Date.now()+90000; // max 90s di attesa
+  while(stillMissing.size && Date.now()<deadline){
+    for(const p of missing){
+      if(!stillMissing.has(p.code)) continue;
+      if(await originalReady(p)){
+        stillMissing.delete(p.code);
+        const el=$("pw_"+p.code); if(el){ el.innerHTML=`✓ ${p.code} — pronta`; el.style.color="var(--ok)"; }
+      }
+    }
+    if(stillMissing.size) await new Promise(r=>setTimeout(r,1500));
+  }
+  $("printDlg").close();
+  if(stillMissing.size){
+    toast(`${stillMissing.size} originali non arrivati: stampo il resto in alta qualità`);
+    doPrint(set.filter(p=>!stillMissing.has(p.code)));
+  } else {
+    doPrint(set);
+  }
+}
+
+async function doPrint(set){
+  if(!set.length){ toast("Niente da stampare"); return; }
+  const w=window.open("","faylive_print","width=900,height=700");
+  if(!w){ toast("Popup bloccato: consenti i popup"); return; }
+  // ogni pagina prende l'orientamento della propria foto (orizzontale/verticale)
+  w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Stampa</title><style>
+    html,body{margin:0;padding:0}
+    .pg{page-break-after:always;display:flex;align-items:center;justify-content:center}
+    .pg:last-child{page-break-after:auto}
+    .pg.land{page:land}
+    .pg.port{page:port}
+    @page land{size:landscape;margin:0}
+    @page port{size:portrait;margin:0}
+    @page{margin:0}
+    img{display:block;max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}
+    .pg{width:100vw;height:100vh}
+  </style></head><body></body></html>`);
+  w.document.close();
+  toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
+  const loads=[]; let low=0;
+  for(const p of set){
+    let c;
+    try{ c=await renderFull(p,true); }
+    catch(err){ toast(err.message||("Impossibile stampare "+p.code)); continue; }
+    if(c._lowQuality) low++;
+    const land = c.width >= c.height;       // foto orizzontale?
+    const img=w.document.createElement("img");
+    img.src=c.toDataURL("image/jpeg",0.95);
+    loads.push(img.decode().catch(()=>{}));
+    const d=w.document.createElement("div");
+    d.className="pg "+(land?"land":"port");
+    d.append(img);
+    w.document.body.append(d);
+  }
+  await Promise.all(loads);
+  w.focus(); w.print();
+  // chiudi la foto aperta in grande dopo la stampa
+  if($("lightbox").classList.contains("open")) closeLightbox();
+  set.forEach(p=>{ p.prints++; });
+  renderTabs(); paintVisible(); refreshLbStatus();
+  set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
+  if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
+  else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
+}
+async function exportPhotos(set){
+  if(!set.length){ toast("Nessuna foto da esportare"); return; }
+  const dir = await ensureExportDir();  // cartella fissa scelta una volta
+  let fallback=0, saved=0;
+  for(const p of set){
+    let blob = await ensureOriginalBlob(p);
+    let name = p.code+".jpg";
+    if(!blob){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } else { toast(p.code+": originale non disponibile"); continue; } }
+    if(dir){
+      // scrive direttamente nella cartella scelta (niente popup download)
+      try{
+        const fh=await dir.getFileHandle(name,{create:true});
+        const w=await fh.createWritable(); await w.write(blob); await w.close();
+        saved++;
+      }catch(err){ console.warn("export su cartella", p.code, err); }
+    } else {
+      // ripiego: download del browser
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download=name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 5000); saved++;
+    }
+    p.exported=true;
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export");
+  }
+  renderTabs(); paintVisible(); refreshLbStatus();
+  const dove = dir ? `cartella "${dir.name}"` : "cartella Download";
+  toast(`Esportate ${saved} foto (${dove})` + (fallback? ` — ⚠ ${fallback} in bassa qualità` : ""));
+}
+
+// cartella di esportazione fissa (scelta una volta, ricordata tra le sessioni)
+state.exportDir = null;
+async function ensureExportDir(){
+  if(state.exportDir) return state.exportDir;
+  if(!window.showDirectoryPicker) return null; // browser senza supporto → download classico
+  try{
+    const saved = await idb.get("exportDir");
+    if(saved){
+      let perm=await saved.queryPermission({mode:"readwrite"});
+      if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
+      if(perm==="granted"){ state.exportDir=saved; $("stExport").textContent=saved.name; return saved; }
+    }
+  }catch(_){}
+  toast("Scegli la cartella dove salvare le foto esportate (una volta sola)");
+  try{
+    state.exportDir = await showDirectoryPicker({mode:"readwrite"});
+    $("stExport").textContent = state.exportDir.name;
+    idb.set("exportDir", state.exportDir).catch(()=>{});
+    return state.exportDir;
+  }catch(_){ return null; }
+}
+function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
+function statusText(p){
+  const parts=[];
+  if(p.prints>0) parts.push("Stampata"+(p.prints>1?" ×"+p.prints:""));
+  if(p.exported) parts.push("Esportata");
+  return parts.join(" · ");
+}
+function setLbStatus(p){
+  let h="";
+  if(p.prints>0) h+=`<span class="chip pr">Stampata${p.prints>1?" ×"+p.prints:""}</span>`;
+  if(p.exported) h+=`<span class="chip ex">Esportata</span>`;
+  $("lbStatus").innerHTML=h;
+}
+function refreshLbStatus(){
+  const p=lbList()[state.lightboxIdx];
+  if(p && $("lightbox").classList.contains("open")){ setLbStatus(p); paintLightbox(); }
+}
+
+/* ---------- lightbox operatore ---------- */
+function lbList(){ return state.lbCustom || filteredPhotos(); }
+function openLightboxList(set, i){
+  state.lbCustom = set;
+  state.lightboxIdx = i;
+  $("lightbox").classList.add("open");
+  paintLightbox();
+}
+async function openLightbox(i){
+  state.lbCustom = null;
+  const list=filteredPhotos(); if(!list[i]) return;
+  state.lightboxIdx=i; state.focusIdx=i;
+  $("lightbox").classList.add("open");
+  await paintLightbox();
+}
+let lbSeq=0;
+async function paintLightbox(){
+  const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
+  const my=++lbSeq;
+  $("lbCode").textContent=p.code;
+  setLbStatus(p);
+  $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
+  const c=$("lbCanvas"), ctx=c.getContext("2d");
+
+  // 1) subito la miniatura ingrandita (sfocata ma istantanea)
+  if(p.thumb){
+    try{
+      const t=await loadImg(p.thumb);
+      if(my!==lbSeq) return;
+      c.width=t.width*4; c.height=t.height*4;
+      ctx.imageSmoothingEnabled=true;
+      ctx.drawImage(t,0,0,c.width,c.height);
+      drawOverlay(ctx,c.width,c.height);
+      drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
+    }catch(_){}
+  }else{
+    c.width=800; c.height=600;
+    ctx.fillStyle="#111624"; ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle="#8A94A8"; ctx.font="500 24px 'Segoe UI',sans-serif";
+    ctx.textAlign="center"; ctx.fillText("Carico "+p.code+"…", c.width/2, c.height/2); ctx.textAlign="left";
+  }
+
+  // 2) poi la versione nitida (con un secondo tentativo automatico)
+  $("lbLoading").classList.add("show");
+  try{
+    let bmp;
+    try{ bmp=await getBig(p); }
+    catch(_){ await new Promise(r=>setTimeout(r,500)); bmp=await getBig(p); }
+    if(my!==lbSeq) return;
+    c.width=bmp.width; c.height=bmp.height;
+    ctx.drawImage(bmp,0,0);
+    drawOverlay(ctx,c.width,c.height);
+    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
+  }catch(err){
+    if(my!==lbSeq) return;
+    toast(friendlyErr(err, p.code));
+    console.error("lightbox", p.code, err);
+  }finally{
+    if(my===lbSeq) $("lbLoading").classList.remove("show");
+  }
+  const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
+}
+function closeLightbox(){ $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; if($("searchBox").value){ resetSearch(); } paintVisible(); }
+$("lbClose").onclick=closeLightbox;
+$("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
+$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); } };
+$("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); } };
+$("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
+$("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
+$("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
+$("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPhotos([p]); };
+
+/* ---------- monitor cliente ---------- */
+$("btnMonitor").onclick = openMonitor;
+async function openMonitor(){
+  const M=state.monitor;
+  if(M.win && !M.win.closed){ M.win.focus(); return; }
+  // prova a piazzare la finestra direttamente sul monitor esterno, a tutto schermo
+  let feat="width=1280,height=720", autoPlaced=false;
+  try{
+    if(window.getScreenDetails){
+      const sd = await window.getScreenDetails();
+      const ext = sd.screens.find(s=>!s.isPrimary);
+      if(ext){
+        feat = `left=${ext.availLeft},top=${ext.availTop},width=${ext.availWidth},height=${ext.availHeight},fullscreen`;
+        autoPlaced = true;
+      }
+    }
+  }catch(_){ /* permesso negato o non supportato: si va di trascinamento */ }
+  const w = window.open("", "faylive_monitor", feat);
+  if(!w){ toast("Popup bloccato: consenti i popup per aprire il monitor"); return; }
+  w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Monitor cliente</title><style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+    canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    #hint{position:absolute;top:12px;left:12px;color:#666;font:13px "Segoe UI",sans-serif;cursor:default}
+  </style></head><body><canvas id="c"></canvas>${autoPlaced? "" : '<div id="hint">Trascina questa finestra sul monitor cliente e premi F11</div>'}</body></html>`);
+  w.document.close();
+  const canvas=w.document.getElementById("c");
+  M.win=w; M.canvas=canvas; M.ctx=canvas.getContext("2d");
+  const fit=()=>{ canvas.width=w.innerWidth*(w.devicePixelRatio||1); canvas.height=w.innerHeight*(w.devicePixelRatio||1); repaintMonitor(); };
+  w.addEventListener("resize",fit); fit();
+  setTimeout(()=>{ const h=w.document.getElementById("hint"); if(h) h.remove(); }, 9000);
+  const watch=setInterval(()=>{ if(w.closed){ clearInterval(watch); stopSlideshow(); M.win=null; setMonState("off"); } },800);
+  setMonState("slideshow");
+  startSlideshow();
+}
+function setMonState(mode){
+  const M=state.monitor; M.mode=mode;
+  $("monDot").classList.toggle("on", mode!=="off");
+  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
+  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — Esc per riprendere lo slideshow" : "";
+}
+function buildSlideshowQueue(){
+  // in ordine di codice: prima per lettera, poi per numero
+  return [...state.photos].sort((a,b)=> a.letter===b.letter ? a.num-b.num : (a.letter<b.letter?-1:1));
+}
+function startSlideshow(){
+  const M=state.monitor; stopTimer();
+  if(!M.win || M.win.closed) return;
+  setMonState("slideshow");
+  M.queue = buildSlideshowQueue(); M.qPos=0;
+  const step=async()=>{
+    if(!M.win || M.win.closed || M.mode!=="slideshow") return;
+    if(!M.queue.length){ paintMonitorMessage("In attesa di foto…"); return; }
+    if(M.qPos>=M.queue.length) M.qPos=0;
+    await paintMonitorMosaic(M.qPos);
+    M.qPos++;
+  };
+  step();
+  M.timer=setInterval(step, (state.event?.secs||4)*1000);
+}
+function stopTimer(){ const M=state.monitor; if(M.timer){ clearInterval(M.timer); M.timer=null; } }
+function stopSlideshow(){ stopTimer(); }
+async function paintMonitorPhoto(p, withCode){
+  const M=state.monitor; if(!M.ctx) return;
+  let bmp;
+  try{ bmp=await getBig(p, 2200); }
+  catch(err){ console.error("monitor", p.code, err); return; }
+  if(!M.win || M.win.closed) return;
+  const cw=M.canvas.width, ch=M.canvas.height;
+  const k=Math.min(cw/bmp.width, ch/bmp.height);
+  const dw=bmp.width*k, dh=bmp.height*k, dx=(cw-dw)/2, dy=(ch-dh)/2;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  M.ctx.drawImage(bmp,dx,dy,dw,dh);
+  M.ctx.save(); M.ctx.translate(dx,dy);
+  drawOverlay(M.ctx,dw,dh);
+  if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
+  M.ctx.restore();
+  M._last=p;
+}
+const TILE_GRID = {1:[1,1],2:[2,1],3:[3,1],4:[2,2],5:[3,2],6:[3,2],7:[4,2],8:[4,2],9:[3,3],10:[4,3],11:[4,3],12:[4,3]};
+function layoutFor(n){
+  if(TILE_GRID[n]) return TILE_GRID[n];
+  const cols=Math.ceil(Math.sqrt(n*1.5));
+  return [cols, Math.ceil(n/cols)];
+}
+// disegna una pagina di foto affiancate sul monitor cliente
+async function drawTilePage(page, expectMode, withInfo){
+  const M=state.monitor; if(!M.ctx) return;
+  const [cols,rows] = layoutFor(page.length);
+  const cw=M.canvas.width, ch=M.canvas.height;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  const gap=Math.round(Math.min(cw,ch)*0.008);
+  const tw=(cw-gap*(cols+1))/cols, th=(ch-gap*(rows+1))/rows;
+  for(let i=0;i<page.length;i++){
+    const p=page[i];
+    let bmp; try{ bmp=await getBig(p, 1400); }catch(_){ continue; }
+    if(!M.win || M.win.closed || M.mode!==expectMode) return;
+    const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
+    const k=Math.min(tw/bmp.width, th/bmp.height);
+    const dw=bmp.width*k, dh=bmp.height*k;
+    const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
+    M.ctx.drawImage(bmp,dx,dy,dw,dh);
+    M.ctx.save(); M.ctx.translate(dx,dy);
+    drawOverlay(M.ctx,dw,dh);
+    drawCodeBadge(M.ctx,dw,dh,p.code);
+    M.ctx.restore();
+  }
+  if(withInfo){
+    const info = state.event && state.event.infoLine;
+    if(info){
+      const bh = Math.round(ch*0.075);
+      const by = Math.round(ch/2 - bh/2);
+      M.ctx.fillStyle = "rgba(11,14,20,.88)";
+      M.ctx.fillRect(0, by, cw, bh);
+      M.ctx.fillStyle = "#F5B942";
+      const fs = Math.round(bh*0.52);
+      M.ctx.font = `700 ${fs}px "Segoe UI", sans-serif`;
+      M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
+      M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
+      M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
+    }
+  }
+}
+async function paintMonitorMosaic(start){
+  const M=state.monitor; if(!M.ctx) return;
+  const n = (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
+  const q=M.queue, L=q.length;
+  const page=[];
+  for(let i=0;i<Math.min(n,L);i++) page.push(q[(start+i)%L]);
+  await drawTilePage(page, "slideshow", true);
+  M._page=start;
+  for(let i=0;i<2 && L;i++){ const nx=q[(start+n+i)%L]; if(nx) getBig(nx,1400).catch(()=>{}); }
+}
+// selezione/preferiti affiancati, statici, sul monitor cliente
+async function presentMosaicSet(set){
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  const M=state.monitor;
+  if(!M.win || M.win.closed) await openMonitor();
+  if(!M.win || M.win.closed) return;
+  stopTimer();
+  M._staticSet=set;
+  setMonState("mosaic");
+  await drawTilePage(set, "mosaic", false);
+  toast(`${set.length} foto affiancate sul monitor — Esc per riprendere lo slideshow`);
+}
+function paintMonitorMessage(msg){
+  const M=state.monitor; if(!M.ctx) return;
+  const cw=M.canvas.width, ch=M.canvas.height;
+  M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
+  M.ctx.fillStyle="#555"; M.ctx.font=`500 ${ch*0.04}px "Segoe UI",sans-serif`;
+  M.ctx.textAlign="center"; M.ctx.fillText(msg,cw/2,ch/2); M.ctx.textAlign="left";
+}
+function repaintMonitor(){
+  const M=state.monitor;
+  if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
+  else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
+  else if(M._last) paintMonitorPhoto(M._last, M.mode!=="off"); // in presentazione il codice resta visibile
+}
+
+/* ---------- presentazione (foto singola o set) ---------- */
+function presentSelection(){
+  const set=selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  presentSet(set);
+}
+async function presentSet(set){
+  const M=state.monitor;
+  if(!M.win || M.win.closed) await openMonitor();
+  if(!M.win || M.win.closed) return;
+  stopTimer();
+  M.present=set; M.pIdx=0; setMonState("present");
+  paintMonitorPhoto(set[0], true);
+  if(set[1]) getBig(set[1]);
+  toast(set.length===1? `Sul monitor: ${set[0].code}` : `Presentazione di ${set.length} foto — frecce per navigare`);
+}
+function presentNav(d){
+  const M=state.monitor; if(M.mode!=="present") return;
+  M.pIdx=Math.min(M.present.length-1, Math.max(0, M.pIdx+d));
+  paintMonitorPhoto(M.present[M.pIdx], true);
+  const nx=M.present[M.pIdx+d]; if(nx) getBig(nx);
+}
+function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) startSlideshow(); }
+
+/* ---------- tastiera ---------- */
+addEventListener("keydown", e=>{
+  const tag=document.activeElement.tagName;
+  if(tag==="INPUT"||tag==="SELECT"){ if(e.key==="Escape") document.activeElement.blur(); return; }
+  const M=state.monitor;
+  const lbOpen=$("lightbox").classList.contains("open");
+  if(e.key==="/"){ e.preventDefault(); $("searchBox").focus(); $("searchBox").select(); return; }
+  if(e.key==="Escape"){
+    if(lbOpen){ closeLightbox(); }
+    else if($("compare").classList.contains("open")){ closeCompare(); }
+    else if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); }
+    return;
+  }
+  if(M.mode==="present" && !lbOpen){
+    if(e.key==="ArrowRight"){ presentNav(1); return; }
+    if(e.key==="ArrowLeft"){ presentNav(-1); return; }
+  }
+  if(lbOpen){
+    if(e.key==="ArrowRight") $("lbNext").click();
+    else if(e.key==="ArrowLeft") $("lbPrev").click();
+    else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
+    else if(e.key.toLowerCase()==="m") $("lbShow").click();
+    else if(e.key==="Enter"){ e.preventDefault(); closeLightbox(); }
+    return;
+  }
+  const list=filteredPhotos(); if(!list.length) return;
+  if(["ArrowRight","ArrowLeft","ArrowUp","ArrowDown"].includes(e.key)){
+    e.preventDefault();
+    let i=state.focusIdx<0?0:state.focusIdx;
+    if(e.key==="ArrowRight") i++; if(e.key==="ArrowLeft") i--;
+    if(e.key==="ArrowDown") i+=cols; if(e.key==="ArrowUp") i-=cols;
+    state.focusIdx=Math.min(list.length-1, Math.max(0,i));
+    ensureVisible(state.focusIdx); paintVisible();
+  }else if(e.key===" "){
+    e.preventDefault();
+    const p=list[state.focusIdx]; if(p){ toggleSel(p); paintVisible(); }
+  }else if(e.key==="Enter"){
+    if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
+    else if(state.focusIdx>=0) openLightbox(state.focusIdx);
+  }else if(e.key.toLowerCase()==="m"){
+    if(state.selection.size) presentSelection();
+    else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
+  }
+});
+/* =====================================================================
+   AVVIO — scelta sede, servizio del giorno, sincronizzazione
+   ===================================================================== */
+
+// cache locale delle anteprime (IndexedDB) per l'offline
+const thumbCache = {
+  db:null,
+  open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
+    const r=indexedDB.open("faylive-thumbs",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("t");
+    r.onsuccess=()=>{ this.db=r.result; res(this.db); };
+    r.onerror=()=>rej(r.error);
+  });},
+  async get(k){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t").objectStore("t").get(k); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error);
+  }); }catch(_){ return null; } },
+  async set(k,v){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t","readwrite").objectStore("t").put(v,k); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
+  }); }catch(_){ } },
+  async clear(){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
+    const t=db.transaction("t","readwrite").objectStore("t").clear(); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
+  }); }catch(_){ } },
+};
+
+const NEW_SEDE = "__new__";
+async function loadSedi(){
+  const sel=$("sedeSelect");
+  if(!sb){ sel.innerHTML='<option value="">Solo locale</option>'; return; }
+  try{
+    const {data,error}=await sb.from("sedi").select("*").order("nome");
+    if(error) throw error;
+    sel.innerHTML='<option value="">Sede…</option>' +
+      data.map(s=>`<option value="${s.id}">${s.nome.replace(/[<>&"]/g,"")}</option>`).join("") +
+      `<option value="${NEW_SEDE}">+ Nuova sede…</option>`;
+    sel._sedi = data;
+  }catch(err){
+    sel.innerHTML='<option value="">Sede… (cloud non raggiungibile)</option>';
+    console.warn("sedi", err);
+  }
+}
+$("sedeSelect").onchange = e=>{
+  const v=e.target.value;
+  if(v===NEW_SEDE){ e.target.value=""; $("sedeNewName").value=""; $("sedeDlg").showModal(); $("sedeNewName").focus(); return; }
+  if(!v){ return; }
+  const s=(e.target._sedi||[]).find(x=>x.id===v);
+  if(s) chooseSede(s);
+};
+$("sedeNewCancel").onclick=()=>$("sedeDlg").close();
+$("sedeNewSave").onclick=async ()=>{
+  const nome=$("sedeNewName").value.trim();
+  if(!nome){ $("sedeNewName").focus(); return; }
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  try{
+    const codice = nome.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12) + Math.floor(Math.random()*90+10);
+    const {data,error}=await sb.from("sedi").insert({nome,codice}).select().single();
+    if(error) throw error;
+    $("sedeDlg").close();
+    await loadSedi();
+    $("sedeSelect").value=data.id;
+    chooseSede(data);
+  }catch(err){ toast("Errore creando la sede: "+(err.message||err)); }
+};
+
+// --- cancella sede selezionata ---
+$("btnDelSede").onclick = async ()=>{
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  const s = cloud.sede;
+  if(!s){ toast("Seleziona prima una sede da cancellare"); return; }
+  // conta servizi e foto della sede
+  let nServizi=0, nFoto=0;
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id",s.id);
+    nServizi=(servizi||[]).length;
+    if(nServizi){
+      const {data:rulli} = await sb.from("rulli").select("id").in("servizio_id",(servizi||[]).map(x=>x.id));
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length){ const {count}=await sb.from("foto").select("id",{count:"exact",head:true}).in("rullo_id",rids); nFoto=count||0; }
+    }
+  }catch(_){}
+  $("delSedeText").innerHTML = nFoto
+    ? `La sede <b>${s.nome}</b> contiene <b>${nServizi}</b> giornate e <b>${nFoto}</b> foto.<br><br>`+
+      `Verranno cancellate <b>dal cloud</b> (righe, anteprime e originali caricati). Gli originali sui PC in locale <b>non</b> vengono toccati. Azione irreversibile.`
+    : `Cancellare la sede <b>${s.nome}</b>? È vuota, nessuna foto da rimuovere.`;
+  const dlg=$("delSedeDlg"); dlg.showModal();
+  $("delSedeNo").onclick=()=>dlg.close();
+  $("delSedeYes").onclick=async ()=>{
+    dlg.close();
+    await deleteSede(s);
+  };
+};
+
+async function deleteSede(s){
+  setSync("syncing","Cancello la sede…");
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id",s.id);
+    for(const sv of (servizi||[])){
+      for(const bucket of ["anteprime","originali"]){
+        try{ const {data:files}=await sb.storage.from(bucket).list(sv.id);
+          if(files&&files.length) await sb.storage.from(bucket).remove(files.map(f=>sv.id+"/"+f.name)); }catch(_){}
+      }
+      const {data:rulli}=await sb.from("rulli").select("id").eq("servizio_id",sv.id);
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length) await sb.from("foto").delete().in("rullo_id",rids);
+      await sb.from("rulli").delete().eq("servizio_id",sv.id);
+    }
+    await sb.from("servizi").delete().eq("sede_id",s.id);
+    await sb.from("sedi").delete().eq("id",s.id);
+    // reset stato locale
+    cloud.sede=null; cloud.servizio=null; cloud.rulli={};
+    if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0"; $("giornoSelect").hidden=true;
+    await loadSedi();
+    setSync(null,"Scegli una sede");
+    renderTabs(); layoutGrid(); updateEventInfo();
+    toast(`Sede "${s.nome}" cancellata`);
+  }catch(err){ setSync("offline"); toast("Errore cancellando: "+(err.message||err)); console.warn("deleteSede",err); }
+}
+
+async function chooseSede(s){
+  cloud.sede=s;
+  $("sedeSelect").value=s.id;
+  setSync("syncing","Carico le giornate…");
+  const oggi = serviceDateStr();
+  try{
+    // elenco delle giornate (servizi) di questa sede, più recente in cima
+    const {data:giorni} = await sb.from("servizi").select("*").eq("sede_id",s.id).order("data_servizio",{ascending:false});
+    let lista = giorni||[];
+    // assicura che "oggi" esista sempre come voce apribile
+    if(!lista.find(x=>x.data_servizio===oggi)){
+      const {data:ins} = await sb.from("servizi").insert({sede_id:s.id, data_servizio:oggi}).select().single();
+      if(ins){ lista.unshift(ins); }
+    }
+    // popola la tendina giornate
+    const gsel=$("giornoSelect");
+    gsel.hidden=false;
+    gsel.innerHTML = lista.map(sv=>{
+      const d=new Date(sv.data_servizio+"T12:00:00");
+      const et=(sv.data_servizio===oggi)?"Oggi":d.toLocaleDateString("it-IT",{weekday:"short",day:"2-digit",month:"2-digit"});
+      return `<option value="${sv.id}" data-date="${sv.data_servizio}">${et}</option>`;
+    }).join("");
+    gsel._servizi = lista;
+    // apri la giornata di oggi
+    const today = lista.find(x=>x.data_servizio===oggi) || lista[0];
+    gsel.value = today.id;
+    await openServizio(today);
+  }catch(err){
+    cloud.online=false; setSync("offline");
+    console.warn("sede", err);
+  }
+}
+
+// apre un servizio specifico (oggi o una data passata) e ne carica le foto
+async function openServizio(sv){
+  // pulisci lo stato foto corrente prima di caricare un'altra giornata
+  if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
+  cloud.servizio = sv;
+  cloud.rulli = {};
+  state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+  state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+  cellPool.forEach(el=>el.remove()); cellPool.clear();
+  $("stTotal").textContent="0";
+  setSync("syncing","Apro la giornata…");
+  try{
+    await loadServizioFoto();
+    subscribeRealtime();
+    cleanupOld();
+    cloud.online=true; setSync("online");
+  }catch(err){ cloud.online=false; setSync("offline"); console.warn("apri servizio", err); }
+  renderTabs(); layoutGrid(); updateEventInfo();
+}
+
+$("giornoSelect").onchange = e=>{
+  const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
+  if(sv) openServizio(sv);
+};
+
+/* ---------- svuota giornata (solo cloud) ---------- */
+$("btnClearDay").onclick = ()=>{
+  if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
+  const L = state.activeLetter; // null = tutte
+  const foto = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  const n = foto.length;
+  const dataStr = cloud.servizio.data_servizio;
+  const ambito = L ? `il rullo <b>${L}</b>` : `tutti i rulli`;
+  $("clearText").innerHTML = `Verranno cancellate <b>dal cloud</b> le foto di ${ambito}`+
+    (cloud.sede?` (${cloud.sede.nome}, ${dataStr})`:"")+`: <b>${n}</b> foto, con anteprime e originali caricati.<br><br>`+
+    `Gli originali sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
+  const dlg=$("clearDlg"); dlg.showModal();
+  $("clearNo").onclick=()=>dlg.close();
+  $("clearYes").onclick=async ()=>{
+    dlg.close();
+    await clearCurrentDay(L);
+  };
+};
+
+async function clearCurrentDay(onlyLetter){
+  if(!sb || !cloud.servizio) return;
+  setSync("syncing","Svuoto…");
+  const sid = cloud.servizio.id;
+  try{
+    // rulli interessati: tutti, o solo quello attivo
+    const {data:rulli} = await sb.from("rulli").select("id,lettera").eq("servizio_id",sid);
+    const target = (rulli||[]).filter(r=>!onlyLetter || r.lettera===onlyLetter);
+    const ids = target.map(r=>r.id);
+    // cancella i file storage delle foto interessate
+    const codici = state.photos.filter(p=>!onlyLetter || p.letter===onlyLetter).map(p=>p.code);
+    for(const bucket of ["anteprime","originali"]){
+      try{
+        const paths = codici.map(c=>sid+"/"+c+".jpg");
+        if(paths.length) await sb.storage.from(bucket).remove(paths);
+      }catch(_){}
+    }
+    // cancella righe foto e rulli interessati
+    if(ids.length){
+      await sb.from("foto").delete().in("rullo_id", ids);
+      await sb.from("rulli").delete().in("id", ids);
+    }
+    // aggiorna stato locale
+    if(onlyLetter){
+      state.photos = state.photos.filter(p=>p.letter!==onlyLetter);
+      state.byCode = new Map(state.photos.map(p=>[p.code,p]));
+      delete state.counters[onlyLetter]; delete state.letterDesc[onlyLetter]; delete cloud.rulli[onlyLetter];
+      for(const id of [...state.selection]){ if(!state.photos.find(p=>p.id===id)) state.selection.delete(id); }
+      if(state.activeLetter===onlyLetter) state.activeLetter=null;
+    } else {
+      state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+      cloud.rulli={}; state.selection.clear(); state.activeLetter=null;
+    }
+    state.filter=""; state.focusIdx=-1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent=String(state.photos.length);
+    renderTabs(); layoutGrid(); updateThumbCloud();
+    cloud.online=true; setSync("online");
+    toast(onlyLetter? `Rullo ${onlyLetter} svuotato` : "Giornata svuotata dal cloud");
+  }catch(err){
+    cloud.online=false; setSync("offline");
+    toast("Errore svuotando: "+(err.message||err));
+    console.warn("clearDay", err);
+  }
+}
+
+// carica dal cloud i rulli e le foto della GIORNATA corrente (filtra per i rulli di questo servizio)
+async function loadServizioFoto(){
+  if(!sb || !cloud.servizio) return;
+  const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
+  (rulli||[]).forEach(r=>{ cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
+    if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
+    state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
+  const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
+  const ids=(rulli||[]).map(r=>r.id);
+  if(!ids.length){ renderTabs(); layoutGrid(); return; }
+  // SOLO le foto dei rulli di questa giornata
+  const {data:foto} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice");
+  for(const f of (foto||[])){
+    if(state.byCode.has(f.codice)) continue;
+    const r=rulliById[f.rullo_id]; if(!r) continue;
+    await addRemotePhoto(f, r.lettera);
+  }
+  renderTabs(); layoutGrid(); updateThumbCloud();
+}
+
+// indicatore: quante foto della giornata hanno l'anteprima sul cloud
+function updateThumbCloud(){
+  const L=state.activeLetter;
+  const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  $("stTotal").textContent = scope.length;
+  const el=$("stThumbCloud"); if(!el) return;
+  if(!cloud.servizio){ el.textContent="—"; return; }
+  const tot=scope.length;
+  const onCloud=scope.filter(p=>p.anteprimaUrl).length;
+  if(!tot){ el.textContent="0"; el.style.color=""; return; }
+  el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
+  el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
+}
+$("stThumbCloud").onclick = ()=>{
+  const missing = state.photos.filter(p=>!p.anteprimaUrl && p.preview && !p.remote);
+  if(!missing.length){ toast("Nessuna anteprima da ricaricare in memoria — usa \"Ripristina anteprime\" dagli originali"); return; }
+  missing.forEach(p=>queueThumbSync(p));
+  toast(`Ricarico ${missing.length} anteprime…`);
+};
+
+// inserisce nella griglia una foto che arriva dal cloud (senza file originale locale)
+async function addRemotePhoto(f, letter){
+  if(state.byCode.has(f.codice)) return;
+  const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
+            file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
+            prints:f.stampe||0, exported:!!f.esportata, anteprimaUrl:f.anteprima_url, remote:true };
+  // prova la cache locale, poi la rete
+  let blob = await thumbCache.get(f.codice);
+  if(!blob && f.anteprima_url){
+    try{ const r=await fetch(f.anteprima_url); if(r.ok){ blob=await r.blob(); thumbCache.set(f.codice, blob); } }catch(_){}
+  }
+  if(blob){ p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}}
+  state.photos.push(p); state.byCode.set(p.code,p);
+}
+function blobToThumb(blob){
+  return new Promise(async (res,rej)=>{
+    try{ const bmp=await decodeScaled(blob,260); const c=document.createElement("canvas");
+      c.width=bmp.width;c.height=bmp.height;c.getContext("2d").drawImage(bmp,0,0);bmp.close();
+      res(c.toDataURL("image/jpeg",0.78)); }catch(e){ rej(e); }
+  });
+}
+
+// realtime: nuove foto delle altre postazioni compaiono da sole
+function subscribeRealtime(){
+  if(!sb || !cloud.servizio || cloud.channel) return;
+  cloud.channel = sb.channel("foto-"+cloud.servizio.id)
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"foto"}, async payload=>{
+      const f=payload.new;
+      const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
+      if(!r || r.servizio_id!==cloud.servizio.id) return;
+      if(state.byCode.has(f.codice)) return;
+      await addRemotePhoto(f, r.lettera);
+      renderTabs(); layoutGrid(); updateThumbCloud();
+      const M=state.monitor; if(M.win && !M.win.closed) M.queue=buildSlideshowQueue();
+    })
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
+      const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
+      if(p){ p.prints=f.stampe; p.exported=!!f.esportata; renderTabs(); paintVisible(); }
+    })
+    .subscribe();
+}
+
+// assegna il prossimo numero dal cloud (atomico) o localmente se offline
+async function nextNumber(letter, count){
+  if(sb && cloud.servizio){
+    try{
+      // assicura il rullo
+      if(!cloud.rulli[letter]){
+        const {data,error}=await sb.from("rulli")
+          .upsert({servizio_id:cloud.servizio.id, lettera:letter, descrizione:state.letterDesc[letter]||null},
+                  {onConflict:"servizio_id,lettera"}).select().single();
+        if(error) throw error;
+        cloud.rulli[letter]={id:data.id, ultimo_num:data.ultimo_num};
+      }
+      // riserva "count" numeri in blocco
+      const {data,error}=await sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count});
+      if(!error && typeof data==="number"){ cloud.rulli[letter].ultimo_num=data; return data-count; }
+      // fallback: uno alla volta
+      let start=null;
+      for(let i=0;i<count;i++){ const {data:n}=await sb.rpc("prossimo_codice",{p_rullo_id:cloud.rulli[letter].id});
+        if(i===0) start=n-1; }
+      if(start!=null){ cloud.rulli[letter].ultimo_num=start+count; return start; }
+    }catch(err){ console.warn("nextNumber cloud", err); cloud.online=false; setSync("offline"); }
+  }
+  // offline: numerazione locale
+  const base=state.counters[letter]||0; return base;
+}
+
+// finestra di conservazione: gli originali più vecchi vengono rimossi dal cloud
+const GIORNI_CONSERVAZIONE = 15;
+async function cleanupOld(){
+  if(!sb) return;
+  try{
+    const limite = new Date(Date.now() - GIORNI_CONSERVAZIONE*86400*1000).toISOString().slice(0,10);
+    const {data:vecchi} = await sb.from("servizi").select("id,data_servizio").lt("data_servizio", limite);
+    if(!vecchi || !vecchi.length) return;
+    for(const s of vecchi){
+      const {data:files} = await sb.storage.from("originali").list(s.id);
+      if(files && files.length){
+        await sb.storage.from("originali").remove(files.map(f=>s.id+"/"+f.name));
+      }
+    }
+    console.log("cleanup: rimossi originali di", vecchi.length, "servizi oltre", GIORNI_CONSERVAZIONE, "giorni");
+  }catch(err){ console.warn("cleanup", err); }
+}
+
+// stato connessione del browser
+addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
+
+// avvio: popola la tendina sedi; l'app è già utilizzabile
+loadSedi();
+if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
+
+</script>
+</body>
+</html>
