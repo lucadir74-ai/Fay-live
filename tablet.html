@@ -40,6 +40,7 @@
     grid-template-columns:repeat(auto-fill,minmax(110px,1fr));align-content:start;-webkit-overflow-scrolling:touch}
   .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:3/4}
   .cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+  .cell canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .cell .code{position:absolute;left:5px;bottom:5px;background:rgba(11,14,20,.85);color:var(--accent);
     font-weight:700;font-size:11px;padding:2px 6px;border-radius:5px;font-family:ui-monospace,monospace;z-index:2}
   .cell .fav{position:absolute;right:4px;top:4px;width:30px;height:30px;border-radius:50%;
@@ -226,7 +227,7 @@ function render(){
   if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; return; }
   g.innerHTML = list.map((p,i)=>`
     <div class="cell ${p.fav?'isfav':''}" data-i="${i}">
-      <img src="${p.url||''}" alt="${p.code}" decoding="async">
+      <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`).join("");
@@ -234,9 +235,34 @@ function render(){
   g.querySelectorAll(".cell").forEach(c=>{
     const i=+c.dataset.i;
     c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(list[i]); };
-    c.querySelector("img").onclick=()=>openViewer(list[i]);
+    const cv=c.querySelector("canvas");
+    cv.onclick=()=>openViewer(list[i]);
     c.querySelector(".code").onclick=()=>openViewer(list[i]);
+    drawThumb(cv, list[i]);
   });
+}
+// disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
+const thumbBmpCache = new Map();
+async function drawThumb(cv, p){
+  try{
+    let bmp = thumbBmpCache.get(p.url);
+    if(!bmp){
+      const im=new Image(); im.crossOrigin="anonymous"; im.decoding="async"; im.src=p.url;
+      await im.decode();
+      bmp = im; thumbBmpCache.set(p.url, im);
+      if(thumbBmpCache.size>400){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
+    }
+    const rect=cv.getBoundingClientRect();
+    const dpr=Math.min(devicePixelRatio||1, 2);
+    cv.width=Math.max(1,Math.round(rect.width*dpr));
+    cv.height=Math.max(1,Math.round(rect.height*dpr));
+    const ctx=cv.getContext("2d");
+    ctx.fillStyle="#000"; ctx.fillRect(0,0,cv.width,cv.height);
+    // contain
+    const k=Math.min(cv.width/bmp.naturalWidth, cv.height/bmp.naturalHeight);
+    const w=bmp.naturalWidth*k, h=bmp.naturalHeight*k;
+    ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
+  }catch(_){}
 }
 function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
 
