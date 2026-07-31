@@ -63,6 +63,9 @@
     background:rgba(0,0,0,.4);padding:4px 12px;border-radius:8px}
   #vClose{margin-left:auto;width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,.5);
     border:none;color:#fff;font-size:24px}
+  .vAct{background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.25);color:#fff;
+    border-radius:22px;padding:9px 16px;font-size:15px;font-family:inherit;min-height:44px}
+  .vAct:active{background:rgba(255,255,255,.18)}
   #vFav{position:absolute;right:16px;bottom:24px;width:64px;height:64px;border-radius:50%;
     background:rgba(0,0,0,.55);border:none;font-size:30px;color:#fff;z-index:2;display:flex;
     align-items:center;justify-content:center}
@@ -102,7 +105,12 @@
   </div>
 
   <div id="viewer">
-    <div id="vBar"><span id="vCode"></span><button id="vClose">✕</button></div>
+    <div id="vBar">
+      <span id="vCode"></span>
+      <button class="vAct" id="vShare">↗ Condividi</button>
+      <button class="vAct" id="vExport">⬇ Esporta</button>
+      <button id="vClose">✕</button>
+    </div>
     <canvas id="vCanvas"></canvas>
     <button id="vFav">♡</button>
     <div id="vHint">Scorri per cambiare foto · avvicina le dita per zoomare</div>
@@ -283,62 +291,53 @@ async function toggleFav(p){
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
 
-// condividi i preferiti del rullo attivo tramite il menu Android (Gmail, FileMail, WhatsApp…)
-$("btnShare").onclick = async ()=>{
-  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
-  const favs = scope.filter(p=>p.fav);
-  if(!favs.length){ toast("Nessun preferito da condividere"+(S.letter?" nel rullo "+S.letter:"")); return; }
-  if(!navigator.canShare){ toast("Condivisione non supportata su questo dispositivo — usa Esporta"); return; }
-  toast(`Preparo ${favs.length} foto…`);
-  const files=[];
-  for(const p of favs){
-    try{
-      let blob=null;
-      if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) blob=dl.data; }catch(_){} }
-      if(!blob){ const r=await fetch(p.url); if(r.ok) blob=await r.blob(); }
-      if(blob) files.push(new File([blob], p.code+".jpg", {type:"image/jpeg"}));
-    }catch(_){}
-  }
-  if(!files.length){ toast("Impossibile preparare le foto"); return; }
-  // alcuni dispositivi limitano il numero di file: provo tutte, poi ripiego
-  try{
-    if(navigator.canShare({files})){
-      await navigator.share({files, title:"Foto Fay Live"});
-      return;
-    }
-  }catch(err){ if(err && err.name==="AbortError") return; }
-  // ripiego: condividi una sola foto per volta non è comodo → suggerisci esporta
-  toast("Troppe foto per la condivisione diretta — usa Esporta e allega dai Download");
-};
+// recupera il blob di una foto: originale dal cloud se c'è, altrimenti anteprima
+async function photoBlob(p){
+  if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) return dl.data; }catch(_){} }
+  try{ const r=await fetch(p.url); if(r.ok) return await r.blob(); }catch(_){}
+  return null;
+}
 
-// esporta i PREFERITI del rullo attivo nei Download del tablet
-$("btnExport").onclick = async ()=>{
-  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
-  const favs = scope.filter(p=>p.fav);
-  if(!favs.length){ toast("Nessun preferito da esportare"+(S.letter?" nel rullo "+S.letter:"")); return; }
-  toast(`Esporto ${favs.length} foto…`);
+// condividi una lista di foto tramite il menu Android (Gmail, FileMail, WhatsApp…)
+async function sharePhotos(list, ctx){
+  if(!list.length){ toast("Nessuna foto da condividere"+(ctx||"")); return; }
+  if(!navigator.canShare){ toast("Condivisione non supportata — usa Esporta"); return; }
+  toast(`Preparo ${list.length} foto…`);
+  const files=[];
+  for(const p of list){ const b=await photoBlob(p); if(b) files.push(new File([b], p.code+".jpg", {type:"image/jpeg"})); }
+  if(!files.length){ toast("Impossibile preparare le foto"); return; }
+  try{
+    if(navigator.canShare({files})){ await navigator.share({files, title:"Foto Fay Live"}); return; }
+  }catch(err){ if(err && err.name==="AbortError") return; }
+  toast("Troppe foto per la condivisione diretta — usa Esporta e allega dai Download");
+}
+
+// esporta una lista di foto nei Download
+async function exportPhotos(list, ctx){
+  if(!list.length){ toast("Nessuna foto da esportare"+(ctx||"")); return; }
+  toast(`Esporto ${list.length} foto…`);
   let ok=0;
-  for(const p of favs){
-    try{
-      let blob=null, name=p.code+".jpg";
-      // 1) originale a piena risoluzione dal bucket privato, se disponibile
-      if(p.origPath && sb){
-        try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) blob=dl.data; }catch(_){}
-      }
-      // 2) ripiego: anteprima pubblica
-      if(!blob){ const r=await fetch(p.url); if(r.ok) blob=await r.blob(); }
-      if(!blob) throw 0;
-      const a=document.createElement("a");
-      const obj=URL.createObjectURL(blob);
-      a.href=obj; a.download=name;
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(obj), 8000);
-      ok++;
-      await new Promise(r=>setTimeout(r,300));
-    }catch(_){ }
+  for(const p of list){
+    const blob=await photoBlob(p); if(!blob) continue;
+    const a=document.createElement("a"); const obj=URL.createObjectURL(blob);
+    a.href=obj; a.download=p.code+".jpg";
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(obj), 8000);
+    ok++; await new Promise(r=>setTimeout(r,300));
   }
   toast(`Esportate ${ok} foto nei Download`);
-};
+}
+
+function activeFavs(){
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  return scope.filter(p=>p.fav);
+}
+// tasti in alto: agiscono sui PREFERITI del rullo attivo
+$("btnShare").onclick = ()=> sharePhotos(activeFavs(), S.letter?" nel rullo "+S.letter:"");
+$("btnExport").onclick = ()=> exportPhotos(activeFavs(), S.letter?" nel rullo "+S.letter:"");
+// tasti nel visore: agiscono sulla FOTO aperta
+$("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p) sharePhotos([p]); };
+$("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p) exportPhotos([p]); };
 
 /* ---------- visore con zoom (pinch) e swipe ---------- */
 const V = { list:[], idx:0, img:null, scale:1, tx:0, ty:0, canvas:null, ctx:null };
