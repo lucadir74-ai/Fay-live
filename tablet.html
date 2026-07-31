@@ -304,19 +304,19 @@ async function ensureOriginals(list){
   if(!missing.length || !sb) return;
   // segna la richiesta sul cloud → PC1 la vede e carica
   for(const p of missing){ try{ await sb.from("foto").update({richiesta_originale:true}).eq("id",p.id); }catch(_){} }
-  // aspetta che compaia originale_url (max ~40s), controllando ogni 2s
+  toast("Preparo gli originali…");
+  // aspetta che compaia originale_url (max ~30s), controllando spesso
   const ids = missing.map(p=>p.id);
-  const deadline = Date.now()+40000;
+  const deadline = Date.now()+30000;
   while(Date.now()<deadline){
     const {data} = await sb.from("foto").select("id,originale_url").in("id",ids);
-    let pronti=0;
     (data||[]).forEach(row=>{
-      if(row.originale_url){ const p=S.byId.get(row.id); if(p){ p.origPath=row.originale_url; pronti++; } }
+      if(row.originale_url){ const p=S.byId.get(row.id); if(p) p.origPath=row.originale_url; }
     });
     const restanti = missing.filter(p=>!p.origPath).length;
     if(!restanti) break;
-    toast(`Preparo gli originali… ${missing.length-restanti}/${missing.length}`);
-    await new Promise(r=>setTimeout(r,2000));
+    if(missing.length>1) toast(`Preparo gli originali… ${missing.length-restanti}/${missing.length}`);
+    await new Promise(r=>setTimeout(r,500));
   }
 }
 

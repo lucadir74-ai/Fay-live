@@ -2116,9 +2116,9 @@ function subscribeRealtime(){
       const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
       if(p){
         p.prints=f.stampe; p.exported=!!f.esportata; renderTabs(); paintVisible();
-        // richiesta di caricare l'originale (dal tablet, per export in alta qualità)
+        // richiesta di caricare l'originale (dal tablet, per export in alta qualità) — priorità immediata
         if(f.richiesta_originale && !p.origUploaded && (p.file || p.arch)){
-          queueOriginalUpload(p);
+          uploadOneOriginal(p); // subito, senza accodare
         }
       }
     })
