@@ -1231,10 +1231,10 @@ $("searchBox").oninput = e=>{
 function resetSearch(){
   $("searchBox").value="";
   state.filter="";
+  $("searchBox").focus();   // il cursore resta pronto per il codice successivo
 }
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
-    e.target.blur();
     if($("lightbox").classList.contains("open")) closeLightbox();
     resetSearch();
   }
@@ -1424,6 +1424,7 @@ async function doPrint(set){
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
   if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
   else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
+  const sb2=$("searchBox"); if(sb2){ sb2.value=""; state.filter=""; sb2.focus(); } // pronto per il codice dopo
 }
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
