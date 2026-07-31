@@ -298,10 +298,33 @@ async function photoBlob(p){
   return null;
 }
 
+// chiede a PC1 di caricare gli originali mancanti e aspetta che siano pronti
+async function ensureOriginals(list){
+  const missing = list.filter(p=>!p.origPath);
+  if(!missing.length || !sb) return;
+  // segna la richiesta sul cloud → PC1 la vede e carica
+  for(const p of missing){ try{ await sb.from("foto").update({richiesta_originale:true}).eq("id",p.id); }catch(_){} }
+  // aspetta che compaia originale_url (max ~40s), controllando ogni 2s
+  const ids = missing.map(p=>p.id);
+  const deadline = Date.now()+40000;
+  while(Date.now()<deadline){
+    const {data} = await sb.from("foto").select("id,originale_url").in("id",ids);
+    let pronti=0;
+    (data||[]).forEach(row=>{
+      if(row.originale_url){ const p=S.byId.get(row.id); if(p){ p.origPath=row.originale_url; pronti++; } }
+    });
+    const restanti = missing.filter(p=>!p.origPath).length;
+    if(!restanti) break;
+    toast(`Preparo gli originali… ${missing.length-restanti}/${missing.length}`);
+    await new Promise(r=>setTimeout(r,2000));
+  }
+}
+
 // condividi una lista di foto tramite il menu Android (Gmail, FileMail, WhatsApp…)
 async function sharePhotos(list, ctx){
   if(!list.length){ toast("Nessuna foto da condividere"+(ctx||"")); return; }
   if(!navigator.canShare){ toast("Condivisione non supportata — usa Esporta"); return; }
+  await ensureOriginals(list);
   toast(`Preparo ${list.length} foto…`);
   const files=[];
   for(const p of list){ const b=await photoBlob(p); if(b) files.push(new File([b], p.code+".jpg", {type:"image/jpeg"})); }
@@ -315,6 +338,7 @@ async function sharePhotos(list, ctx){
 // esporta una lista di foto nei Download
 async function exportPhotos(list, ctx){
   if(!list.length){ toast("Nessuna foto da esportare"+(ctx||"")); return; }
+  await ensureOriginals(list);
   toast(`Esporto ${list.length} foto…`);
   let ok=0;
   for(const p of list){
