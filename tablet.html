@@ -55,6 +55,7 @@
     background:#4a9eff;color:#fff;display:none;align-items:center;justify-content:center;font-size:17px;font-weight:800;z-index:3}
   .cell.sel .selcheck{display:flex}
   body.selmode .cell .fav{display:none}
+  body.selmode #grid{touch-action:pan-y}
   #selBar{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;
     padding:12px 16px;background:var(--surface);border-top:1px solid var(--line);z-index:40}
   body.selmode #selBar{display:flex}
@@ -308,7 +309,7 @@ function cellIdAt(x,y){
   const cell=el.closest(".cell"); return cell? cell.dataset.id : null;
 }
 function setupDragSelect(g, list){
-  let dragging=false, startVal=true, lastId=null;
+  let dragging=false, startVal=true, lastId=null, decided=false, sx=0, sy=0;
   const applyTo=(id)=>{
     if(id==null) return;
     if(startVal) S.selected.add(id); else S.selected.delete(id);
@@ -316,15 +317,29 @@ function setupDragSelect(g, list){
   };
   g.ontouchstart=e=>{
     const t=e.touches[0]; const id=cellIdAt(t.clientX,t.clientY); if(id==null) return;
-    dragging=true; startVal=!S.selected.has(id); lastId=id; applyTo(id); updateSelBar();
+    dragging=true; decided=false; sx=t.clientX; sy=t.clientY;
+    startVal=!S.selected.has(id); lastId=id;
+    // NON seleziono ancora: aspetto di capire se è un tap, uno scroll o una selezione
   };
   g.ontouchmove=e=>{
     if(!dragging) return;
-    e.preventDefault();
-    const t=e.touches[0]; const id=cellIdAt(t.clientX,t.clientY);
+    const t=e.touches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(!decided){
+      if(Math.abs(dx)<8 && Math.abs(dy)<8) return;      // movimento minimo: aspetta
+      decided=true;
+      if(Math.abs(dy) > Math.abs(dx)){ dragging=false; return; } // verticale → lascia scorrere la pagina
+      applyTo(lastId); updateSelBar();                   // orizzontale → inizia a selezionare
+    }
+    e.preventDefault();                                  // blocca lo scroll solo se sto selezionando
+    const id=cellIdAt(t.clientX,t.clientY);
     if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); }
   };
-  g.ontouchend=()=>{ dragging=false; lastId=null; };
+  g.ontouchend=e=>{
+    if(dragging && !decided){                            // non si è mosso: è un tap → seleziona/deseleziona la foto
+      applyTo(lastId); updateSelBar();
+    }
+    dragging=false; lastId=null; decided=false;
+  };
   // supporto mouse (per prova da PC)
   g.onmousedown=e=>{ const id=cellIdAt(e.clientX,e.clientY); if(id==null) return; dragging=true; startVal=!S.selected.has(id); lastId=id; applyTo(id); updateSelBar(); e.preventDefault(); };
   g.onmousemove=e=>{ if(!dragging) return; const id=cellIdAt(e.clientX,e.clientY); if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); } };
