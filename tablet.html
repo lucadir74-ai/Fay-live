@@ -50,6 +50,19 @@
   .cell .fav.on{color:var(--fav)}
   .cell .fav:not(.on){color:rgba(255,255,255,.85)}
   .cell.isfav{outline:3px solid var(--fav);outline-offset:-3px}
+  .cell.sel{outline:4px solid #4a9eff;outline-offset:-4px}
+  .cell .selcheck{position:absolute;left:5px;top:5px;width:28px;height:28px;border-radius:50%;
+    background:#4a9eff;color:#fff;display:none;align-items:center;justify-content:center;font-size:17px;font-weight:800;z-index:3}
+  .cell.sel .selcheck{display:flex}
+  body.selmode .cell .fav{display:none}
+  #selBar{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;
+    padding:12px 16px;background:var(--surface);border-top:1px solid var(--line);z-index:40}
+  body.selmode #selBar{display:flex}
+  body.selmode #status{display:none}
+  #selBar .cnt{font-weight:700;font-size:16px}
+  #selBar .sb{background:var(--surface2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:10px 16px;font-size:15px;min-height:44px;font-family:inherit}
+  #selBar .sb.act{border-color:var(--accent);color:var(--accent)}
 
   #empty{margin:auto;color:var(--muted);text-align:center;padding:40px;font-size:16px}
 
@@ -89,6 +102,7 @@
     <select id="sedeSel"><option value="">Sede…</option></select>
     <select id="giornoSel" hidden></select>
     <div class="spacer"></div>
+    <button class="favtoggle" id="btnSelect"><span>☑</span><span>Seleziona</span></button>
     <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
@@ -117,6 +131,15 @@
   </div>
   <div id="toast"></div>
 
+  <div id="selBar">
+    <span class="cnt" id="selCnt">0 selezionate</span>
+    <span style="flex:1"></span>
+    <button class="sb" id="selAll">Tutte</button>
+    <button class="sb" id="selShare">↗ Condividi</button>
+    <button class="sb" id="selExport">⬇ Esporta</button>
+    <button class="sb" id="selDone">Fine</button>
+  </div>
+
 <script>
 const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
@@ -124,7 +147,7 @@ let sb = null;
 try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){ sb=null; }
 
 const $ = id => document.getElementById(id);
-const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, favOnly:false, channel:null };
+const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, favOnly:false, channel:null, selmode:false, selected:new Set() };
 
 const CUTOFF_H = 6;
 function serviceDateStr(){
@@ -239,21 +262,91 @@ function render(){
   if(!S.sede){ g.innerHTML=""; return; }
   if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; return; }
   g.innerHTML = list.map((p,i)=>`
-    <div class="cell ${p.fav?'isfav':''}" data-i="${i}">
+    <div class="cell ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
+      <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`).join("");
-  // tocco: cuore = preferito, resto = ingrandisci
   g.querySelectorAll(".cell").forEach(c=>{
     const i=+c.dataset.i;
     c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(list[i]); };
     const cv=c.querySelector("canvas");
-    cv.onclick=()=>openViewer(list[i]);
-    c.querySelector(".code").onclick=()=>openViewer(list[i]);
+    if(!S.selmode){
+      cv.onclick=()=>openViewer(list[i]);
+      c.querySelector(".code").onclick=()=>openViewer(list[i]);
+    }
     drawThumb(cv, list[i]);
   });
+  setupGridGestures(g, list);
+  if(S.selmode) setupDragSelect(g, list);
+  updateSelBar();
 }
+
+/* tocco prolungato per entrare in selezione (stile Google Foto) */
+function setupGridGestures(g, list){
+  if(S.selmode) return; // in selezione gestisce setupDragSelect
+  let timer=null, startId=null;
+  g.ontouchstart=e=>{
+    const t=e.touches[0]; startId=cellIdAt(t.clientX,t.clientY);
+    if(startId==null) return;
+    timer=setTimeout(()=>{
+      // entra in selezione con questa foto già selezionata
+      if(navigator.vibrate) navigator.vibrate(30);
+      S.selmode=true; document.body.classList.add("selmode"); $("btnSelect").classList.add("on");
+      S.selected.clear(); S.selected.add(startId);
+      render();
+    }, 450);
+  };
+  g.ontouchmove=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  g.ontouchend=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+}
+
+/* ---------- selezione a trascinamento (stile Google Foto) ---------- */
+function cellIdAt(x,y){
+  const el=document.elementFromPoint(x,y); if(!el) return null;
+  const cell=el.closest(".cell"); return cell? cell.dataset.id : null;
+}
+function setupDragSelect(g, list){
+  let dragging=false, startVal=true, lastId=null;
+  const applyTo=(id)=>{
+    if(id==null) return;
+    if(startVal) S.selected.add(id); else S.selected.delete(id);
+    const cell=g.querySelector('.cell[data-id="'+id+'"]'); if(cell) cell.classList.toggle("sel", S.selected.has(id));
+  };
+  g.ontouchstart=e=>{
+    const t=e.touches[0]; const id=cellIdAt(t.clientX,t.clientY); if(id==null) return;
+    dragging=true; startVal=!S.selected.has(id); lastId=id; applyTo(id); updateSelBar();
+  };
+  g.ontouchmove=e=>{
+    if(!dragging) return;
+    e.preventDefault();
+    const t=e.touches[0]; const id=cellIdAt(t.clientX,t.clientY);
+    if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); }
+  };
+  g.ontouchend=()=>{ dragging=false; lastId=null; };
+  // supporto mouse (per prova da PC)
+  g.onmousedown=e=>{ const id=cellIdAt(e.clientX,e.clientY); if(id==null) return; dragging=true; startVal=!S.selected.has(id); lastId=id; applyTo(id); updateSelBar(); e.preventDefault(); };
+  g.onmousemove=e=>{ if(!dragging) return; const id=cellIdAt(e.clientX,e.clientY); if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); } };
+  g.onmouseup=()=>{ dragging=false; lastId=null; };
+}
+function updateSelBar(){
+  const n=S.selected.size;
+  const el=$("selCnt"); if(el) el.textContent = n+" selezionate";
+}
+function selectedPhotos(){ return [...S.selected].map(id=>S.byId.get(id)).filter(Boolean); }
+
+// attiva/disattiva modalità selezione
+$("btnSelect").onclick=()=>{
+  S.selmode=!S.selmode; document.body.classList.toggle("selmode", S.selmode);
+  $("btnSelect").classList.toggle("on", S.selmode);
+  if(!S.selmode) S.selected.clear();
+  render();
+};
+$("selDone").onclick=()=>{ S.selmode=false; document.body.classList.remove("selmode"); $("btnSelect").classList.remove("on"); S.selected.clear(); render(); };
+$("selAll").onclick=()=>{ visible().forEach(p=>S.selected.add(p.id)); render(); };
+$("selShare").onclick=()=> sharePhotos(selectedPhotos());
+$("selExport").onclick=()=> exportPhotos(selectedPhotos());
 // disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
 const thumbBmpCache = new Map();
 async function drawThumb(cv, p){
