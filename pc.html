@@ -156,9 +156,9 @@
   #btnDelSede:hover{border-color:var(--danger);color:var(--danger)}
   #btnClearDay{border-color:var(--line);color:var(--muted)}
   .pqbadge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
-    padding:0 5px;border-radius:10px;background:var(--danger);color:#fff;font-size:12px;font-weight:700;margin-left:4px}
+    padding:0 5px;border-radius:10px;background:var(--surface2);color:#fff;font-size:12px;font-weight:700;margin-left:4px}
+  .pqbadge.alert{background:var(--danger)}
   #btnPrintQueue{position:relative}
-  #btnPrintQueue.hasqueue{border-color:var(--danger);color:var(--danger)}
   #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
   #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
@@ -175,7 +175,7 @@
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
-    <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge" hidden>0</span></button>
+    <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge">0</span></button>
     <button id="btnReport">Report</button>
     <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
@@ -2156,9 +2156,8 @@ function subscribeRealtime(){
 function printQueuePhotos(){ return state.photos.filter(p=>p.daStampare); }
 function updatePrintQueueBadge(){
   const n=printQueuePhotos().length;
-  const b=$("pqBadge"); const btn=$("btnPrintQueue");
-  if(b){ b.textContent=n; b.hidden = n===0; }
-  if(btn) btn.classList.toggle("hasqueue", n>0);
+  const b=$("pqBadge");
+  if(b){ b.textContent=n; b.hidden=false; b.classList.toggle("alert", n>0); }
 }
 // fallback: controlla periodicamente la coda di stampa dal cloud (se il realtime è lento)
 setInterval(async ()=>{
