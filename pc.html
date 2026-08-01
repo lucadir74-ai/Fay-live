@@ -1408,18 +1408,13 @@ async function doPrint(set){
   if(!set.length){ toast("Niente da stampare"); return; }
   const w=window.open("","faylive_print","width=900,height=700");
   if(!w){ toast("Popup bloccato: consenti i popup"); return; }
-  // ogni pagina prende l'orientamento della propria foto (orizzontale/verticale)
+  // carta fissa VERTICALE 15x23. Ogni foto riempie il foglio; le orizzontali vengono ruotate.
   w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Stampa</title><style>
     html,body{margin:0;padding:0}
-    .pg{page-break-after:always;display:flex;align-items:center;justify-content:center}
+    @page{size:portrait;margin:0}
+    .pg{page-break-after:always;width:100vw;height:100vh;position:relative;overflow:hidden;background:#fff}
     .pg:last-child{page-break-after:auto}
-    .pg.land{page:land}
-    .pg.port{page:port}
-    @page land{size:landscape;margin:0}
-    @page port{size:portrait;margin:0}
-    @page{margin:0}
-    img{display:block;max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}
-    .pg{width:100vw;height:100vh}
+    .pg img{position:absolute;top:50%;left:50%}
   </style></head><body></body></html>`);
   w.document.close();
   toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
@@ -1429,13 +1424,19 @@ async function doPrint(set){
     try{ c=await renderFull(p,true); }
     catch(err){ toast(err.message||("Impossibile stampare "+p.code)); continue; }
     if(c._lowQuality) low++;
-    const land = c.width >= c.height;       // foto orizzontale?
+    const land = c.width > c.height;       // foto orizzontale?
     const img=w.document.createElement("img");
     img.src=c.toDataURL("image/jpeg",0.95);
+    if(land){
+      // ruoto 90° per riempire il foglio verticale
+      img.style.transform="translate(-50%,-50%) rotate(90deg)";
+      img.style.height="100vw"; img.style.width="auto"; img.style.maxWidth="100vh";
+    } else {
+      img.style.transform="translate(-50%,-50%)";
+      img.style.width="100vw"; img.style.height="100vh"; img.style.objectFit="contain";
+    }
     loads.push(img.decode().catch(()=>{}));
-    const d=w.document.createElement("div");
-    d.className="pg "+(land?"land":"port");
-    d.append(img);
+    const d=w.document.createElement("div"); d.className="pg"; d.append(img);
     w.document.body.append(d);
   }
   await Promise.all(loads);
@@ -2157,6 +2158,22 @@ function updatePrintQueueBadge(){
   const b=$("pqBadge"); if(!b) return;
   b.textContent=n; b.hidden = n===0;
 }
+// fallback: controlla periodicamente la coda di stampa dal cloud (se il realtime è lento)
+setInterval(async ()=>{
+  if(!sb || !cloud.servizio) return;
+  try{
+    const rulliIds = Object.values(cloud.rulli).map(r=>r.id);
+    if(!rulliIds.length) return;
+    const {data} = await sb.from("foto").select("id,da_stampare").in("rullo_id",rulliIds).eq("da_stampare",true);
+    const cloudSet = new Set((data||[]).map(r=>r.id));
+    let changed=false;
+    state.photos.forEach(p=>{
+      const should = cloudSet.has(p.dbId);
+      if(should && !p.daStampare){ p.daStampare=true; changed=true; }
+    });
+    if(changed) updatePrintQueueBadge();
+  }catch(_){}
+}, 8000);
 $("btnPrintQueue").onclick = ()=>{
   const list=printQueuePhotos();
   const box=$("pqList");
