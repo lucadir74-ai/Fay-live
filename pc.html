@@ -158,6 +158,7 @@
   .pqbadge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
     padding:0 5px;border-radius:10px;background:var(--danger);color:#fff;font-size:12px;font-weight:700;margin-left:4px}
   #btnPrintQueue{position:relative}
+  #btnPrintQueue.hasqueue{border-color:var(--danger);color:var(--danger)}
   #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
   #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
@@ -2155,8 +2156,9 @@ function subscribeRealtime(){
 function printQueuePhotos(){ return state.photos.filter(p=>p.daStampare); }
 function updatePrintQueueBadge(){
   const n=printQueuePhotos().length;
-  const b=$("pqBadge"); if(!b) return;
-  b.textContent=n; b.hidden = n===0;
+  const b=$("pqBadge"); const btn=$("btnPrintQueue");
+  if(b){ b.textContent=n; b.hidden = n===0; }
+  if(btn) btn.classList.toggle("hasqueue", n>0);
 }
 // fallback: controlla periodicamente la coda di stampa dal cloud (se il realtime è lento)
 setInterval(async ()=>{
