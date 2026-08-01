@@ -103,7 +103,6 @@
     <select id="sedeSel"><option value="">Sede…</option></select>
     <select id="giornoSel" hidden></select>
     <div class="spacer"></div>
-    <button class="favtoggle" id="btnSelect"><span>☑</span><span>Seleziona</span></button>
     <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
@@ -271,79 +270,39 @@ function render(){
     </div>`).join("");
   g.querySelectorAll(".cell").forEach(c=>{
     const i=+c.dataset.i;
-    c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(list[i]); };
+    const p=list[i];
+    c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(p); };
     const cv=c.querySelector("canvas");
-    if(!S.selmode){
-      cv.onclick=()=>openViewer(list[i]);
-      c.querySelector(".code").onclick=()=>openViewer(list[i]);
-    }
-    drawThumb(cv, list[i]);
+    const codeEl=c.querySelector(".code");
+    const onTap=()=>{
+      if(S.selmode){ toggleSelect(p, c); }
+      else openViewer(p);
+    };
+    cv.onclick=onTap;
+    codeEl.onclick=onTap;
+    // tocco prolungato → entra in selezione con questa foto
+    let lpTimer=null;
+    const startLP=()=>{ if(S.selmode) return; lpTimer=setTimeout(()=>{ enterSelMode(p, c); lpTimer=null; }, 400); };
+    const cancelLP=()=>{ if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } };
+    c.addEventListener("touchstart", startLP, {passive:true});
+    c.addEventListener("touchmove", cancelLP, {passive:true});
+    c.addEventListener("touchend", cancelLP, {passive:true});
+    drawThumb(cv, p);
   });
-  setupGridGestures(g, list);
-  if(S.selmode) setupDragSelect(g, list);
   updateSelBar();
 }
 
-/* tocco prolungato per entrare in selezione (stile Google Foto) */
-function setupGridGestures(g, list){
-  if(S.selmode) return; // in selezione gestisce setupDragSelect
-  let timer=null, startId=null;
-  g.ontouchstart=e=>{
-    const t=e.touches[0]; startId=cellIdAt(t.clientX,t.clientY);
-    if(startId==null) return;
-    timer=setTimeout(()=>{
-      // entra in selezione con questa foto già selezionata
-      if(navigator.vibrate) navigator.vibrate(30);
-      S.selmode=true; document.body.classList.add("selmode"); $("btnSelect").classList.add("on");
-      S.selected.clear(); S.selected.add(startId);
-      render();
-    }, 450);
-  };
-  g.ontouchmove=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
-  g.ontouchend=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+function toggleSelect(p, cell){
+  if(S.selected.has(p.id)) S.selected.delete(p.id); else S.selected.add(p.id);
+  cell.classList.toggle("sel", S.selected.has(p.id));
+  updateSelBar();
 }
-
-/* ---------- selezione a trascinamento (stile Google Foto) ---------- */
-function cellIdAt(x,y){
-  const el=document.elementFromPoint(x,y); if(!el) return null;
-  const cell=el.closest(".cell"); return cell? cell.dataset.id : null;
-}
-function setupDragSelect(g, list){
-  let dragging=false, startVal=true, lastId=null, decided=false, sx=0, sy=0;
-  const applyTo=(id)=>{
-    if(id==null) return;
-    if(startVal) S.selected.add(id); else S.selected.delete(id);
-    const cell=g.querySelector('.cell[data-id="'+id+'"]'); if(cell) cell.classList.toggle("sel", S.selected.has(id));
-  };
-  g.ontouchstart=e=>{
-    const t=e.touches[0]; const id=cellIdAt(t.clientX,t.clientY); if(id==null) return;
-    dragging=true; decided=false; sx=t.clientX; sy=t.clientY;
-    startVal=!S.selected.has(id); lastId=id;
-    // NON seleziono ancora: aspetto di capire se è un tap, uno scroll o una selezione
-  };
-  g.ontouchmove=e=>{
-    if(!dragging) return;
-    const t=e.touches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
-    if(!decided){
-      if(Math.abs(dx)<8 && Math.abs(dy)<8) return;      // movimento minimo: aspetta
-      decided=true;
-      if(Math.abs(dy) > Math.abs(dx)){ dragging=false; return; } // verticale → lascia scorrere la pagina
-      applyTo(lastId); updateSelBar();                   // orizzontale → inizia a selezionare
-    }
-    e.preventDefault();                                  // blocca lo scroll solo se sto selezionando
-    const id=cellIdAt(t.clientX,t.clientY);
-    if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); }
-  };
-  g.ontouchend=e=>{
-    if(dragging && !decided){                            // non si è mosso: è un tap → seleziona/deseleziona la foto
-      applyTo(lastId); updateSelBar();
-    }
-    dragging=false; lastId=null; decided=false;
-  };
-  // supporto mouse (per prova da PC)
-  g.onmousedown=e=>{ const id=cellIdAt(e.clientX,e.clientY); if(id==null) return; dragging=true; startVal=!S.selected.has(id); lastId=id; applyTo(id); updateSelBar(); e.preventDefault(); };
-  g.onmousemove=e=>{ if(!dragging) return; const id=cellIdAt(e.clientX,e.clientY); if(id!=null && id!==lastId){ lastId=id; applyTo(id); updateSelBar(); } };
-  g.onmouseup=()=>{ dragging=false; lastId=null; };
+function enterSelMode(p, cell){
+  if(navigator.vibrate) navigator.vibrate(30);
+  S.selmode=true; document.body.classList.add("selmode");
+  S.selected.clear(); S.selected.add(p.id);
+  cell.classList.add("sel");
+  updateSelBar();
 }
 function updateSelBar(){
   const n=S.selected.size;
@@ -351,15 +310,12 @@ function updateSelBar(){
 }
 function selectedPhotos(){ return [...S.selected].map(id=>S.byId.get(id)).filter(Boolean); }
 
-// attiva/disattiva modalità selezione
-$("btnSelect").onclick=()=>{
-  S.selmode=!S.selmode; document.body.classList.toggle("selmode", S.selmode);
-  $("btnSelect").classList.toggle("on", S.selmode);
-  if(!S.selmode) S.selected.clear();
-  render();
+$("selDone").onclick=()=>{ S.selmode=false; document.body.classList.remove("selmode"); S.selected.clear(); render(); };
+$("selAll").onclick=()=>{
+  visible().forEach(p=>S.selected.add(p.id));
+  document.querySelectorAll("#grid .cell").forEach(c=>{ if(S.selected.has(c.dataset.id)) c.classList.add("sel"); });
+  updateSelBar();
 };
-$("selDone").onclick=()=>{ S.selmode=false; document.body.classList.remove("selmode"); $("btnSelect").classList.remove("on"); S.selected.clear(); render(); };
-$("selAll").onclick=()=>{ visible().forEach(p=>S.selected.add(p.id)); render(); };
 $("selShare").onclick=()=> sharePhotos(selectedPhotos());
 $("selExport").onclick=()=> exportPhotos(selectedPhotos());
 // disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
@@ -394,8 +350,21 @@ function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
 
 /* ---------- preferiti (sincronizzati col PC via campo preferito) ---------- */
 async function toggleFav(p){
-  p.fav=!p.fav; render();
-  if(sb){ try{ await sb.from("foto").update({preferito:p.fav}).eq("id",p.id); }catch(_){ toast("Preferito salvato localmente, sincronizzo appena possibile"); } }
+  p.fav=!p.fav;
+  // aggiorna solo questa cella, senza ridisegnare tutta la griglia
+  const cell=document.querySelector('#grid .cell[data-id="'+p.id+'"]');
+  if(cell){
+    cell.classList.toggle("isfav", p.fav);
+    const fav=cell.querySelector(".fav");
+    if(fav){ fav.classList.toggle("on", p.fav); fav.textContent=p.fav?'♥':'♡'; }
+  }
+  // aggiorna il contatore preferiti in alto
+  const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
+  const favN=scope.filter(x=>x.fav).length;
+  $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
+  // se sto guardando solo i preferiti e ne tolgo uno, aggiorno la vista
+  if(S.favOnly && !p.fav) render();
+  if(sb){ try{ await sb.from("foto").update({preferito:p.fav}).eq("id",p.id); }catch(_){ toast("Preferito salvato, sincronizzo appena possibile"); } }
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
 
