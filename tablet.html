@@ -135,6 +135,7 @@
     <span class="cnt" id="selCnt">0 selezionate</span>
     <span style="flex:1"></span>
     <button class="sb" id="selAll">Tutte</button>
+    <button class="sb" id="selPrint">🖨 Manda in stampa</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
     <button class="sb" id="selDone">Fine</button>
@@ -316,8 +317,31 @@ $("selAll").onclick=()=>{
   document.querySelectorAll("#grid .cell").forEach(c=>{ if(S.selected.has(c.dataset.id)) c.classList.add("sel"); });
   updateSelBar();
 };
-$("selShare").onclick=()=> sharePhotos(selectedPhotos());
-$("selExport").onclick=()=> exportPhotos(selectedPhotos());
+$("selShare").onclick=()=> { const ps=selectedPhotos(); sharePhotos(ps); logActivity(ps,"condivise"); };
+$("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logActivity(ps,"esportate"); };
+$("selPrint").onclick=async ()=>{
+  const ps=selectedPhotos();
+  if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  // segna le foto come "da stampare" → il PC le mostra nella lista Da stampare
+  for(const p of ps){ try{ await sb.from("foto").update({da_stampare:true}).eq("id",p.id); }catch(_){} }
+  logActivity(ps,"in stampa");
+  toast(`${ps.length} foto mandate in stampa`);
+  // esci dalla selezione
+  S.selmode=false; document.body.classList.remove("selmode"); S.selected.clear(); render();
+};
+
+// registra un'attività sul cloud (per il report lato PC)
+async function logActivity(list, azione){
+  if(!sb || !S.servizio || !list.length) return;
+  try{
+    await sb.from("attivita").insert({
+      servizio_id: S.servizio.id,
+      rullo_lettera: S.letter || list[0].letter || "",
+      codici: list.map(p=>p.code).join(", "),
+      azione, quante: list.length
+    });
+  }catch(_){}
+}
 // disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
 const thumbBmpCache = new Map();
 async function drawThumb(cv, p){
@@ -434,11 +458,11 @@ function activeFavs(){
   return scope.filter(p=>p.fav);
 }
 // tasti in alto: agiscono sui PREFERITI del rullo attivo
-$("btnShare").onclick = ()=> sharePhotos(activeFavs(), S.letter?" nel rullo "+S.letter:"");
-$("btnExport").onclick = ()=> exportPhotos(activeFavs(), S.letter?" nel rullo "+S.letter:"");
+$("btnShare").onclick = ()=> { const ps=activeFavs(); sharePhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"condivise"); };
+$("btnExport").onclick = ()=> { const ps=activeFavs(); exportPhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"esportate"); };
 // tasti nel visore: agiscono sulla FOTO aperta
-$("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p) sharePhotos([p]); };
-$("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p) exportPhotos([p]); };
+$("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logActivity([p],"condivise"); } };
+$("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); logActivity([p],"esportate"); } };
 
 /* ---------- visore con zoom (pinch) e swipe ---------- */
 const V = { list:[], idx:0, img:null, scale:1, tx:0, ty:0, canvas:null, ctx:null };

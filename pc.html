@@ -155,6 +155,9 @@
   #btnDelSede{border-color:var(--line);color:var(--muted)}
   #btnDelSede:hover{border-color:var(--danger);color:var(--danger)}
   #btnClearDay{border-color:var(--line);color:var(--muted)}
+  .pqbadge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+    padding:0 5px;border-radius:10px;background:var(--danger);color:#fff;font-size:12px;font-weight:700;margin-left:4px}
+  #btnPrintQueue{position:relative}
   #btnClearDay:hover{border-color:var(--danger);color:var(--danger)}
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
   #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
@@ -171,6 +174,8 @@
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
+    <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge" hidden>0</span></button>
+    <button id="btnReport">Report</button>
     <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
     <button id="btnExportDir">Cartella export…</button>
@@ -314,6 +319,24 @@
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="delSedeNo">Annulla</button>
     <button id="delSedeYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Cancella sede</button>
+  </div>
+</dialog>
+
+<dialog id="pqDlg">
+  <h3 style="margin-bottom:10px">Foto da stampare (dai tablet)</h3>
+  <div id="pqList" style="max-height:60vh;overflow:auto;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="pqClose">Chiudi</button>
+    <button id="pqClear">Svuota lista</button>
+    <button id="pqPrintAll" class="primary">Stampa tutte</button>
+  </div>
+</dialog>
+
+<dialog id="reportDlg">
+  <h3 style="margin-bottom:10px">Report attività (tablet)</h3>
+  <div id="reportList" style="max-height:60vh;overflow:auto;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="reportClose">Chiudi</button>
   </div>
 </dialog>
 
@@ -2055,6 +2078,7 @@ async function loadServizioFoto(){
     await addRemotePhoto(f, r.lettera);
   }
   renderTabs(); layoutGrid(); updateThumbCloud();
+  if(typeof updatePrintQueueBadge==="function") updatePrintQueueBadge();
 }
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
@@ -2082,7 +2106,7 @@ async function addRemotePhoto(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
-            prints:f.stampe||0, exported:!!f.esportata, anteprimaUrl:f.anteprima_url, remote:true };
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, anteprimaUrl:f.anteprima_url, remote:true };
   // prova la cache locale, poi la rete
   let blob = await thumbCache.get(f.codice);
   if(!blob && f.anteprima_url){
@@ -2115,15 +2139,75 @@ function subscribeRealtime(){
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
       const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
       if(p){
-        p.prints=f.stampe; p.exported=!!f.esportata; renderTabs(); paintVisible();
-        // richiesta di caricare l'originale (dal tablet, per export in alta qualità) — priorità immediata
+        p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare; renderTabs(); paintVisible();
         if(f.richiesta_originale && !p.origUploaded && (p.file || p.arch)){
           uploadOneOriginal(p); // subito, senza accodare
         }
+        updatePrintQueueBadge();
       }
     })
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"attivita"}, ()=>{ /* report si aggiorna all'apertura */ })
     .subscribe();
 }
+
+// --- coda "Da stampare" (foto segnate dai tablet) ---
+function printQueuePhotos(){ return state.photos.filter(p=>p.daStampare); }
+function updatePrintQueueBadge(){
+  const n=printQueuePhotos().length;
+  const b=$("pqBadge"); if(!b) return;
+  b.textContent=n; b.hidden = n===0;
+}
+$("btnPrintQueue").onclick = ()=>{
+  const list=printQueuePhotos();
+  const box=$("pqList");
+  if(!list.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna foto in attesa di stampa.</p>'; }
+  else{
+    box.innerHTML = list.map(p=>`<label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
+      <input type="checkbox" class="pqChk" data-code="${p.code}" checked>
+      <b style="font-family:var(--mono)">${p.code}</b>
+      <span style="color:var(--muted)">${p.prints>0?'· già stampata':''}</span></label>`).join("");
+  }
+  $("pqDlg").showModal();
+};
+$("pqClose").onclick=()=>$("pqDlg").close();
+$("pqPrintAll").onclick=async ()=>{
+  const codes=[...document.querySelectorAll(".pqChk:checked")].map(c=>c.dataset.code);
+  const set=state.photos.filter(p=>codes.includes(p.code));
+  $("pqDlg").close();
+  if(set.length) await printPhotos(set);
+  // dopo la stampa, togli il flag da_stampare
+  for(const p of set){ p.daStampare=false; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
+  updatePrintQueueBadge();
+};
+$("pqClear").onclick=async ()=>{
+  const list=printQueuePhotos();
+  for(const p of list){ p.daStampare=false; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"coda"); }
+  updatePrintQueueBadge(); $("pqDlg").close();
+  toast("Lista da stampare svuotata");
+};
+
+// --- report attività (dai tablet) ---
+$("btnReport").onclick = async ()=>{
+  const box=$("reportList");
+  box.innerHTML='<p style="color:var(--muted)">Carico…</p>';
+  $("reportDlg").showModal();
+  if(!sb || !cloud.servizio){ box.innerHTML='<p style="color:var(--muted)">Nessun dato.</p>'; return; }
+  try{
+    const {data} = await sb.from("attivita").select("*").eq("servizio_id",cloud.servizio.id).order("creato_il",{ascending:false});
+    if(!data || !data.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna attività registrata per questa giornata.</p>'; return; }
+    box.innerHTML = data.map(a=>{
+      const t=new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+      const col = a.azione==="condivise"?"var(--accent)":a.azione==="in stampa"?"var(--danger)":"var(--muted)";
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <span style="color:var(--muted)">${t}</span> ·
+        <b>${a.rullo_lettera||"?"}</b> ·
+        <span style="color:${col}">${a.quante} ${a.azione}</span>
+        <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${(a.codici||"").replace(/[<>&]/g,"")}</div>
+      </div>`;
+    }).join("");
+  }catch(err){ box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il report.</p>'; }
+};
+$("reportClose").onclick=()=>$("reportDlg").close();
 
 // assegna il prossimo numero dal cloud (atomico) o localmente se offline
 async function nextNumber(letter, count){
