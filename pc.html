@@ -24,7 +24,11 @@
 
   /* ---------- Layout ---------- */
   #app{display:flex;flex-direction:column;height:100%}
-  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  header{position:relative;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #toolsMenu[hidden]{display:none}
+  #toolsMenu button{text-align:left;width:100%}
+  #toolsMenu hr{border:none;border-top:1px solid var(--line);margin:2px 0}
   header h1{font-size:16px;font-weight:700;letter-spacing:.3px}
   header h1 span{color:var(--accent)}
   #eventInfo{color:var(--muted);font-size:13px}
@@ -180,19 +184,23 @@
   <header>
     <h1>Fay <span>Live</span></h1>
     <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
-    <button id="btnDelSede" title="Cancella la sede selezionata" style="padding:7px 9px">🗑</button>
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
     <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge">0</span></button>
     <button id="btnMail">Da inviare <span id="mailBadge" class="pqbadge">0</span></button>
-    <button id="btnReport">Report</button>
-    <button id="btnClearDay">Svuota giornata</button>
-    <button id="btnArchive">Archivio…</button>
-    <button id="btnExportDir">Cartella export…</button>
-    <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
-    <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
+    <button id="btnTools" title="Impostazioni e manutenzione">Altro ▾</button>
     <button id="btnImport" class="primary">Importa cartella</button>
+    <div id="toolsMenu" hidden>
+      <button id="btnReport">Report attività</button>
+      <button id="btnArchive">Archivio…</button>
+      <button id="btnExportDir">Cartella export…</button>
+      <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
+      <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
+      <hr>
+      <button id="btnClearDay">Svuota giornata</button>
+      <button id="btnDelSede" title="Cancella la sede selezionata">Cancella sede</button>
+    </div>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
@@ -2549,6 +2557,13 @@ function renderMailList(){
     </div>`;
   }).join("");
 }
+$("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
+$("toolsMenu").onclick = ()=>{ $("toolsMenu").hidden = true; };   // scelta fatta: si richiude
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#btnTools,#toolsMenu")) $("toolsMenu").hidden = true;
+});
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") $("toolsMenu").hidden = true; });
+
 $("btnMail").onclick = async ()=>{
   $("mailQrOn").checked = mailQrEnabled();
   $("mailList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
