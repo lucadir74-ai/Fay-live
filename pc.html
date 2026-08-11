@@ -1390,6 +1390,14 @@ $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
     if($("lightbox").classList.contains("open")) closeLightbox();
     resetSearch();
+    return;
+  }
+  // col cursore ancora nella casella, le frecce scorrono comunque le foto aperte
+  if($("lightbox").classList.contains("open") && (e.key==="ArrowRight" || e.key==="ArrowLeft")){
+    e.preventDefault();
+    $(e.key==="ArrowRight" ? "lbNext" : "lbPrev").click();
+    const p = lbList()[state.lightboxIdx];
+    if(p) $("searchBox").value = p.code;   // la casella segue la foto, senza rilanciare la ricerca
   }
 });
 
