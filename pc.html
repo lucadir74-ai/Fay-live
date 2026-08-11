@@ -238,8 +238,18 @@
         <button id="lbSelect">Seleziona <kbd>spazio</kbd></button>
         <button id="lbPrint">Stampa</button>
         <button id="lbExport">Esporta file</button>
+        <button id="lbAdj">Luce e colore</button>
         <button id="lbShow">Mostra sul monitor <kbd>M</kbd></button>
         <button id="lbClose">Chiudi <kbd>esc</kbd></button>
+      </div>
+      <div id="lbAdjBar" hidden style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:8px 14px;background:rgba(11,14,20,.92);border-bottom:1px solid var(--line)">
+        <span style="display:flex;gap:6px;align-items:center">Luce <input type="range" id="adjB" min="50" max="150" step="1" value="100"></span>
+        <span style="display:flex;gap:6px;align-items:center">Contrasto <input type="range" id="adjC" min="50" max="150" step="1" value="100"></span>
+        <span style="display:flex;gap:6px;align-items:center">Colore <input type="range" id="adjS" min="0" max="200" step="1" value="100"></span>
+        <span style="display:flex;gap:6px;align-items:center">Calore <input type="range" id="adjT" min="-100" max="100" step="1" value="0"></span>
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="adjBW"> Bianco e nero</label>
+        <button id="adjReset">Azzera</button>
+        <span id="adjNote" class="hint"></span>
       </div>
       <div id="lbStage"><canvas id="lbCanvas"></canvas>
         <div id="lbLoading">Carico la versione nitida…</div>
@@ -1434,7 +1444,7 @@ async function renderFull(p, withOverlay=true){
   ctx.fillStyle = ev.frameColor || "#ffffff";
   ctx.fillRect(0,0,c.width,c.height);
   // foto dentro la cornice
-  ctx.drawImage(src, border, border, iw, ih); src.close();
+  drawAdjusted(ctx, src, border, border, iw, ih, p); src.close();
   // logo + scritta, posizionati rispetto alla foto e alla banda inferiore
   if(withOverlay) drawOverlay(ctx, iw, ih, border, bottomExtra);
   c._lowQuality = lowQuality;
@@ -1625,6 +1635,33 @@ function refreshLbStatus(){
   if(p && $("lightbox").classList.contains("open")){ setLbStatus(p); paintLightbox(); }
 }
 
+/* ---------- regolazioni luce/colore per singola foto ----------
+   Valgono per il visualizzatore, il monitor cliente e la stampa.
+   L'originale su disco non viene mai modificato.                    */
+const ADJ0 = {b:100, c:100, s:100, t:0, bw:false};
+function adjOf(p){
+  if(!p || !p.adj) return null;
+  const a = p.adj;
+  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !a.bw) ? null : a;
+}
+function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
+  const a = adjOf(p);
+  if(!a){ ctx.drawImage(img, dx, dy, dw, dh); return; }
+  ctx.save();
+  ctx.filter = a.bw
+    ? `grayscale(100%) brightness(${a.b}%) contrast(${a.c}%)`
+    : `brightness(${a.b}%) contrast(${a.c}%) saturate(${a.s}%)`;
+  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.filter = "none";
+  if(a.t && !a.bw){
+    ctx.globalCompositeOperation = "soft-light";
+    ctx.globalAlpha = Math.min(0.65, Math.abs(a.t)/110);
+    ctx.fillStyle = a.t > 0 ? "#FF9A3C" : "#3CA0FF";
+    ctx.fillRect(dx, dy, dw, dh);
+  }
+  ctx.restore();
+}
+
 /* ---------- lightbox operatore ---------- */
 function lbList(){ return state.lbCustom || filteredPhotos(); }
 function openLightboxList(set, i){
@@ -1640,12 +1677,13 @@ async function openLightbox(i){
   $("lightbox").classList.add("open");
   await paintLightbox();
 }
-let lbSeq=0;
+let lbSeq=0, lbBmp=null, lbBmpFor=null;
 async function paintLightbox(){
   const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
   const my=++lbSeq;
   $("lbCode").textContent=p.code;
   setLbStatus(p);
+  if(!$("lbAdjBar").hidden) syncAdjBar();
   $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
   const c=$("lbCanvas"), ctx=c.getContext("2d");
 
@@ -1656,7 +1694,7 @@ async function paintLightbox(){
       if(my!==lbSeq) return;
       c.width=t.width*4; c.height=t.height*4;
       ctx.imageSmoothingEnabled=true;
-      ctx.drawImage(t,0,0,c.width,c.height);
+      drawAdjusted(ctx,t,0,0,c.width,c.height,p);
       drawOverlay(ctx,c.width,c.height);
       drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
     }catch(_){}
@@ -1675,7 +1713,8 @@ async function paintLightbox(){
     catch(_){ await new Promise(r=>setTimeout(r,500)); bmp=await getBig(p); }
     if(my!==lbSeq) return;
     c.width=bmp.width; c.height=bmp.height;
-    ctx.drawImage(bmp,0,0);
+    lbBmp = bmp; lbBmpFor = p.id;              // tenuta da parte per i cursori
+    drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
     drawOverlay(ctx,c.width,c.height);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
@@ -1696,6 +1735,54 @@ $("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSe
 $("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
 $("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
 $("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPhotos([p]); };
+
+/* --- cursori luce e colore --- */
+function lbPhoto(){ return lbList()[state.lightboxIdx] || null; }
+function syncAdjBar(){
+  const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
+  $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
+  $("adjBW").checked = !!a.bw;
+  $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
+  $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
+}
+$("lbAdj").onclick = ()=>{
+  const bar=$("lbAdjBar"); bar.hidden = !bar.hidden;
+  if(!bar.hidden) syncAdjBar();
+};
+function applyAdjFromBar(){
+  const p = lbPhoto(); if(!p) return;
+  p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
+            bw: $("adjBW").checked };
+  $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
+  // ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto
+  if(lbBmp && lbBmpFor===p.id){
+    const c=$("lbCanvas"), ctx=c.getContext("2d");
+    c.width=lbBmp.width; c.height=lbBmp.height;
+    drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
+    drawOverlay(ctx,c.width,c.height);
+    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
+  }else{
+    paintLightbox();
+  }
+  $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
+}
+for(const id of ["adjB","adjC","adjS","adjT"]) $(id).oninput = applyAdjFromBar;
+$("adjBW").onchange = applyAdjFromBar;
+$("adjReset").onclick = ()=>{
+  const p = lbPhoto(); if(!p) return;
+  p.adj = null;
+  syncAdjBar();
+  if(lbBmp && lbBmpFor===p.id){
+    const c=$("lbCanvas"), ctx=c.getContext("2d");
+    c.width=lbBmp.width; c.height=lbBmp.height;
+    drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
+    drawOverlay(ctx,c.width,c.height);
+    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
+  }else{
+    paintLightbox();
+  }
+  toast("Regolazioni azzerate");
+};
 
 /* ---------- monitor cliente ---------- */
 $("btnMonitor").onclick = openMonitor;
@@ -1768,7 +1855,7 @@ async function paintMonitorPhoto(p, withCode){
   const k=Math.min(cw/bmp.width, ch/bmp.height);
   const dw=bmp.width*k, dh=bmp.height*k, dx=(cw-dw)/2, dy=(ch-dh)/2;
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
-  M.ctx.drawImage(bmp,dx,dy,dw,dh);
+  drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
   M.ctx.save(); M.ctx.translate(dx,dy);
   drawOverlay(M.ctx,dw,dh);
   if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
@@ -1798,7 +1885,7 @@ async function drawTilePage(page, expectMode, withInfo){
     const k=Math.min(tw/bmp.width, th/bmp.height);
     const dw=bmp.width*k, dh=bmp.height*k;
     const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
-    M.ctx.drawImage(bmp,dx,dy,dw,dh);
+    drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
     M.ctx.save(); M.ctx.translate(dx,dy);
     drawOverlay(M.ctx,dw,dh);
     drawCodeBadge(M.ctx,dw,dh,p.code);
@@ -2295,12 +2382,24 @@ $("btnPrintQueue").onclick = ()=>{
   const box=$("pqList");
   if(!list.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna foto in attesa di stampa.</p>'; }
   else{
-    box.innerHTML = list.map(p=>`<label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
+    box.innerHTML = list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
       <input type="checkbox" class="pqChk" data-code="${p.code}" checked>
-      <b style="font-family:var(--mono)">${p.code}</b>
-      <span style="color:var(--muted)">${p.prints>0?'· già stampata':''}</span></label>`).join("");
+      <button class="pqOpen" data-i="${i}" title="Apri la foto per guardarla e regolarla"
+style="font-family:var(--mono);font-weight:700">${p.code}</button>
+      <span style="color:var(--muted)">${p.prints>0?'· già stampata':''}</span>
+      <div style="flex:1"></div>
+      <span style="color:var(--muted)">${p.adj? (p.adj.bw? 'b/n' : 'ritoccata') : ''}</span>
+    </div>`).join("");
   }
   $("pqDlg").showModal();
+};
+$("pqList").onclick = e=>{
+  const b = e.target.closest(".pqOpen"); if(!b) return;
+  const list = printQueuePhotos();
+  const i = +b.dataset.i;
+  if(!list[i]) return;
+  $("pqDlg").close();                 // il dialogo coprirebbe il visualizzatore
+  openLightboxList(list, i);          // frecce ‹ › per scorrere solo le foto della lista
 };
 $("pqClose").onclick=()=>$("pqDlg").close();
 $("pqPrintAll").onclick=async ()=>{
