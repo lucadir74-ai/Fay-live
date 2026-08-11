@@ -1376,6 +1376,7 @@ $("searchBox").oninput = e=>{
       // apri la foto anche se è filtrata da una scheda lettera diversa: passo alla lista completa
       const idx = state.photos.indexOf(p);
       openLightboxList(state.photos, idx);
+      monitorFollow();          // se il monitor mostra una foto, passa a questa
     } else if($("lightbox").classList.contains("open")){ closeLightbox(); }
     return;
   }
@@ -1759,8 +1760,17 @@ $("lbMenu").onclick = ()=>{ $("lbMenu").hidden = true; };   // scelta fatta: si 
 $("lbTop").onclick = e=>{ if(!e.target.closest("#lbMore,#lbMenu")) $("lbMenu").hidden = true; };
 $("lbClose").onclick=()=>{ $("lbMenu").hidden = true; closeLightbox(); };
 $("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
-$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); } };
-$("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); } };
+// se il monitor cliente sta mostrando una foto, lo faccio scorrere insieme al visualizzatore
+function monitorFollow(){
+  const M=state.monitor;
+  if(!M.win || M.win.closed || M.mode!=="present") return;
+  const p=lbList()[state.lightboxIdx]; if(!p) return;
+  M.present=[p]; M.pIdx=0;
+  paintMonitorPhoto(p, true);
+  const nx=lbList()[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
+}
+$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); monitorFollow(); } };
+$("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); monitorFollow(); } };
 $("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
 $("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
 $("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
@@ -1795,6 +1805,7 @@ function applyAdjFromBar(){
     paintLightbox();
   }
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
+  monitorFollow();              // il cliente vede subito la foto corretta
 }
 for(const id of ["adjB","adjC","adjS","adjT"]) $(id).oninput = applyAdjFromBar;
 $("adjBW").onchange = applyAdjFromBar;
