@@ -1754,7 +1754,11 @@ async function paintLightbox(){
   }
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
-function closeLightbox(){ $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; if($("searchBox").value){ resetSearch(); } paintVisible(); }
+function closeLightbox(){
+  $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null;
+  // il monitor cliente torna allo slideshow: la vendita è finita
+  const M=state.monitor;
+  if(M.win && !M.win.closed && M.mode==="present") startSlideshow(); if($("searchBox").value){ resetSearch(); } paintVisible(); }
 $("lbMore").onclick = e=>{ e.stopPropagation(); $("lbMenu").hidden = !$("lbMenu").hidden; };
 $("lbMenu").onclick = ()=>{ $("lbMenu").hidden = true; };   // scelta fatta: si richiude
 $("lbTop").onclick = e=>{ if(!e.target.closest("#lbMore,#lbMenu")) $("lbMenu").hidden = true; };
