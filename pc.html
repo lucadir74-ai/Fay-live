@@ -1106,6 +1106,16 @@ const origSet = new Set();
 let origActive = 0;
 const ORIG_PARALLEL = 6;
 
+// Questa postazione non ha il file: chiede al PC che l'ha importato di caricarlo sul cloud.
+// Il PC1 ascolta in tempo reale la colonna richiesta_originale e lo manda subito.
+function askOriginal(p){
+  if(!sb || !p.dbId) return;
+  if(p.file || p.arch) return;          // ce l'ho già in locale
+  if(p.origReadyCloud || p.origUploaded) return;
+  if(p._chiesto) return;                 // una richiesta sola per foto
+  p._chiesto = true;
+  sbTry(()=>sb.from("foto").update({richiesta_originale:true}).eq("id",p.dbId), "richiesta originale "+p.code);
+}
 function queueOriginalUpload(p){
   if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
   if(origSet.has(p.code)) return;
@@ -1493,7 +1503,7 @@ async function originalReady(p){
 async function printPhotos(set){
   if(!set.length){ toast("Nessuna foto da stampare"); return; }
   // assicura che gli originali delle foto da stampare siano in coda di caricamento
-  set.forEach(p=>queueOriginalUpload(p));
+  set.forEach(p=>{ queueOriginalUpload(p); askOriginal(p); });
   // pre-controllo disponibilità
   const checks = await Promise.all(set.map(async p=>({p, ready: await originalReady(p)})));
   const ready = checks.filter(x=>x.ready).map(x=>x.p);
@@ -1524,7 +1534,7 @@ async function printPhotos(set){
   const wrap=$("pdWaiting");
   wrap.innerHTML = missing.map(p=>`<div id="pw_${p.code}" class="hint">⏳ ${p.code} — in arrivo…</div>`).join("");
   const stillMissing = new Set(missing.map(p=>p.code));
-  const deadline = Date.now()+90000; // max 90s di attesa
+  const deadline = Date.now()+150000; // max 2 min e mezzo: su hotspot il caricamento è lento
   while(stillMissing.size && Date.now()<deadline){
     for(const p of missing){
       if(!stillMissing.has(p.code)) continue;
@@ -1596,6 +1606,7 @@ async function doPrint(set){
 }
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
+  set.forEach(p=>askOriginal(p));
   const dir = await ensureExportDir();  // cartella fissa scelta una volta
   let fallback=0, saved=0;
   for(const p of set){
@@ -1709,6 +1720,7 @@ let lbSeq=0, lbBmp=null, lbBmpFor=null;
 async function paintLightbox(){
   const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
   const my=++lbSeq;
+  askOriginal(p);                  // se la foto è di un'altra postazione, la chiedo subito
   $("lbCode").textContent=p.code;
   setLbStatus(p);
   if(!$("lbAdjBar").hidden) syncAdjBar();
