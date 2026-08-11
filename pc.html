@@ -1112,8 +1112,9 @@ function askOriginal(p){
   if(!sb || !p.dbId) return;
   if(p.file || p.arch) return;          // ce l'ho già in locale
   if(p.origReadyCloud || p.origUploaded) return;
-  if(p._chiesto) return;                 // una richiesta sola per foto
-  p._chiesto = true;
+  const ora = Date.now();
+  if(p._chiesto && ora - p._chiesto < 8000) return;   // non più di una richiesta ogni 8s
+  p._chiesto = ora;
   sbTry(()=>sb.from("foto").update({richiesta_originale:true}).eq("id",p.dbId), "richiesta originale "+p.code);
 }
 function queueOriginalUpload(p){
@@ -1534,6 +1535,7 @@ async function printPhotos(set){
   const wrap=$("pdWaiting");
   wrap.innerHTML = missing.map(p=>`<div id="pw_${p.code}" class="hint">⏳ ${p.code} — in arrivo…</div>`).join("");
   const stillMissing = new Set(missing.map(p=>p.code));
+  const inizioAttesa = Date.now();
   const deadline = Date.now()+150000; // max 2 min e mezzo: su hotspot il caricamento è lento
   while(stillMissing.size && Date.now()<deadline){
     for(const p of missing){
@@ -1543,7 +1545,16 @@ async function printPhotos(set){
         const el=$("pw_"+p.code); if(el){ el.innerHTML=`✓ ${p.code} — pronta`; el.style.color="var(--ok)"; }
       }
     }
-    if(stillMissing.size) await new Promise(r=>setTimeout(r,1500));
+    if(!stillMissing.size) break;
+    // risollecito la postazione che ha gli originali (se si è appena riaperta, ora sente)
+    for(const p of missing) if(stillMissing.has(p.code)) askOriginal(p);
+    if(Date.now()-inizioAttesa > 20000 && !$("pdHint")){
+      wrap.insertAdjacentHTML("beforeend",
+        '<p id="pdHint" class="hint" style="margin-top:10px;color:var(--danger)">' +
+        'Nessuna risposta dalla postazione che ha importato queste foto. Su quel PC: Fay Live aperto, ' +
+        'stessa sede e stessa giornata, e archivio riattivato dal menu Altro → Archivio…</p>');
+    }
+    await new Promise(r=>setTimeout(r,1500));
   }
   $("printDlg").close();
   if(stillMissing.size){
@@ -1590,11 +1601,17 @@ async function doPrint(set){
     w.document.body.append(d);
   }
   await Promise.all(loads);
-  // la finestra con le foto si chiude appena il dialogo di stampa è chiuso
+  // la finestra con le foto si chiude quando il dialogo di stampa è stato chiuso.
+  // Niente chiusura a tempo: su PC lenti il dialogo compare dopo e si annullerebbe la stampa.
   const closePrintWin = ()=>{ try{ if(!w.closed) w.close(); }catch(_){} };
-  try{ w.onafterprint = closePrintWin; }catch(_){}
+  let stampaFatta = false;
+  try{
+    w.onafterprint = ()=>{ stampaFatta = true; closePrintWin(); };
+    w.addEventListener("beforeunload", ()=>{ stampaFatta = true; });
+  }catch(_){}
   w.focus(); w.print();
-  setTimeout(closePrintWin, 1200);
+  // rete di sicurezza: se il browser non manda il segnale, chiudo molto dopo
+  setTimeout(()=>{ if(!stampaFatta) closePrintWin(); }, 120000);
   // chiudi la foto aperta in grande dopo la stampa
   if($("lightbox").classList.contains("open")) closeLightbox();
   set.forEach(p=>{ p.prints++; });
