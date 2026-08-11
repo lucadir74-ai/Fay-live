@@ -165,6 +165,7 @@
   @keyframes pulse{50%{opacity:.35}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
 <body>
 <div id="app">
@@ -176,6 +177,7 @@
     <span id="eventInfo"></span>
     <button id="btnEvent">Servizio…</button>
     <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge">0</span></button>
+    <button id="btnMail">Da inviare <span id="mailBadge" class="pqbadge">0</span></button>
     <button id="btnReport">Report</button>
     <button id="btnClearDay">Svuota giornata</button>
     <button id="btnArchive">Archivio…</button>
@@ -261,9 +263,17 @@
             </select></div>
         </div>
         <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
-          <input type="file" id="evLogo" accept="image/*"></div>
+          <input type="file" id="evLogo" accept="image/*">
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <span style="flex:1">Dimensione <input type="range" id="evLogoSize" min="5" max="60" step="1" value="30" style="width:100%"></span>
+            <output id="evLogoSizeOut" style="min-width:42px;text-align:right;color:var(--muted)">30%</output>
+          </div></div>
         <div class="field"><label>Scritta — in basso a sinistra</label>
-          <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo"></div>
+          <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo">
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <span style="flex:1">Dimensione <input type="range" id="evTextSize" min="1.5" max="10" step="0.1" value="4.2" style="width:100%"></span>
+            <output id="evTextSizeOut" style="min-width:42px;text-align:right;color:var(--muted)">4.2%</output>
+          </div></div>
         <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
           <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo"></div>
         <div class="field"><label>Cornice bianca in stampa</label>
@@ -330,6 +340,21 @@
     <button id="pqClose">Chiudi</button>
     <button id="pqClear">Svuota lista</button>
     <button id="pqPrintAll" class="primary">Stampa tutte</button>
+  </div>
+</dialog>
+
+<dialog id="mailDlg">
+  <h3 style="margin-bottom:4px">Da inviare — email dei clienti</h3>
+  <p class="hint" style="margin-bottom:10px">Arrivano dal QR sul monitor cliente. L'invio lo fai tu da Gmail.</p>
+  <div id="mailList" style="max-height:56vh;overflow:auto;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap">
+    <label style="display:flex;gap:7px;align-items:center;font-size:13px">
+      <input type="checkbox" id="mailQrOn"> Mostra il QR sul monitor cliente
+    </label>
+    <span style="display:flex;gap:10px">
+      <button id="mailClear">Svuota inviate</button>
+      <button id="mailClose" class="primary">Chiudi</button>
+    </span>
   </div>
 </dialog>
 
@@ -444,7 +469,7 @@ async function sbTry(fn, label){
 }
 
 const state = {
-  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null}, // configurabile dal pannello Servizio, tutto facoltativo
+  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2}, // configurabile dal pannello Servizio, tutto facoltativo
   photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
@@ -480,22 +505,23 @@ function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
   const ev = state.event; if(!ev) return;
   const S = Math.min(iw,ih), m = S*0.035;
-  // logo: angolo in alto a destra della FOTO (dentro la cornice)
+  // logo: angolo in alto a destra della FOTO (dentro la cornice), dimensione regolabile
   if(ev.logoImg){
-    const lw = S*0.20, lh = lw * (ev.logoImg.height/ev.logoImg.width);
+    const lw = S * ((ev.logoSize ?? 30)/100), lh = lw * (ev.logoImg.height/ev.logoImg.width);
     ctx.drawImage(ev.logoImg, border+iw-m-lw, border+m, lw, lh);
   }
   // scritta: se c'è banda bianca sotto, la centro lì in nero; altrimenti sulla foto in bianco
   if(ev.text){
     if(bottomExtra>0){
-      const fs = Math.max(10, bottomExtra*0.5);
+      // nella banda bianca: allineata a sinistra, sul filo sinistro della foto
+      let fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
+      if(fs > bottomExtra*0.8) fs = bottomExtra*0.8;
       ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
-      ctx.textBaseline = "middle"; ctx.textAlign="center";
+      ctx.textBaseline = "middle"; ctx.textAlign="left";
       ctx.fillStyle = ev.frameTextColor || "#111";
-      ctx.fillText(ev.text, border+iw/2, border+ih+bottomExtra/2);
-      ctx.textAlign="left";
+      ctx.fillText(ev.text, border+m, border+ih+bottomExtra/2);
     } else {
-      const fs = Math.max(10, S*0.042);
+      const fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
       ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
       ctx.textBaseline = "bottom";
       ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
@@ -529,6 +555,9 @@ function openEventPanel(){
   $("evFrameOn").checked = ev.frameOn!==false;
   $("evFrameBorder").value = ev.frameBorder ?? 2.5;
   $("evFrameBottom").value = ev.frameBottom ?? 6;
+  $("evLogoSize").value = ev.logoSize ?? 30;
+  $("evTextSize").value = ev.textSize ?? 4.2;
+  syncSizeOut();
   pendingLogo = ev.logoImg;
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
@@ -540,11 +569,18 @@ $("evLogo").onchange = async e=>{
   renderOverlayPreview();
 };
 $("evText").oninput = renderOverlayPreview;
+function syncSizeOut(){
+  $("evLogoSizeOut").textContent = $("evLogoSize").value + "%";
+  $("evTextSizeOut").textContent = $("evTextSize").value + "%";
+}
+$("evLogoSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
+$("evTextSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
 function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
 
 function renderOverlayPreview(){
   const saved = state.event;
-  const tmp = { logoImg: pendingLogo, text: $("evText").value };
+  const tmp = { logoImg: pendingLogo, text: $("evText").value,
+               logoSize: +$("evLogoSize").value, textSize: +$("evTextSize").value };
   state.event = Object.assign({}, saved||{}, tmp);
   for(const id of ["pvH","pvV"]){
     const c=$(id), ctx=c.getContext("2d");
@@ -566,6 +602,8 @@ $("evSave").onclick = ()=>{
     frameOn: $("evFrameOn").checked,
     frameBorder: +$("evFrameBorder").value,
     frameBottom: +$("evFrameBottom").value,
+    logoSize: +$("evLogoSize").value,
+    textSize: +$("evTextSize").value,
   };
   updateEventInfo();
   $("eventPanel").classList.remove("open");
@@ -1441,7 +1479,11 @@ async function doPrint(set){
     w.document.body.append(d);
   }
   await Promise.all(loads);
+  // la finestra con le foto si chiude appena il dialogo di stampa è chiuso
+  const closePrintWin = ()=>{ try{ if(!w.closed) w.close(); }catch(_){} };
+  try{ w.onafterprint = closePrintWin; }catch(_){}
   w.focus(); w.print();
+  setTimeout(closePrintWin, 1200);
   // chiudi la foto aperta in grande dopo la stampa
   if($("lightbox").classList.contains("open")) closeLightbox();
   set.forEach(p=>{ p.prints++; });
@@ -1668,6 +1710,7 @@ async function paintMonitorPhoto(p, withCode){
   drawOverlay(M.ctx,dw,dh);
   if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
   M.ctx.restore();
+  drawMonitorQR();
   M._last=p;
 }
 const TILE_GRID = {1:[1,1],2:[2,1],3:[3,1],4:[2,2],5:[3,2],6:[3,2],7:[4,2],8:[4,2],9:[3,3],10:[4,3],11:[4,3],12:[4,3]};
@@ -1713,6 +1756,7 @@ async function drawTilePage(page, expectMode, withInfo){
       M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
     }
   }
+  drawMonitorQR();
 }
 async function paintMonitorMosaic(start){
   const M=state.monitor; if(!M.ctx) return;
@@ -2149,7 +2193,15 @@ function subscribeRealtime(){
       }
     })
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"attivita"}, ()=>{ /* report si aggiorna all'apertura */ })
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"richieste_email"}, payload=>{
+      const r = payload.new;
+      if(!cloud.servizio || String(r.servizio_id)!==String(cloud.servizio.id)) return;
+      toast("Nuova email dal cliente: "+r.email);
+      refreshMailBadge();
+      if($("mailDlg").open) loadMailRequests().then(renderMailList);
+    })
     .subscribe();
+  refreshMailBadge();
 }
 
 // --- coda "Da stampare" (foto segnate dai tablet) ---
@@ -2226,6 +2278,141 @@ $("btnReport").onclick = async ()=>{
   }catch(err){ box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il report.</p>'; }
 };
 $("reportClose").onclick=()=>$("reportDlg").close();
+
+/* =====================================================================
+   DA INVIARE — il cliente inquadra il QR sul monitor e scrive la sua email.
+   La richiesta arriva qui; l'invio delle foto lo fa l'operatore da Gmail.
+   ===================================================================== */
+const mail = { qrCanvas:null, qrFor:null, rows:[] };
+
+function mailQrEnabled(){ return localStorage.getItem("faylive_qr") !== "0"; }
+function emailPageUrl(){
+  const base = location.href.replace(/[^/]*$/, "");
+  return base + "email.html?s=" + encodeURIComponent(cloud.servizio ? cloud.servizio.id : "");
+}
+
+// prepara (una volta per servizio) il QR come canvas fuori schermo
+function ensureQR(){
+  if(!cloud.servizio || typeof qrcode !== "function") return null;
+  const url = emailPageUrl();
+  if(mail.qrFor === url && mail.qrCanvas) return mail.qrCanvas;
+  try{
+    const qr = qrcode(0, "M");
+    qr.addData(url); qr.make();
+    const n = qr.getModuleCount(), px = 8, pad = 4;
+    const c = document.createElement("canvas");
+    c.width = c.height = (n + pad*2) * px;
+    const x = c.getContext("2d");
+    x.fillStyle = "#fff"; x.fillRect(0,0,c.width,c.height);
+    x.fillStyle = "#000";
+    for(let r=0;r<n;r++) for(let col=0;col<n;col++)
+      if(qr.isDark(r,col)) x.fillRect((col+pad)*px, (r+pad)*px, px, px);
+    mail.qrCanvas = c; mail.qrFor = url;
+    return c;
+  }catch(_){ return null; }
+}
+
+// riquadro fisso in basso a destra del monitor cliente
+function drawMonitorQR(){
+  if(!mailQrEnabled()) return;
+  const M = state.monitor; if(!M.ctx || !M.canvas) return;
+  const q = ensureQR(); if(!q) return;
+  const cw = M.canvas.width, ch = M.canvas.height;
+  const side = Math.round(Math.min(cw,ch) * 0.115);
+  const pad  = Math.round(Math.min(cw,ch) * 0.022);
+  const lh   = Math.round(side * 0.30);
+  const bw = side + pad, bh = side + lh + pad;
+  const bx = cw - bw - pad, by = ch - bh - pad;
+  const g = M.ctx;
+  g.save();
+  g.fillStyle = "rgba(255,255,255,.94)";
+  g.fillRect(bx, by, bw, bh);
+  g.drawImage(q, bx + pad/2, by + pad/2, side, side);
+  g.fillStyle = "#0A0F1A";
+  g.font = `600 ${Math.round(lh*0.36)}px "Segoe UI", sans-serif`;
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText("Vuoi le foto?", bx + bw/2, by + pad/2 + side + lh*0.34, bw*0.92);
+  g.font = `${Math.round(lh*0.30)}px "Segoe UI", sans-serif`;
+  g.fillStyle = "#4A5262";
+  g.fillText("Inquadra · Scan me", bx + bw/2, by + pad/2 + side + lh*0.72, bw*0.92);
+  g.textAlign = "left"; g.textBaseline = "alphabetic";
+  g.restore();
+}
+
+async function loadMailRequests(){
+  if(!sb || !cloud.servizio) return [];
+  try{
+    const {data} = await sb.from("richieste_email").select("*")
+      .eq("servizio_id", String(cloud.servizio.id))
+      .order("creato_il",{ascending:false});
+    mail.rows = data || [];
+  }catch(_){ mail.rows = []; }
+  return mail.rows;
+}
+async function refreshMailBadge(){
+  await loadMailRequests();
+  const n = mail.rows.filter(r=>r.stato!=="inviata").length;
+  const b = $("mailBadge"); if(!b) return;
+  b.textContent = n;
+  b.style.visibility = n ? "visible" : "hidden";
+}
+function renderMailList(){
+  const box = $("mailList");
+  if(!mail.rows.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna richiesta. Il QR è sul monitor cliente.</p>'; return; }
+  box.innerHTML = mail.rows.map(r=>{
+    const t = new Date(r.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+    const done = r.stato==="inviata";
+    const mailTxt = (r.email||"").replace(/[<>&"]/g,"");
+    return `<div style="padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap;opacity:${done?.5:1}">
+      <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
+      <b style="flex:1;min-width:180px;word-break:break-all;${done?'text-decoration:line-through':''}">${mailTxt}</b>
+      <button data-act="copy" data-id="${r.id}">Copia</button>
+      <button data-act="gmail" data-id="${r.id}">Gmail</button>
+      <button data-act="done" data-id="${r.id}" class="${done?'':'primary'}">${done?'Riapri':'Inviata'}</button>
+      <button data-act="del" data-id="${r.id}" title="Elimina">✕</button>
+    </div>`;
+  }).join("");
+}
+$("btnMail").onclick = async ()=>{
+  $("mailQrOn").checked = mailQrEnabled();
+  $("mailList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
+  $("mailDlg").showModal();
+  await loadMailRequests();
+  renderMailList();
+};
+$("mailClose").onclick = ()=>$("mailDlg").close();
+$("mailQrOn").onchange = e=>{
+  localStorage.setItem("faylive_qr", e.target.checked ? "1" : "0");
+  if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
+};
+$("mailList").onclick = async e=>{
+  const b = e.target.closest("button[data-act]"); if(!b) return;
+  const row = mail.rows.find(r=>String(r.id)===b.dataset.id); if(!row) return;
+  const act = b.dataset.act;
+  if(act==="copy"){
+    try{ await navigator.clipboard.writeText(row.email); toast("Email copiata"); }
+    catch(_){ toast("Copia non riuscita"); }
+  } else if(act==="gmail"){
+    const su = encodeURIComponent("Le tue foto — Frame About You");
+    window.open("https://mail.google.com/mail/?view=cm&fs=1&to="+encodeURIComponent(row.email)+"&su="+su, "_blank");
+  } else if(act==="done"){
+    const nuovo = row.stato==="inviata" ? "attesa" : "inviata";
+    row.stato = nuovo;
+    await sbTry(()=>sb.from("richieste_email").update({stato:nuovo}).eq("id",row.id), "stato email");
+    renderMailList(); refreshMailBadge();
+  } else if(act==="del"){
+    await sbTry(()=>sb.from("richieste_email").delete().eq("id",row.id), "elimina email");
+    mail.rows = mail.rows.filter(r=>r.id!==row.id);
+    renderMailList(); refreshMailBadge();
+  }
+};
+$("mailClear").onclick = async ()=>{
+  if(!sb || !cloud.servizio) return;
+  await sbTry(()=>sb.from("richieste_email").delete()
+    .eq("servizio_id", String(cloud.servizio.id)).eq("stato","inviata"), "svuota inviate");
+  await loadMailRequests(); renderMailList(); refreshMailBadge();
+  toast("Richieste già inviate rimosse");
+};
 
 // assegna il prossimo numero dal cloud (atomico) o localmente se offline
 async function nextNumber(letter, count){
