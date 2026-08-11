@@ -262,6 +262,17 @@
               <option value="9">9 (3×3)</option>
             </select></div>
         </div>
+        <div class="field"><label>Mascherina (PNG trasparente, grande quanto tutta la foto)</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <span style="flex:1;min-width:150px">Orizzontali<br><input type="file" id="evMaskH" accept="image/png,image/*"></span>
+            <span style="flex:1;min-width:150px">Verticali<br><input type="file" id="evMaskV" accept="image/png,image/*"></span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+            <span id="evMaskState" class="hint" style="flex:1"></span>
+            <button id="evMaskClear" type="button">Rimuovi</button>
+          </div>
+          <p class="hint">Se carichi la mascherina, logo e scritta qui sotto vengono ignorati: vale quello che hai disegnato tu. Serve un file per le orizzontali e uno per le verticali; restano salvati su questo PC anche dopo la chiusura.</p>
+        </div>
         <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
           <input type="file" id="evLogo" accept="image/*">
           <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
@@ -469,7 +480,7 @@ async function sbTry(fn, label){
 }
 
 const state = {
-  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2}, // configurabile dal pannello Servizio, tutto facoltativo
+  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2, maskH:null, maskV:null}, // configurabile dal pannello Servizio, tutto facoltativo
   photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
@@ -504,6 +515,9 @@ function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 /* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
 function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
   const ev = state.event; if(!ev) return;
+  // mascherina a tutta foto: se c'è quella dell'orientamento giusto, disegno solo lei
+  const mask = maskFor(iw, ih);
+  if(mask){ ctx.drawImage(mask, border, border, iw, ih); return; }
   const S = Math.min(iw,ih), m = S*0.035;
   // logo: angolo in alto a destra della FOTO (dentro la cornice), dimensione regolabile
   if(ev.logoImg){
@@ -559,6 +573,7 @@ function openEventPanel(){
   $("evTextSize").value = ev.textSize ?? 4.2;
   syncSizeOut();
   pendingLogo = ev.logoImg;
+  maskStateText();
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
 }
@@ -577,10 +592,55 @@ $("evLogoSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
 $("evTextSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
 function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
 
+/* ---------- mascherina: PNG trasparente grande quanto la foto ----------
+   Una per le orizzontali e una per le verticali: la stessa immagine tirata
+   sull'altro orientamento deformerebbe logo e scritta.                    */
+function maskFor(iw, ih){
+  const ev = state.event; if(!ev) return null;
+  return (iw >= ih) ? (ev.maskH || null) : (ev.maskV || null);
+}
+function maskStateText(){
+  const ev = state.event || {};
+  const h = ev.maskH ? "orizzontali ✓" : "orizzontali —";
+  const v = ev.maskV ? "verticali ✓" : "verticali —";
+  const el = $("evMaskState"); if(!el) return;
+  el.textContent = (!ev.maskH && !ev.maskV)
+    ? "Nessuna mascherina: valgono logo e scritta qui sotto."
+    : (ev.maskH && ev.maskV) ? "Mascherine caricate: " + h + " · " + v
+    : "Attenzione: " + h + " · " + v + " — le foto senza mascherina useranno logo e scritta.";
+}
+async function setMask(which, file){
+  const img = await loadImg(URL.createObjectURL(file));
+  state.event[which] = img;
+  try{ await idb.set(which === "maskH" ? "faylive_maskH" : "faylive_maskV", file); }catch(_){}
+  maskStateText(); renderOverlayPreview();
+  toast("Mascherina caricata");
+}
+$("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f); };
+$("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f); };
+$("evMaskClear").onclick = async ()=>{
+  state.event.maskH = null; state.event.maskV = null;
+  $("evMaskH").value = ""; $("evMaskV").value = "";
+  try{ await idb.set("faylive_maskH", null); await idb.set("faylive_maskV", null); }catch(_){}
+  maskStateText(); renderOverlayPreview();
+  toast("Mascherine rimosse");
+};
+// ripesca le mascherine salvate su questo PC (dopo che tutto lo script è pronto)
+setTimeout(async ()=>{
+  for(const k of ["maskH","maskV"]){
+    try{
+      const blob = await idb.get(k === "maskH" ? "faylive_maskH" : "faylive_maskV");
+      if(blob) state.event[k] = await loadImg(URL.createObjectURL(blob));
+    }catch(_){}
+  }
+  maskStateText();
+}, 0);
+
 function renderOverlayPreview(){
   const saved = state.event;
   const tmp = { logoImg: pendingLogo, text: $("evText").value,
-               logoSize: +$("evLogoSize").value, textSize: +$("evTextSize").value };
+               logoSize: +$("evLogoSize").value, textSize: +$("evTextSize").value,
+               maskH: (saved&&saved.maskH)||null, maskV: (saved&&saved.maskV)||null };
   state.event = Object.assign({}, saved||{}, tmp);
   for(const id of ["pvH","pvV"]){
     const c=$(id), ctx=c.getContext("2d");
@@ -604,6 +664,8 @@ $("evSave").onclick = ()=>{
     frameBottom: +$("evFrameBottom").value,
     logoSize: +$("evLogoSize").value,
     textSize: +$("evTextSize").value,
+    maskH: state.event.maskH || null,
+    maskV: state.event.maskV || null,
   };
   updateEventInfo();
   $("eventPanel").classList.remove("open");
@@ -1362,7 +1424,8 @@ async function renderFull(p, withOverlay=true){
   const iw=src.width, ih=src.height, S=Math.min(iw,ih);
   // cornice bianca: bordo sottile su 4 lati + banda extra sotto per la scritta
   const border = ev.frameOn===false ? 0 : Math.round(S * ((ev.frameBorder ?? 2.5)/100)); // % del lato corto
-  const bottomExtra = (ev.frameOn===false || !ev.text) ? 0 : Math.round(S * ((ev.frameBottom ?? 6)/100));
+  const hasMask = (iw >= ih) ? !!ev.maskH : !!ev.maskV;
+  const bottomExtra = (ev.frameOn===false || !ev.text || hasMask) ? 0 : Math.round(S * ((ev.frameBottom ?? 6)/100));
   const c=document.createElement("canvas");
   c.width = iw + border*2;
   c.height = ih + border*2 + bottomExtra;
