@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Frame About You — Ricevi le tue foto</title>
+<style>
+  :root{
+    --ink:#07090F;
+    --deep:#101726;
+    --sand:#F2EDE4;
+    --gold:#E8B54B;
+    --muted:#8B93A5;
+    --danger:#E3705F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% -10%, #1B2740 0%, var(--deep) 45%, var(--ink) 100%);
+    color:var(--sand);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;align-items:center;justify-content:center;
+    padding:28px 20px calc(28px + env(safe-area-inset-bottom));
+    min-height:100vh;
+  }
+  .wrap{width:100%;max-width:420px}
+
+  /* firma: la scheda è una foto stampata, bordo bianco e didascalia sotto */
+  .print{
+    background:#FBFAF7;
+    padding:14px 14px 18px;
+    border-radius:3px;
+    box-shadow:0 24px 60px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.06) inset;
+    transform:rotate(-.6deg);
+  }
+  .frame{
+    background:linear-gradient(160deg,#16233B,#0A0F1A);
+    border-radius:2px;
+    padding:26px 20px 24px;
+    text-align:center;
+  }
+  .eyebrow{
+    font-size:11px;letter-spacing:.24em;text-transform:uppercase;
+    color:var(--gold);margin:0 0 14px;
+  }
+  h1{
+    font-family:"Didot","Bodoni MT",Georgia,serif;
+    font-weight:400;font-size:29px;line-height:1.15;letter-spacing:.01em;
+    margin:0 0 6px;color:#FBFAF7;
+  }
+  .sub{margin:0;color:var(--muted);font-size:14px}
+  .sub em{font-style:normal;display:block;font-size:12.5px;opacity:.7;margin-top:3px}
+
+  form{margin:22px 0 0}
+  label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;text-align:left}
+  input[type=email]{
+    width:100%;padding:16px 14px;font-size:18px;
+    background:#FBFAF7;color:#0A0F1A;
+    border:2px solid transparent;border-radius:2px;
+    font-family:inherit;
+  }
+  input[type=email]:focus{outline:none;border-color:var(--gold)}
+  input[type=email]::placeholder{color:#A9AFBC}
+
+  .hint{min-height:20px;margin:9px 0 0;font-size:13.5px;text-align:left;color:var(--muted)}
+  .hint.err{color:var(--danger)}
+  .hint button{
+    background:none;border:none;padding:0;font:inherit;color:var(--gold);
+    text-decoration:underline;cursor:pointer;
+  }
+
+  button.send{
+    width:100%;margin-top:16px;padding:16px;
+    background:var(--gold);color:#0A0F1A;
+    border:none;border-radius:2px;
+    font:600 16px/1 inherit;letter-spacing:.02em;cursor:pointer;
+  }
+  button.send:disabled{opacity:.45;cursor:default}
+  button.send:focus-visible,input:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+
+  .caption{
+    margin:14px 4px 0;text-align:center;
+    font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#B2AC9F;
+  }
+  .privacy{margin:18px 2px 0;font-size:11.5px;line-height:1.45;color:#6E7688;text-align:center}
+
+  /* schermata di conferma */
+  .done{display:none;text-align:center;padding:34px 20px}
+  .done .tick{
+    width:54px;height:54px;margin:0 auto 18px;border-radius:50%;
+    border:1.5px solid var(--gold);color:var(--gold);
+    font-size:26px;line-height:52px;
+  }
+  body.sent .frame form,body.sent .frame .head{display:none}
+  body.sent .done{display:block}
+  @media (prefers-reduced-motion:no-preference){
+    .print{animation:rise .5s cubic-bezier(.2,.7,.3,1) both}
+    @keyframes rise{from{opacity:0;transform:translateY(14px) rotate(-.6deg)}}
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="print">
+    <div class="frame">
+      <div class="head">
+        <p class="eyebrow">Frame About You</p>
+        <h1>Ricevi le tue foto</h1>
+        <p class="sub">Scrivi la tua email, te le mandiamo noi.<em>Type your email — we'll send your photos.</em></p>
+      </div>
+
+      <form id="f" novalidate>
+        <label for="em">Email</label>
+        <input id="em" type="email" inputmode="email" autocomplete="email"
+               autocapitalize="off" autocorrect="off" spellcheck="false"
+               placeholder="nome@esempio.com">
+        <p class="hint" id="hint"></p>
+        <button class="send" id="go" type="submit">Invia · Send</button>
+      </form>
+
+      <div class="done">
+        <div class="tick">✓</div>
+        <h1>Fatto</h1>
+        <p class="sub" id="doneMail" style="color:#FBFAF7;font-size:15px;word-break:break-all"></p>
+        <p class="sub" style="margin-top:10px">Riceverai le foto a breve.<em>You'll get your photos shortly.</em></p>
+      </div>
+    </div>
+    <p class="caption">Costa Smeralda</p>
+  </div>
+  <p class="privacy">Usiamo la tua email solo per inviarti le foto richieste e la cancelliamo dopo la consegna.</p>
+</div>
+
+<script>
+const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+
+const params = new URLSearchParams(location.search);
+const servizioId = params.get("s") || "";
+
+const em = document.getElementById("em");
+const hint = document.getElementById("hint");
+const go = document.getElementById("go");
+
+const RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+// errori di battitura più comuni sui domini
+const FIX = {
+  "gmail.con":"gmail.com","gmail.co":"gmail.com","gmial.com":"gmail.com","gmai.com":"gmail.com",
+  "gmail.it":"gmail.com","gmail.copm":"gmail.com","gnail.com":"gmail.com","gamil.com":"gmail.com",
+  "hotmial.com":"hotmail.com","hotmail.con":"hotmail.com","hotmail.co":"hotmail.com",
+  "otmail.it":"hotmail.it","hotmai.it":"hotmail.it",
+  "libero.it.":"libero.it","libeo.it":"libero.it","libero.com":"libero.it",
+  "yahoo.con":"yahoo.com","yaho.com":"yahoo.com","yahoo.co":"yahoo.com",
+  "outlook.con":"outlook.com","outllok.com":"outlook.com","icloud.con":"icloud.com"
+};
+function suggest(v){
+  const dom = v.split("@")[1];
+  if(!dom) return null;
+  const fixed = FIX[dom.toLowerCase()];
+  return fixed ? v.split("@")[0] + "@" + fixed : null;
+}
+
+em.addEventListener("input", ()=>{ hint.textContent=""; hint.classList.remove("err"); });
+
+document.getElementById("f").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const val = em.value.trim();
+
+  if(!RE.test(val)){
+    hint.textContent = "Controlla l'indirizzo — check the address";
+    hint.classList.add("err");
+    em.focus();
+    return;
+  }
+  const s = suggest(val);
+  if(s && s !== em.dataset.ok){
+    hint.classList.remove("err");
+    hint.innerHTML = "Forse intendevi <button type='button' id='fix'></button>?";
+    document.getElementById("fix").textContent = s;
+    document.getElementById("fix").onclick = ()=>{
+      em.value = s; em.dataset.ok = s; hint.textContent = "";
+    };
+    em.dataset.ok = val;   // se conferma com'è, al secondo invio passa
+    return;
+  }
+
+  go.disabled = true; go.textContent = "Invio…";
+  try{
+    const { error } = await sb.from("richieste_email").insert({
+      servizio_id: String(servizioId),
+      email: val,
+      stato: "attesa"
+    });
+    if(error) throw error;
+    document.getElementById("doneMail").textContent = val;
+    document.body.classList.add("sent");
+  }catch(err){
+    go.disabled = false; go.textContent = "Riprova · Try again";
+    hint.textContent = "Invio non riuscito, riprova — couldn't send, try again";
+    hint.classList.add("err");
+  }
+});
+
+if(!servizioId){
+  hint.textContent = "QR non valido: chiedi allo staff";
+  hint.classList.add("err");
+  go.disabled = true;
+}
+em.focus();
+</script>
+</body>
+</html>
