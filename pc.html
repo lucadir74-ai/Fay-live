@@ -721,7 +721,7 @@ async function setMask(which, file){
       .upload(maskCloudPath(which), file, {contentType:"image/png", upsert:true}), "mascherina");
     toast(up && !up.error ? "Mascherina salvata per questa sede" : "Mascherina caricata solo su questo PC");
   }else{
-    toast("Mascherina caricata su questo PC");
+    toast("ATTENZIONE: nessuna sede selezionata — la mascherina vale solo per questa sessione. Scegli la sede e ricaricala.");
   }
 }
 // all'apertura di una sede: prima il cloud, poi la copia locale
@@ -730,13 +730,38 @@ async function loadMasksForSede(){
     state.event[which] = null;
     let blob = null;
     if(sb && cloud.sede){
+      // 1) download autenticato: funziona anche se il bucket non è pubblico
       try{
-        const url = sb.storage.from("anteprime").getPublicUrl(maskCloudPath(which)).data.publicUrl;
-        const r = await fetch(url + "?t=" + Date.now());
-        if(r.ok){ const b = await r.blob(); if(b.size > 100) blob = b; }
+        const dl = await sb.storage.from("anteprime").download(maskCloudPath(which));
+        if(!dl.error && dl.data && dl.data.size > 100) blob = dl.data;
       }catch(_){}
+      // 2) ripiego sull'indirizzo pubblico
+      if(!blob){
+        try{
+          const url = sb.storage.from("anteprime").getPublicUrl(maskCloudPath(which)).data.publicUrl;
+          const r = await fetch(url + "?t=" + Date.now());
+          if(r.ok){ const b = await r.blob(); if(b.size > 100) blob = b; }
+        }catch(_){}
+      }
     }
     if(!blob){ try{ blob = await idb.get(maskKey(which)); }catch(_){} }
+    // 3) recupero: mascherine salvate quando nessuna sede era selezionata ("nosede").
+    //    Se le trovo, le adotto per questa sede e le ricarico sul cloud, una volta sola.
+    if(!blob && cloud.sede){
+      let orfana = null;
+      try{ orfana = await idb.get("faylive_mask_nosede_" + which); }catch(_){}
+      if(!orfana){
+        try{
+          const dl = await sb.storage.from("anteprime").download("mascherine/nosede-" + which + ".png");
+          if(!dl.error && dl.data && dl.data.size > 100) orfana = dl.data;
+        }catch(_){}
+      }
+      if(orfana){
+        blob = orfana;
+        try{ await sb.storage.from("anteprime").upload(maskCloudPath(which), orfana, {contentType:"image/png", upsert:true}); }catch(_){}
+        toast("Mascherina recuperata e assegnata alla sede " + cloud.sede.nome);
+      }
+    }
     if(blob){
       try{
         state.event[which] = await loadImg(URL.createObjectURL(blob));
