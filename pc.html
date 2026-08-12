@@ -195,7 +195,8 @@
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
       <button id="btnExportDir">Cartella export…</button>
-      <button id="btnPushAll" title="Carica sul cloud gli originali di questa giornata, così le altre postazioni stampano senza dipendere da questo PC">Carica originali sul cloud</button>
+      <button id="btnAutoOrig" title="Se attivo, ogni foto importata sale sul cloud a piena risoluzione: tutte le postazioni stampano anche se questo PC è spento">Caricamento automatico: —</button>
+      <button id="btnPushAll" title="Carica ORA sul cloud gli originali di questa giornata (utile per giornate vecchie o se il caricamento automatico era spento)">Carica originali sul cloud</button>
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <hr>
@@ -1122,6 +1123,9 @@ async function processBatch(batch){
     if((prog.done & 3)===0){ progUpdate(); paintVisible(); await new Promise(r=>setTimeout(r,0)); }
   }
   progUpdate(); paintVisible();
+  // gli originali salgono da soli sul cloud (dalla più recente): le altre postazioni stampano
+  // anche se questo PC viene chiuso o perde l'accesso all'archivio
+  if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
 }
 
@@ -1198,10 +1202,21 @@ async function syncPhotoUp(p){
 
 /* coda upload ORIGINALI — solo per le foto che entrano nel giro vendita
    (selezionate/preferite o messe in stampa). Parallela e non bloccante. */
-const origQueue = [];
+const origQueue = [];        // corsia URGENTE: foto vendute, in stampa o richieste da un'altra postazione
+const origBg    = [];        // corsia SOTTOFONDO: tutte le foto importate (le più recenti per prime)
 const origSet = new Set();
-let origActive = 0;
-const ORIG_PARALLEL = 6;
+let origActive = 0, origBgActive = 0;
+const ORIG_PARALLEL = 6;     // urgenti
+const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle urgenti
+
+// interruttore: caricamento automatico degli originali (soluzione A). Acceso di serie.
+function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") !== "0"; }
+function setAutoOrig(on){
+  localStorage.setItem("faylive_autoorig", on ? "1" : "0");
+  const b = $("btnAutoOrig");
+  if(b) b.textContent = "Caricamento automatico: " + (on ? "acceso" : "spento");
+  if(on) pumpOrigQueue();
+}
 
 // Questa postazione non ha il file: chiede al PC che l'ha importato di caricarlo sul cloud.
 // Il PC1 ascolta in tempo reale la colonna richiesta_originale e lo manda subito.
@@ -1223,17 +1238,32 @@ function askOriginal(p){
   });
 }
 function statoRichiesta(){}
-function queueOriginalUpload(p){
+function queueOriginalUpload(p, urgent=true){
   if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
-  if(origSet.has(p.code)) return;
-  origSet.add(p.code); origQueue.push(p);
+  if(origSet.has(p.code)){
+    if(urgent){                                  // era in sottofondo e ora serve subito: lo promuovo
+      const i = origBg.indexOf(p);
+      if(i>=0){ origBg.splice(i,1); origQueue.push(p); pumpOrigQueue(); }
+    }
+    return;
+  }
+  origSet.add(p.code);
+  (urgent ? origQueue : origBg).push(p);
   pumpOrigQueue();
 }
 function pumpOrigQueue(){
+  // 1) prima le urgenti, sempre
   while(origActive < ORIG_PARALLEL && origQueue.length){
     const p = origQueue.shift();
     origActive++;
     uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
+  }
+  // 2) poi il sottofondo, solo se non c'è nulla di urgente in attesa; dalla più recente alla più vecchia
+  while(autoOrigOn() && !origQueue.length && origBg.length &&
+        origBgActive < ORIG_BG_PARALLEL && origActive < ORIG_PARALLEL){
+    const p = origBg.pop();
+    origActive++; origBgActive++;
+    uploadOneOriginal(p).finally(()=>{ origActive--; origBgActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
   }
   updateOrigCount();
 }
@@ -1250,21 +1280,58 @@ async function uploadOneOriginal(p){
     cloud.online=true;
   }catch(err){
     console.warn("upload originale", p.code, err);
-    // rimetti in coda per un nuovo tentativo più tardi
-    if(!origSet.has(p.code)){ origSet.add(p.code); origQueue.push(p); }
+    // nuovo tentativo più tardi, senza occupare la coda a vuoto
+    p._origTries = (p._origTries||0) + 1;
+    if(p._origTries <= 8){
+      setTimeout(()=>{
+        if(!origSet.has(p.code)){ origSet.add(p.code); origBg.push(p); pumpOrigQueue(); }
+      }, Math.min(30000, 3000 * p._origTries));
+    }
     cloud.online=false; setSync("offline");
   }
 }
+let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
 function updateOrigCount(){
-  const pend = origQueue.length + origActive;
+  const urg = origQueue.length + origActive;
+  const bg  = origBg.length;
   const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
-  $("stArch").textContent = pend? base+" · carico originali: "+pend+" in coda" : base;
-  if(pend) setSync("syncing","Carico originali ("+pend+")"); else if(cloud.online) setSync("online");
+  let txt = base;
+  if(urg) txt += " · carico originali: "+urg;
+  if(bg)  txt += " · in sottofondo: "+bg;
+  if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
+  $("stArch").textContent = txt;
+  if(urg) setSync("syncing","Carico originali ("+urg+")");
+  else if(bg) setSync("syncing","Sottofondo ("+bg+")");
+  else if(cloud.online) setSync("online");
 }
 // al rientro online riprova la coda
 addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); pumpOrigQueue(); } });
 
-/* ---------- originali on-demand (soluzione B) ----------
+/* Controllo periodico delle richieste: il realtime sull'hotspot cade e non si riconnette,
+   così una richiesta poteva restare appesa per sempre. Qui il PC che ha i file va a vedere da solo. */
+async function serviRichieste(){
+  if(!sb || !cloud.servizio) return;
+  const ids = Object.values(cloud.rulli||{}).map(r=>r.id).filter(Boolean);
+  if(!ids.length) return;
+  try{
+    const {data, error} = await sb.from("foto")
+      .select("codice,originale_url").eq("richiesta_originale", true).in("rullo_id", ids).limit(200);
+    if(error) throw error;
+    let nonServite = 0;
+    for(const f of (data||[])){
+      const p = state.byCode.get(f.codice);
+      if(!p) { nonServite++; continue; }
+      if(p.origUploaded || f.originale_url) continue;
+      if(p.file || p.arch) queueOriginalUpload(p, true);   // ce l'ho: lo carico subito
+      else nonServite++;                                   // non è roba mia, la servirà un altro PC
+    }
+    richiesteAperte = nonServite;
+    updateOrigCount();
+  }catch(err){ console.warn("serviRichieste", err); }
+}
+setInterval(serviRichieste, 5000);
+
+/* ---------- originali on-demand (usato per le foto vecchie, fuori dalla finestra cloud) ----------
    Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
    Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
    Se nessuna via è possibile (foto di un'altra postazione, non ancora sul cloud, e io non ho il file),
@@ -2738,6 +2805,13 @@ $("btnPushAll").onclick = ()=>{
   mie.forEach(p=>queueOriginalUpload(p));
   toast(`Carico ${mie.length} originali sul cloud — puoi continuare a lavorare`);
 };
+$("btnAutoOrig").onclick = ()=>{
+  const on = !autoOrigOn();
+  setAutoOrig(on);
+  toast(on ? "Caricamento automatico acceso: gli originali salgono sul cloud da soli"
+           : "Caricamento automatico spento: le altre postazioni dipendono da questo PC per stampare");
+};
+setAutoOrig(autoOrigOn());
 $("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
 $("toolsMenu").onclick = ()=>{ $("toolsMenu").hidden = true; };   // scelta fatta: si richiude
 document.addEventListener("click", e=>{
@@ -2812,22 +2886,46 @@ async function nextNumber(letter, count){
   const base=state.counters[letter]||0; return base;
 }
 
-// finestra di conservazione: gli originali più vecchi vengono rimossi dal cloud
-const GIORNI_CONSERVAZIONE = 15;
+/* Conservazione differenziata.
+   Gli originali pesano ~20 volte le anteprime: restano sul cloud pochi giorni (sul PC che ha importato
+   restano per sempre). Le anteprime restano mesi, così una giornata vecchia si può comunque sfogliare
+   e ritrovare per codice; l'originale in quel caso si recupera dal PC con la richiesta on-demand. */
+const GIORNI_ORIGINALI = 7;
+const GIORNI_ANTEPRIME = 90;
+const giornoLimite = g => new Date(Date.now() - g*86400*1000).toISOString().slice(0,10);
+
 async function cleanupOld(){
   if(!sb) return;
+  // 1) originali oltre la finestra breve
   try{
-    const limite = new Date(Date.now() - GIORNI_CONSERVAZIONE*86400*1000).toISOString().slice(0,10);
-    const {data:vecchi} = await sb.from("servizi").select("id,data_servizio").lt("data_servizio", limite);
-    if(!vecchi || !vecchi.length) return;
-    for(const s of vecchi){
+    const {data:vecchi} = await sb.from("servizi").select("id").lt("data_servizio", giornoLimite(GIORNI_ORIGINALI));
+    for(const s of (vecchi||[])){
       const {data:files} = await sb.storage.from("originali").list(s.id);
       if(files && files.length){
         await sb.storage.from("originali").remove(files.map(f=>s.id+"/"+f.name));
+        await sb.from("foto").update({originale_url:null}).in("rullo_id",
+          ((await sb.from("rulli").select("id").eq("servizio_id", s.id)).data||[]).map(r=>r.id));
       }
     }
-    console.log("cleanup: rimossi originali di", vecchi.length, "servizi oltre", GIORNI_CONSERVAZIONE, "giorni");
-  }catch(err){ console.warn("cleanup", err); }
+    if(vecchi && vecchi.length) console.log("cleanup: originali rimossi oltre", GIORNI_ORIGINALI, "giorni");
+  }catch(err){ console.warn("cleanup originali", err); }
+
+  // 2) anteprime e righe oltre la finestra lunga (file + righe insieme, mai a metà)
+  try{
+    const {data:antichi} = await sb.from("servizi").select("id").lt("data_servizio", giornoLimite(GIORNI_ANTEPRIME));
+    for(const s of (antichi||[])){
+      for(const bucket of ["anteprime","originali"]){
+        const {data:files} = await sb.storage.from(bucket).list(s.id);
+        if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>s.id+"/"+f.name));
+      }
+      const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", s.id);
+      const ids = (rulli||[]).map(r=>r.id);
+      if(ids.length) await sb.from("foto").delete().in("rullo_id", ids);
+      await sb.from("rulli").delete().eq("servizio_id", s.id);
+      await sb.from("servizi").delete().eq("id", s.id);
+    }
+    if(antichi && antichi.length) console.log("cleanup: giornate rimosse oltre", GIORNI_ANTEPRIME, "giorni");
+  }catch(err){ console.warn("cleanup anteprime", err); }
 }
 
 // stato connessione del browser
