@@ -2270,7 +2270,13 @@ async function drawTilePage(page, expectMode, withInfo){
   const cw=M.canvas.width, ch=M.canvas.height;
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
   const gap=Math.round(Math.min(cw,ch)*0.008);
-  const tw=(cw-gap*(cols+1))/cols, th=(ch-gap*(rows+1))/rows;
+  // la riga informativa non si sovrappone più alle foto: si prende una fascia in fondo
+  // e la griglia viene calcolata sull'altezza che resta
+  const ev0 = state.event || {};
+  const info = withInfo ? (ev0.infoLine || "") : "";
+  const bh = info ? Math.max(28, Math.round(ch * ((ev0.infoH ?? 4)/100))) : 0;
+  const chGrid = ch - bh;
+  const tw=(cw-gap*(cols+1))/cols, th=(chGrid-gap*(rows+1))/rows;
   for(let i=0;i<page.length;i++){
     const p=page[i];
     let bmp; try{ bmp=await getBig(p, 1400); }catch(_){ continue; }
@@ -2285,21 +2291,16 @@ async function drawTilePage(page, expectMode, withInfo){
     drawCodeBadge(M.ctx,dw,dh,p.code);
     M.ctx.restore();
   }
-  if(withInfo){
-    const info = state.event && state.event.infoLine;
-    if(info){
-      const ev0 = state.event || {};
-      const bh = Math.round(ch * ((ev0.infoH ?? 4)/100));
-      const by = Math.round(ch/2 - bh/2);
-      M.ctx.fillStyle = "rgba(11,14,20,.88)";
-      M.ctx.fillRect(0, by, cw, bh);
-      M.ctx.fillStyle = "#F5B942";
-      const fs = Math.round(bh*0.58);
-      M.ctx.font = `700 ${fs}px ${ev0.fontInfo || '"Segoe UI", sans-serif'}`;
-      M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
-      M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
-      M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
-    }
+  if(bh){
+    const by = ch - bh;                       // fascia in fondo, fuori dalle foto
+    M.ctx.fillStyle = "#0B0E14";
+    M.ctx.fillRect(0, by, cw, bh);
+    M.ctx.fillStyle = "#F5B942";
+    const fs = Math.round(bh*0.62);
+    M.ctx.font = `700 ${fs}px ${ev0.fontInfo || '"Segoe UI", sans-serif'}`;
+    M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
+    M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
+    M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
   }
   drawMonitorQR();
 }
