@@ -195,6 +195,7 @@
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
       <button id="btnExportDir">Cartella export…</button>
+      <button id="btnPushAll" title="Carica sul cloud gli originali di questa giornata, così le altre postazioni stampano senza dipendere da questo PC">Carica originali sul cloud</button>
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <hr>
@@ -301,6 +302,26 @@
             <button id="evMaskClear" type="button">Rimuovi</button>
           </div>
           <p class="hint">Se carichi la mascherina, logo e scritta qui sotto vengono ignorati: vale quello che hai disegnato tu. Serve un file per le orizzontali e uno per le verticali; restano salvati su questo PC anche dopo la chiusura.</p>
+        </div>
+        <div class="field"><label>Aspetto delle scritte</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <span style="flex:1;min-width:150px">Scritta sulla cornice
+              <select id="evFont"></select></span>
+            <span style="flex:1;min-width:150px">Barra info slideshow
+              <select id="evFontInfo"></select></span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
+            <span style="flex:1">Altezza barra info <input type="range" id="evInfoH" min="2" max="10" step="0.5" value="4" style="width:100%"></span>
+            <output id="evInfoHOut" style="min-width:42px;text-align:right;color:var(--muted)">4%</output>
+          </div>
+          <div style="margin-top:8px">Codice sulla foto
+            <select id="evCodePos">
+              <option value="latoDx">Verticale sul lato destro</option>
+              <option value="latoSx">Verticale sul lato sinistro</option>
+              <option value="bassoDx">In basso a destra</option>
+              <option value="bassoSx">In basso a sinistra</option>
+              <option value="centro">In basso al centro</option>
+            </select></div>
         </div>
         <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
           <input type="file" id="evLogo" accept="image/*">
@@ -559,13 +580,13 @@ function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
       // nella banda bianca: allineata a sinistra, sul filo sinistro della foto
       let fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
       if(fs > bottomExtra*0.8) fs = bottomExtra*0.8;
-      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.font = `600 ${fs}px ${ev.font || '"Segoe UI", sans-serif'}`;
       ctx.textBaseline = "middle"; ctx.textAlign="left";
       ctx.fillStyle = ev.frameTextColor || "#111";
       ctx.fillText(ev.text, border+m, border+ih+bottomExtra/2);
     } else {
       const fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
-      ctx.font = `600 ${fs}px "Segoe UI", sans-serif`;
+      ctx.font = `600 ${fs}px ${ev.font || '"Segoe UI", sans-serif'}`;
       ctx.textBaseline = "bottom";
       ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
       ctx.fillStyle="#fff";
@@ -576,15 +597,30 @@ function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
 }
 function drawCodeBadge(ctx, w, h, code, status){
   const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
+  const pos = (state.event && state.event.codePos) || "latoDx";
+  const sfondo = status==="pr" ? "rgba(91,201,138,.95)" : status==="ex" ? "rgba(127,184,240,.95)" : "rgba(11,14,20,.82)";
+  const testo  = status==="pr" ? "#06210f" : status==="ex" ? "#0a1f33" : "#F5B942";
+  ctx.save();
   ctx.font=`800 ${fs}px ui-monospace, Consolas, monospace`;
   const tw = ctx.measureText(code).width, pad=fs*0.35;
-  const bx=w/2-tw/2-pad, by=h-m-fs-pad*2, bw=tw+pad*2, bh=fs+pad*1.6;
-  ctx.fillStyle = status==="pr" ? "rgba(91,201,138,.95)" : status==="ex" ? "rgba(127,184,240,.95)" : "rgba(11,14,20,.82)";
-  if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,fs*0.25); ctx.fill(); }
-  else ctx.fillRect(bx,by,bw,bh);
-  ctx.fillStyle = status==="pr" ? "#06210f" : status==="ex" ? "#0a1f33" : "#F5B942";
-  ctx.textBaseline="top";
-  ctx.fillText(code, w/2-tw/2, by+pad*0.8);
+  const bw = tw+pad*2, bh = fs+pad*1.6;
+  const rettangolo = (x,y)=>{
+    ctx.fillStyle = sfondo;
+    if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x,y,bw,bh,fs*0.25); ctx.fill(); }
+    else ctx.fillRect(x,y,bw,bh);
+    ctx.fillStyle = testo; ctx.textBaseline="top"; ctx.textAlign="left";
+    ctx.fillText(code, x+pad, y+pad*0.8);
+  };
+  if(pos==="latoDx" || pos==="latoSx"){
+    // scritto in verticale lungo il bordo: non copre il soggetto
+    const destro = pos==="latoDx";
+    ctx.translate(destro ? w-m : m+bh, h/2);
+    ctx.rotate(-Math.PI/2);
+    rettangolo(-bw/2, -bh);
+  } else if(pos==="bassoSx"){ rettangolo(m, h-m-bh); }
+  else if(pos==="bassoDx"){ rettangolo(w-m-bw, h-m-bh); }
+  else { rettangolo(w/2-bw/2, h-m-bh); }
+  ctx.restore();
 }
 
 /* ---------- pannello serata ---------- */
@@ -598,6 +634,12 @@ function openEventPanel(){
   $("evFrameOn").checked = ev.frameOn!==false;
   $("evFrameBorder").value = ev.frameBorder ?? 2.5;
   $("evFrameBottom").value = ev.frameBottom ?? 6;
+  riempiFont();
+  $("evFont").value = ev.font || FONTS[0].v;
+  $("evFontInfo").value = ev.fontInfo || FONTS[0].v;
+  $("evInfoH").value = ev.infoH ?? 4;
+  $("evInfoHOut").textContent = ($("evInfoH").value) + "%";
+  $("evCodePos").value = ev.codePos || "latoDx";
   $("evLogoSize").value = ev.logoSize ?? 30;
   $("evTextSize").value = ev.textSize ?? 4.2;
   syncSizeOut();
@@ -613,6 +655,27 @@ $("evLogo").onchange = async e=>{
   renderOverlayPreview();
 };
 $("evText").oninput = renderOverlayPreview;
+// caratteri già presenti su Windows: nessun download, funzionano anche sul monitor
+const FONTS = [
+  {n:"Segoe UI (predefinito)", v:'"Segoe UI", sans-serif'},
+  {n:"Verdana",                v:'Verdana, sans-serif'},
+  {n:"Trebuchet",              v:'"Trebuchet MS", sans-serif'},
+  {n:"Georgia",                v:'Georgia, serif'},
+  {n:"Times New Roman",        v:'"Times New Roman", serif'},
+  {n:"Impact",                 v:'Impact, sans-serif'},
+  {n:"Franklin Gothic",        v:'"Franklin Gothic Medium", sans-serif'},
+  {n:"Consolas",               v:'Consolas, monospace'},
+  {n:"Comic Sans",             v:'"Comic Sans MS", cursive'},
+];
+function riempiFont(){
+  for(const id of ["evFont","evFontInfo"]){
+    const sel = $(id); if(sel.options.length) continue;
+    sel.innerHTML = FONTS.map(f=>`<option value='${f.v}' style="font-family:${f.v}">${f.n}</option>`).join("");
+  }
+}
+$("evInfoH").oninput = ()=>{ $("evInfoHOut").textContent = $("evInfoH").value + "%"; renderOverlayPreview(); };
+$("evFont").onchange = renderOverlayPreview;
+$("evCodePos").onchange = renderOverlayPreview;
 function syncSizeOut(){
   $("evLogoSizeOut").textContent = $("evLogoSize").value + "%";
   $("evTextSizeOut").textContent = $("evTextSize").value + "%";
@@ -638,32 +701,62 @@ function maskStateText(){
     : (ev.maskH && ev.maskV) ? "Mascherine caricate: " + h + " · " + v
     : "Attenzione: " + h + " · " + v + " — le foto senza mascherina useranno logo e scritta.";
 }
+function maskKey(which){                       // legata alla sede, non al PC
+  const sid = cloud.sede ? cloud.sede.id : "nosede";
+  return "faylive_mask_" + sid + "_" + which;
+}
+function maskCloudPath(which){
+  return "mascherine/" + (cloud.sede ? cloud.sede.id : "nosede") + "-" + which + ".png";
+}
 async function setMask(which, file){
   const img = await loadImg(URL.createObjectURL(file));
   state.event[which] = img;
-  try{ await idb.set(which === "maskH" ? "faylive_maskH" : "faylive_maskV", file); }catch(_){}
+  try{ await idb.set(maskKey(which), file); }catch(_){}
   maskStateText(); renderOverlayPreview();
-  toast("Mascherina caricata");
+  // sul cloud, così resta alla sede e la vedono tutte le postazioni, tutte le sere
+  if(sb && cloud.sede){
+    const up = await sbTry(()=>sb.storage.from("anteprime")
+      .upload(maskCloudPath(which), file, {contentType:"image/png", upsert:true}), "mascherina");
+    toast(up && !up.error ? "Mascherina salvata per questa sede" : "Mascherina caricata solo su questo PC");
+  }else{
+    toast("Mascherina caricata su questo PC");
+  }
+}
+// all'apertura di una sede: prima il cloud, poi la copia locale
+async function loadMasksForSede(){
+  for(const which of ["maskH","maskV"]){
+    state.event[which] = null;
+    let blob = null;
+    if(sb && cloud.sede){
+      try{
+        const url = sb.storage.from("anteprime").getPublicUrl(maskCloudPath(which)).data.publicUrl;
+        const r = await fetch(url + "?t=" + Date.now());
+        if(r.ok){ const b = await r.blob(); if(b.size > 100) blob = b; }
+      }catch(_){}
+    }
+    if(!blob){ try{ blob = await idb.get(maskKey(which)); }catch(_){} }
+    if(blob){
+      try{
+        state.event[which] = await loadImg(URL.createObjectURL(blob));
+        await idb.set(maskKey(which), blob);
+      }catch(_){}
+    }
+  }
+  maskStateText();
+  if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
 }
 $("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f); };
 $("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f); };
 $("evMaskClear").onclick = async ()=>{
   state.event.maskH = null; state.event.maskV = null;
   $("evMaskH").value = ""; $("evMaskV").value = "";
-  try{ await idb.set("faylive_maskH", null); await idb.set("faylive_maskV", null); }catch(_){}
+  try{ await idb.set(maskKey("maskH"), null); await idb.set(maskKey("maskV"), null); }catch(_){}
+  if(sb && cloud.sede) await sbTry(()=>sb.storage.from("anteprime")
+    .remove([maskCloudPath("maskH"), maskCloudPath("maskV")]), "rimuovi mascherine");
   maskStateText(); renderOverlayPreview();
   toast("Mascherine rimosse");
 };
-// ripesca le mascherine salvate su questo PC (dopo che tutto lo script è pronto)
-setTimeout(async ()=>{
-  for(const k of ["maskH","maskV"]){
-    try{
-      const blob = await idb.get(k === "maskH" ? "faylive_maskH" : "faylive_maskV");
-      if(blob) state.event[k] = await loadImg(URL.createObjectURL(blob));
-    }catch(_){}
-  }
-  maskStateText();
-}, 0);
+setTimeout(()=>{ if(cloud.sede) loadMasksForSede(); else maskStateText(); }, 0);
 
 function renderOverlayPreview(){
   const saved = state.event;
@@ -693,6 +786,10 @@ $("evSave").onclick = ()=>{
     frameBottom: +$("evFrameBottom").value,
     logoSize: +$("evLogoSize").value,
     textSize: +$("evTextSize").value,
+    font: $("evFont").value,
+    fontInfo: $("evFontInfo").value,
+    infoH: +$("evInfoH").value,
+    codePos: $("evCodePos").value,
     maskH: state.event.maskH || null,
     maskV: state.event.maskV || null,
   };
@@ -1115,8 +1212,17 @@ function askOriginal(p){
   const ora = Date.now();
   if(p._chiesto && ora - p._chiesto < 8000) return;   // non più di una richiesta ogni 8s
   p._chiesto = ora;
-  sbTry(()=>sb.from("foto").update({richiesta_originale:true}).eq("id",p.dbId), "richiesta originale "+p.code);
+  // errore visibile: se la colonna non esiste sul database, la richiesta non parte e finora non lo diceva nessuno
+  sb.from("foto").update({richiesta_originale:true}).eq("id",p.dbId).then(({error})=>{
+    if(!error) return;
+    console.warn("richiesta originale", p.code, error);
+    if(!askOriginal._avvisato){
+      askOriginal._avvisato = true;
+      toast("Richiesta non inviata al PC che ha le foto: " + (error.message||"errore cloud"));
+    }
+  });
 }
+function statoRichiesta(){}
 function queueOriginalUpload(p){
   if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
   if(origSet.has(p.code)) return;
@@ -1968,13 +2074,14 @@ async function drawTilePage(page, expectMode, withInfo){
   if(withInfo){
     const info = state.event && state.event.infoLine;
     if(info){
-      const bh = Math.round(ch*0.075);
+      const ev0 = state.event || {};
+      const bh = Math.round(ch * ((ev0.infoH ?? 4)/100));
       const by = Math.round(ch/2 - bh/2);
       M.ctx.fillStyle = "rgba(11,14,20,.88)";
       M.ctx.fillRect(0, by, cw, bh);
       M.ctx.fillStyle = "#F5B942";
-      const fs = Math.round(bh*0.52);
-      M.ctx.font = `700 ${fs}px "Segoe UI", sans-serif`;
+      const fs = Math.round(bh*0.58);
+      M.ctx.font = `700 ${fs}px ${ev0.fontInfo || '"Segoe UI", sans-serif'}`;
       M.ctx.textAlign = "center"; M.ctx.textBaseline = "middle";
       M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
       M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
@@ -2208,6 +2315,7 @@ async function deleteSede(s){
 }
 
 async function chooseSede(s){
+  setTimeout(loadMasksForSede, 400);   // le cornici di questa sede
   cloud.sede=s;
   $("sedeSelect").value=s.id;
   setSync("syncing","Carico le giornate…");
@@ -2410,8 +2518,14 @@ function subscribeRealtime(){
       const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
       if(p){
         p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare; renderTabs(); paintVisible();
-        if(f.richiesta_originale && !p.origUploaded && (p.file || p.arch)){
-          uploadOneOriginal(p); // subito, senza accodare
+        if(f.richiesta_originale && !p.origUploaded){
+          if(p.file || p.arch){
+            uploadOneOriginal(p); // subito, senza accodare
+          }else if(!statoRichiesta._avvisato){
+            // richiesta ricevuta ma qui non c'è accesso ai file: prima si perdeva in silenzio
+            statoRichiesta._avvisato = true;
+            toast("Un'altra postazione chiede l'originale di "+p.code+", ma questo PC non ha accesso ai file: Altro → Archivio…");
+          }
         }
         updatePrintQueueBadge();
       }
@@ -2609,6 +2723,21 @@ function renderMailList(){
     </div>`;
   }).join("");
 }
+$("btnPushAll").onclick = ()=>{
+  // Leva d'emergenza, NON uso quotidiano: su hotspot questo traffico è insostenibile.
+  // Di norma gli originali salgono solo quando servono davvero (foto vendute).
+  const L = state.activeLetter;
+  const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  const mie = scope.filter(p=>(p.file || p.arch) && !p.origUploaded);
+  if(!mie.length){ toast("Nessun originale da caricare: o sono già sul cloud, o le foto non sono di questo PC"); return; }
+  const mb = Math.round(mie.length * 2.2);
+  const dove = L ? `del rullo ${L}` : "di TUTTA la giornata";
+  if(!confirm(`Stai per caricare ${mie.length} originali ${dove}: circa ${mb} MB.\n\n` +
+              `Con la connessione del telefono è tanto traffico e occupa spazio sul cloud. ` +
+              `Serve solo se le altre postazioni devono stampare senza questo PC.\n\nProcedo?`)) return;
+  mie.forEach(p=>queueOriginalUpload(p));
+  toast(`Carico ${mie.length} originali sul cloud — puoi continuare a lavorare`);
+};
 $("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
 $("toolsMenu").onclick = ()=>{ $("toolsMenu").hidden = true; };   // scelta fatta: si richiude
 document.addEventListener("click", e=>{
