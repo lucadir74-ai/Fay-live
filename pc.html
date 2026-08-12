@@ -194,6 +194,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
+      <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
       <button id="btnAutoOrig" title="Se attivo, ogni foto importata sale sul cloud a piena risoluzione: tutte le postazioni stampano anche se questo PC è spento">Caricamento automatico: —</button>
       <button id="btnPushAll" title="Carica ORA sul cloud gli originali di questa giornata (utile per giornate vecchie o se il caricamento automatico era spento)">Carica originali sul cloud</button>
@@ -1005,7 +1006,63 @@ async function ensureArchive(){
     return state.archive;
   }catch(_){ return null; }
 }
-$("btnArchive").onclick = ()=> ensureArchive();
+/* Dopo un refresh della pagina le foto importate tornano dal cloud senza il collegamento
+   ai file su disco: il PC vede la richiesta di originale ma non ha più niente da caricare.
+   Qui ripercorriamo la cartella della giornata e riagganciamo i file per codice. */
+let relinkInCorso = false, ultimoRelink = 0;
+async function ricollegaArchivio(silent){
+  if(relinkInCorso) return 0;
+  if(!cloud.servizio){ if(!silent) toast("Apri prima una sede e una giornata"); return 0; }
+  relinkInCorso = true; ultimoRelink = Date.now();
+  try{
+    const dir = await ensureArchive();
+    if(!dir){ if(!silent) toast("Nessuna cartella archivio attiva"); return 0; }
+    const dateStr = cloud.servizio.data_servizio || serviceDateStr();
+    let dayDir;
+    try{ dayDir = await dir.getDirectoryHandle(dateStr); }
+    catch(_){ if(!silent) toast("Nell'archivio non c'è la cartella della giornata "+dateStr); return 0; }
+
+    const trovati = new Map();                    // codice -> handle del file
+    async function scan(d, depth){
+      if(depth > 3) return;
+      for await (const e of d.values()){
+        if(e.kind === "directory"){ await scan(e, depth+1); continue; }
+        if(!/\.(jpe?g|png|webp)$/i.test(e.name)) continue;
+        const m = e.name.match(/([A-Z])-?(\d{1,4})/i);
+        if(!m) continue;
+        const code = m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0");
+        if(!trovati.has(code)) trovati.set(code, e);
+      }
+    }
+    await scan(dayDir, 0);
+
+    let n = 0;
+    for(const [code, h] of trovati){
+      const p = state.byCode.get(code);
+      if(!p || p.arch || p.file) continue;
+      p.arch = h; n++;
+      if(!p.origUploaded) queueOriginalUpload(p, false);   // così tornano sul cloud da sole
+    }
+    if(n){
+      richiesteAperte = 0; updateOrigCount();
+      if(!silent) toast(`Ricollegati ${n} originali dall'archivio: le altre postazioni possono stampare`);
+      else toast(`Ricollegati ${n} originali dall'archivio`);
+      serviRichieste();                                    // servi subito le richieste in sospeso
+    } else if(!silent){
+      toast(`Nessun originale da ricollegare (${trovati.size} file trovati nella cartella del ${dateStr})`);
+    }
+    return n;
+  }catch(err){
+    console.warn("ricollegaArchivio", err);
+    if(!silent) toast("Ricollegamento non riuscito: "+(err.message||err));
+    return 0;
+  }finally{ relinkInCorso = false; }
+}
+$("btnRelink").onclick = ()=> ricollegaArchivio(false);
+$("btnArchive").onclick = async ()=>{
+  const d = await ensureArchive();
+  if(d && cloud.servizio) ricollegaArchivio(true);   // riattivare l'archivio ricollega anche i file
+};
 $("btnExportDir").onclick = async ()=>{
   state.exportDir=null;                 // forza una nuova scelta
   const d=await ensureExportDir();
@@ -1327,6 +1384,9 @@ async function serviRichieste(){
     }
     richiesteAperte = nonServite;
     updateOrigCount();
+    // qualcuno chiede originali che dovrebbero essere miei ma non ho i file agganciati:
+    // provo a ripescarli dall'archivio da solo, al massimo una volta al minuto
+    if(nonServite && state.archive && Date.now()-ultimoRelink > 60000) ricollegaArchivio(true);
   }catch(err){ console.warn("serviRichieste", err); }
 }
 setInterval(serviRichieste, 5000);
