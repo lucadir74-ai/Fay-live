@@ -654,6 +654,7 @@ $("evCancel").onclick = ()=> $("eventPanel").classList.remove("open");
 $("evLogo").onchange = async e=>{
   const f=e.target.files[0]; if(!f) return;
   pendingLogo = await loadImg(URL.createObjectURL(f));
+  salvaLogo(f);                       // resta legato alla sede, non va ricaricato ogni volta
   renderOverlayPreview();
 };
 $("evText").oninput = renderOverlayPreview;
@@ -769,9 +770,66 @@ async function loadMasksForSede(){
       }catch(_){}
     }
   }
+  await caricaImpostazioni();
+  await caricaLogo();
   maskStateText();
   if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
 }
+/* Impostazioni del servizio (scritta, font, posizione codice, cornice, slideshow):
+   fino a ieri vivevano solo in memoria e sparivano a ogni ricarica. Ora seguono la sede,
+   sul cloud e in copia locale, esattamente come le mascherine. */
+const IMPOSTAZIONI_SALVATE = ["name","secs","tiles","text","infoLine","frameOn","frameBorder",
+  "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos"];
+function impKey(){ return "faylive_imp_" + (cloud.sede ? cloud.sede.id : "nosede"); }
+function impCloudPath(){ return "impostazioni/" + (cloud.sede ? cloud.sede.id : "nosede") + ".json"; }
+
+async function salvaImpostazioni(){
+  const ev = state.event || {};
+  const dati = {};
+  for(const k of IMPOSTAZIONI_SALVATE) if(ev[k] !== undefined) dati[k] = ev[k];
+  try{ localStorage.setItem(impKey(), JSON.stringify(dati)); }catch(_){}
+  if(sb && cloud.sede){
+    try{
+      const blob = new Blob([JSON.stringify(dati)], {type:"application/json"});
+      await sb.storage.from("anteprime").upload(impCloudPath(), blob, {contentType:"application/json", upsert:true});
+    }catch(err){ console.warn("salvaImpostazioni", err); }
+  }
+}
+async function caricaImpostazioni(){
+  let dati = null;
+  if(sb && cloud.sede){
+    try{
+      const dl = await sb.storage.from("anteprime").download(impCloudPath());
+      if(!dl.error && dl.data) dati = JSON.parse(await dl.data.text());
+    }catch(_){}
+  }
+  if(!dati){
+    try{ const raw = localStorage.getItem(impKey()); if(raw) dati = JSON.parse(raw); }catch(_){}
+  }
+  if(!dati) return;
+  state.event = Object.assign({}, state.event || {}, dati);
+  updateEventInfo();
+  if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
+  paintVisible();
+}
+
+// logo: se c'è, segue la sede come le mascherine (le mascherine restano prioritarie)
+async function salvaLogo(file){
+  try{ await idb.set("faylive_logo_" + (cloud.sede?cloud.sede.id:"nosede"), file); }catch(_){}
+  if(sb && cloud.sede){
+    try{ await sb.storage.from("anteprime").upload("loghi/"+cloud.sede.id+".png", file, {contentType:file.type||"image/png", upsert:true}); }catch(_){}
+  }
+}
+async function caricaLogo(){
+  let blob = null;
+  if(sb && cloud.sede){
+    try{ const dl = await sb.storage.from("anteprime").download("loghi/"+cloud.sede.id+".png");
+      if(!dl.error && dl.data && dl.data.size>100) blob = dl.data; }catch(_){}
+  }
+  if(!blob){ try{ blob = await idb.get("faylive_logo_" + (cloud.sede?cloud.sede.id:"nosede")); }catch(_){} }
+  if(blob){ try{ state.event.logoImg = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
+}
+
 $("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f); };
 $("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f); };
 $("evMaskClear").onclick = async ()=>{
@@ -821,8 +879,10 @@ $("evSave").onclick = ()=>{
     maskV: state.event.maskV || null,
   };
   updateEventInfo();
+  salvaImpostazioni();
   $("eventPanel").classList.remove("open");
-  toast("Servizio salvato");
+  toast(cloud.sede ? "Impostazioni salvate per la sede " + cloud.sede.nome
+                   : "Servizio salvato solo su questo PC: nessuna sede selezionata");
 };
 function updateEventInfo(){
   let d;
