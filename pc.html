@@ -1040,7 +1040,7 @@ async function ricollegaArchivio(silent){
     for(const [code, h] of trovati){
       const p = state.byCode.get(code);
       if(!p || p.arch || p.file) continue;
-      p.arch = h; n++;
+      p.arch = h; p.remote = false; n++;                   // da ora questa postazione è la proprietaria del file
       if(!p.origUploaded) queueOriginalUpload(p, false);   // così tornano sul cloud da sole
     }
     if(n){
@@ -1296,7 +1296,9 @@ function askOriginal(p){
 }
 function statoRichiesta(){}
 function queueOriginalUpload(p, urgent=true){
-  if(!sb || !cloud.servizio || p.origUploaded || p.remote || (!p.file && !p.arch)) return;
+  // NB: niente controllo su p.remote — dopo un refresh le foto tornano dal cloud marcate "remote"
+  // ma se il file locale c'è (import o ricollegamento) questa postazione PUÒ e DEVE caricarlo.
+  if(!sb || !cloud.servizio || p.origUploaded || (!p.file && !p.arch)) return;
   if(origSet.has(p.code)){
     if(urgent){                                  // era in sottofondo e ora serve subito: lo promuovo
       const i = origBg.indexOf(p);
