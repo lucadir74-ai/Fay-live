@@ -194,6 +194,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
+      <button id="btnSdReader" title="Sorveglia il lettore di schede: appena infili la scheda si apre da sola la finestra del rullo">Lettore schede: —</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
@@ -970,7 +971,7 @@ $("restoreInput").onchange = async e=>{
 
 // lettera suggerita dal nome della cartella che contiene la foto (es. ".../25-07/B/IMG_001.jpg" -> B)
 function detectLetter(f){
-  const parts=(f.webkitRelativePath||"").split("/");
+  const parts=(f.webkitRelativePath || f._rel || "").split("/");
   if(parts.length>=2){
     const parent=parts[parts.length-2].trim().toUpperCase();
     if(/^[A-Z]$/.test(parent)) return parent;
@@ -981,7 +982,16 @@ function detectLetter(f){
 $("fileInput").onchange = async e=>{
   const files=[...e.target.files].filter(isImage);
   e.target.value="";
+  importaFiles(files);
+};
+
+// stesso percorso di import sia dal tasto "Importa cartella" sia dal lettore schede sorvegliato
+let importInCorso = false;
+async function importaFiles(files){
   if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
+  if(importInCorso){ toast("C'è già un import in corso"); return; }
+  importInCorso = true;
+  try{
 
   const suggested = detectLetter(files[0]);
   $("ciText").textContent = `${files.length} foto trovate.`;
@@ -1026,7 +1036,8 @@ $("fileInput").onchange = async e=>{
   const M=state.monitor;
   M.queue = buildSlideshowQueue();
   processBatch(batch);
-};
+  }finally{ importInCorso = false; }
+}
 
 const prog = { total:0, done:0, cancel:false };
 function progUpdate(){
@@ -1093,6 +1104,129 @@ async function ensureArchive(){
     return state.archive;
   }catch(_){ return null; }
 }
+/* ---------- lettore di schede sorvegliato ----------
+   Il browser non può vedere le porte USB una per una: la "porta" si indica una volta sola
+   scegliendo la cartella del lettore (di solito l'unità della scheda, es. E:\). Da lì in poi
+   l'app controlla ogni pochi secondi se la scheda è dentro: appena la infili legge le foto
+   e apre da sola la finestra del rullo, senza passare da "Importa cartella". */
+const sd = { dir:null, attivo:false, presente:false, timer:null };
+function sdLabel(txt){
+  const b=$("btnSdReader"); if(!b) return;
+  b.textContent = "Lettore schede: " + (txt!=null ? txt
+    : !sd.dir ? "—"
+    : !sd.attivo ? sd.dir.name+" (da riattivare)"
+    : sd.dir.name + (sd.presente ? " (scheda inserita)" : " (in attesa)"));
+}
+function sdSpegni(){
+  if(sd.timer){ clearInterval(sd.timer); sd.timer=null; }
+  sd.dir=null; sd.attivo=false; sd.presente=false;
+  idb.set("sdDir", null).catch(()=>{});
+  sdLabel(); toast("Sorveglianza del lettore disattivata");
+}
+function sdAvvia(){
+  sd.attivo=true; sd.presente=false;
+  sd.maiVista=false; sd.avvisato=false; sd.dalleOre=Date.now();
+  if(sd.timer) clearInterval(sd.timer);
+  sd.timer=setInterval(sdControlla, 4000);
+  sdLabel(); sdControlla();
+}
+async function sdScegli(){
+  if(!window.showDirectoryPicker){ toast("Questo browser non legge direttamente il lettore: usa \"Importa cartella\""); return; }
+  try{
+    toast("Scegli l'unità del lettore di schede (es. E:\\) — verrà ricordata");
+    const dir = await showDirectoryPicker({mode:"read"});
+    sd.dir=dir; idb.set("sdDir", dir).catch(()=>{});
+    sdAvvia();
+    toast("Lettore sorvegliato: "+dir.name);
+  }catch(_){ /* annullato */ }
+}
+$("btnSdReader").onclick = async ()=>{
+  if(!sd.dir){ sdScegli(); return; }
+  if(!sd.attivo){                     // dopo un refresh il permesso va riconcesso con un clic
+    try{
+      const perm = await sd.dir.requestPermission({mode:"read"});
+      if(perm==="granted"){ sdAvvia(); toast("Lettore riattivato: "+sd.dir.name); }
+      else toast("Permesso negato");
+    }catch(_){ toast("Lettore non più raggiungibile: sceglilo di nuovo"); sd.dir=null; sdLabel(); }
+    return;
+  }
+  if(confirm("Lettore sorvegliato: "+sd.dir.name+"\n\nOK = scegli un altro lettore\nAnnulla = spegni la sorveglianza")) sdScegli();
+  else sdSpegni();
+};
+// tutte le immagini sulla scheda, con il percorso (serve a indovinare la lettera dalla cartella)
+async function sdLeggiFoto(){
+  const trovati=[];
+  async function walk(dir, prefix, depth){
+    if(depth>4 || trovati.length>6000) return;
+    for await (const [name,h] of dir.entries()){
+      if(name.startsWith(".") || name==="System Volume Information") continue;
+      if(h.kind==="directory") await walk(h, prefix+name+"/", depth+1);
+      else trovati.push({h, rel:prefix+name});
+    }
+  }
+  try{ await walk(sd.dir, sd.dir.name+"/", 0); }catch(_){ return []; }
+  const files=[];
+  for(const it of trovati){
+    try{ const f=await it.h.getFile(); f._rel=it.rel; if(isImage(f)) files.push(f); }catch(_){}
+  }
+  return files;
+}
+// controllo periodico: interessa il passaggio "scheda fuori" -> "scheda dentro"
+async function sdControlla(){
+  if(!sd.dir || !sd.attivo) return;
+  if(importInCorso || document.querySelector("dialog[open]")) return;   // non disturbare a metà lavoro
+  let dentro=true;
+  try{ for await (const _ of sd.dir.values()){ break; } }               // senza scheda l'unità non si legge
+  catch(_){ dentro=false; }
+  if(!dentro && !sd.maiVista && Date.now()-sd.dalleOre > 5*60*1000 && !sd.avvisato){
+    // in 5 minuti non si è mai riusciti a leggere quell'unità: di solito è cambiata lettera
+    sd.avvisato=true;
+    toast("Il lettore "+sd.dir.name+" non risponde: se l'hai spostato di porta riscegli l'unità da Altro → Lettore schede");
+  }
+  if(dentro && !sd.presente){
+    sd.presente=true; sd.maiVista=true; sdLabel();
+    const files=await sdLeggiFoto();
+    // le foto già importate in questa sessione non vengono riproposte
+    const gia=new Set();
+    state.photos.forEach(p=>{ if(p.file) gia.add(p.file.name+"|"+p.file.size+"|"+p.file.lastModified); });
+    const nuove=files.filter(f=>!gia.has(f.name+"|"+f.size+"|"+f.lastModified));
+    if(nuove.length) importaFiles(nuove);
+    else if(files.length) toast("Scheda inserita: foto già importate");
+  }else if(!dentro && sd.presente){
+    sd.presente=false; sdLabel(); toast("Scheda rimossa");
+  }
+}
+/* Il lettore è sempre lo stesso: si sceglie una volta e basta.
+   Chrome però, dopo una ricarica della pagina, vuole un gesto dell'utente per ridare il permesso:
+   lo agganciamo al PRIMO clic qualsiasi sulla pagina, così non serve tornare nel menu. */
+function sdAggancioAlPrimoGesto(){
+  if(sd._attesaGesto) return;
+  sd._attesaGesto = true;
+  const prova = async ()=>{
+    stop();
+    if(!sd.dir || sd.attivo) return;
+    try{
+      const perm = await sd.dir.requestPermission({mode:"read"});
+      if(perm==="granted"){ sdAvvia(); toast("Lettore schede pronto: "+sd.dir.name); }
+      else sdLabel();
+    }catch(_){ sdLabel(); }
+  };
+  const stop = ()=>{ removeEventListener("pointerdown", prova, true); removeEventListener("keydown", prova, true); sd._attesaGesto=false; };
+  addEventListener("pointerdown", prova, true);
+  addEventListener("keydown", prova, true);
+}
+// riprende il lettore scelto nelle sessioni precedenti
+setTimeout(async ()=>{
+  try{
+    const saved=await idb.get("sdDir");
+    if(!saved){ sdLabel(); return; }
+    sd.dir=saved;
+    const perm=await saved.queryPermission({mode:"read"});
+    if(perm==="granted") sdAvvia();
+    else { sdLabel(); sdAggancioAlPrimoGesto(); }
+  }catch(_){ sdLabel(); }
+}, 300);
+
 /* Dopo un refresh della pagina le foto importate tornano dal cloud senza il collegamento
    ai file su disco: il PC vede la richiesta di originale ma non ha più niente da caricare.
    Qui ripercorriamo la cartella della giornata e riagganciamo i file per codice. */
