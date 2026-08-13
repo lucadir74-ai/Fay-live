@@ -2821,15 +2821,24 @@ async function pullNuoveFoto(manuale){
       cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
       if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
       state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num||0);
-      // ultimo numero che ho già di questo rullo
-      let mio=0; for(const p of state.photos){ if(p.letter===r.lettera && p.num>mio) mio=p.num; }
-      if((r.ultimo_num||0) <= mio) continue;            // niente di nuovo: nessuna richiesta pesante
-      const {data:foto} = await sb.from("foto").select("*")
-        .eq("rullo_id", r.id).gt("codice", r.lettera+"-"+pad3(mio)).order("codice");
-      for(const f of (foto||[])){
-        if(state.byCode.has(f.codice)) continue;
-        await addRemotePhoto(f, r.lettera);
-        nuove++; letters.add(r.lettera);
+      /* Quante foto di questo rullo ci sono sul cloud? Solo il numero, nessuna riga scaricata.
+         Si conta invece di guardare l'ultimo codice: se anche questa postazione ha importato
+         nello stesso rullo, i numeri alti li ho già io e i buchi lasciati dall'altra postazione
+         non si vedrebbero mai. */
+      const miei = state.photos.reduce((n,p)=> p.letter===r.lettera ? n+1 : n, 0);
+      const {count} = await sb.from("foto").select("id",{count:"exact",head:true}).eq("rullo_id", r.id);
+      if(count==null || count<=miei) continue;
+      // elenco dei soli codici (poche decine di KB), poi scarico solo quelli che mi mancano
+      const {data:codici} = await sb.from("foto").select("codice").eq("rullo_id", r.id);
+      const mancanti = (codici||[]).map(x=>x.codice).filter(c=>!state.byCode.has(c));
+      for(let i=0;i<mancanti.length;i+=200){
+        const {data:foto} = await sb.from("foto").select("*")
+          .eq("rullo_id", r.id).in("codice", mancanti.slice(i,i+200));
+        for(const f of (foto||[])){
+          if(state.byCode.has(f.codice)) continue;
+          await addRemotePhoto(f, r.lettera);
+          nuove++; letters.add(r.lettera);
+        }
       }
     }
     if(nuove){
