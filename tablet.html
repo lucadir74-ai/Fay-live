@@ -51,6 +51,26 @@
   .cell .fav:not(.on){color:rgba(255,255,255,.85)}
   .cell.isfav{outline:3px solid var(--fav);outline-offset:-3px}
   .cell.sel{outline:4px solid #4a9eff;outline-offset:-4px}
+  .rtab.grp{background:#2a2118;border-color:#6b5324}
+  .cell .grp{position:absolute;left:6px;top:6px;background:rgba(245,185,66,.92);color:#151109;
+    font:600 12px "Segoe UI",sans-serif;padding:2px 7px;border-radius:8px;max-width:70%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #grpSheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:60;
+    align-items:flex-end;justify-content:center}
+  #grpSheet.open{display:flex}
+  #grpBox{background:#151922;width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:18px 16px 26px}
+  #grpBox h3{margin:0 0 4px;font-size:20px}
+  #grpBox p{margin:0 0 14px;color:var(--muted);font-size:14px}
+  #grpList{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+  #grpList button{background:#222836;border:1px solid #39415a;color:#e8ecf5;
+    padding:12px 16px;border-radius:12px;font-size:17px}
+  #grpNew{display:flex;gap:10px}
+  #grpNew input{flex:1;background:#0e1218;border:1px solid #39415a;color:#e8ecf5;
+    padding:14px;border-radius:12px;font-size:17px}
+  #grpNew button,#grpClose,#grpNone{background:#F5B942;border:0;color:#151109;padding:14px 18px;
+    border-radius:12px;font-size:17px;font-weight:600}
+  #grpNone{background:#39415a;color:#e8ecf5;margin-top:12px;width:100%}
+  #grpClose{background:transparent;color:var(--muted);width:100%;margin-top:8px;font-weight:400}
   .cell .selcheck{position:absolute;left:5px;top:5px;width:28px;height:28px;border-radius:50%;
     background:#4a9eff;color:#fff;display:none;align-items:center;justify-content:center;font-size:17px;font-weight:800;z-index:3}
   .cell.sel .selcheck{display:flex}
@@ -131,6 +151,20 @@
   </div>
   <div id="toast"></div>
 
+  <div id="grpSheet">
+    <div id="grpBox">
+      <h3>Metti in un gruppo</h3>
+      <p id="grpCount"></p>
+      <div id="grpList"></div>
+      <div id="grpNew">
+        <input id="grpName" placeholder="Nome del gruppo (es. Rossi, tavolo 12)" autocomplete="off">
+        <button id="grpAdd">Crea</button>
+      </div>
+      <button id="grpNone">Togli dal gruppo</button>
+      <button id="grpClose">Annulla</button>
+    </div>
+  </div>
+
   <div id="selBar">
     <span class="cnt" id="selCnt">0 selezionate</span>
     <span style="flex:1"></span>
@@ -138,6 +172,7 @@
     <button class="sb" id="selPrint">🖨 Manda in stampa</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
+    <button class="sb" id="selGroup">📁 Gruppo</button>
     <button class="sb" id="selDone">Fine</button>
   </div>
 
@@ -148,7 +183,7 @@ let sb = null;
 try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){ sb=null; }
 
 const $ = id => document.getElementById(id);
-const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, favOnly:false, channel:null, selmode:false, selected:new Set() };
+const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, gruppo:null, favOnly:false, channel:null, selmode:false, selected:new Set() };
 
 const CUTOFF_H = 6;
 function serviceDateStr(){
@@ -193,7 +228,7 @@ $("giornoSel").onchange=e=>{
 };
 async function openServizio(sv){
   if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
-  S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null;
+  S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null; S.gruppo=null;
   setDot(true,"Apro la giornata…");
   const {data:rulli}=await sb.from("rulli").select("*").eq("servizio_id",sv.id);
   (rulli||[]).forEach(r=>S.rulli[r.id]={lettera:r.lettera, desc:r.descrizione});
@@ -202,7 +237,7 @@ async function openServizio(sv){
     const {data:foto}=await sb.from("foto").select("*").in("rullo_id",ids).order("codice");
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
     });
   }
@@ -220,14 +255,14 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
     })
     .on("postgres_changes",{event:"UPDATE",schema:"public",table:"foto"}, payload=>{
       const f=payload.new; const p=S.byId.get(f.id);
-      if(p){ p.fav=!!f.preferito; p.url=f.anteprima_url||p.url; render(); }
+      if(p){ p.fav=!!f.preferito; p.url=f.anteprima_url||p.url; p.gruppo=f.gruppo||null; render(); }
     })
     .on("postgres_changes",{event:"DELETE",schema:"public",table:"foto"}, payload=>{
       const id=payload.old.id; if(S.byId.has(id)){ S.byId.delete(id); S.photos=S.photos.filter(x=>x.id!==id); render(); }
@@ -237,8 +272,11 @@ function subscribe(){
 
 /* ---------- rendering griglia ---------- */
 function letters(){ return [...new Set(S.photos.map(p=>p.letter))].sort(); }
+function gruppi(){ return [...new Set(S.photos.map(p=>p.gruppo).filter(Boolean))].sort(); }
 function visible(){
-  let list = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  let list;
+  if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo);        // il gruppo attraversa i rulli
+  else list = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
   if(S.favOnly) list = list.filter(p=>p.fav);
   return list;
 }
@@ -250,8 +288,13 @@ function render(){
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     `<div class="rtab ${!S.letter?'on':''}" data-l="">Tutte <span class="cnt">${S.photos.length}</span></div>`+
-    ls.map(L=>`<div class="rtab ${S.letter===L?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("");
-  nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{ S.letter=b.dataset.l||null; render(); $("grid").scrollTop=0; });
+    ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
+    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G).length}</span></div>`).join("");
+  nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{
+    if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
+    else { S.gruppo=null; S.letter=b.dataset.l||null; }
+    render(); $("grid").scrollTop=0;
+  });
 
   // conteggio preferiti (del rullo attivo)
   $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
@@ -266,6 +309,7 @@ function render(){
     <div class="cell ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
+      ${p.gruppo?`<span class="grp">${esc(p.gruppo)}</span>`:""}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`).join("");
@@ -317,6 +361,48 @@ $("selAll").onclick=()=>{
   document.querySelectorAll("#grid .cell").forEach(c=>{ if(S.selected.has(c.dataset.id)) c.classList.add("sel"); });
   updateSelBar();
 };
+/* ---------- gruppi (sotto-cartelle della giornata) ---------- */
+function apriGruppi(){
+  const ps=selectedPhotos();
+  if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  $("grpCount").textContent = ps.length===1 ? "1 foto selezionata" : ps.length+" foto selezionate";
+  const list=$("grpList");
+  const gs=gruppi();
+  list.innerHTML = gs.length ? gs.map(g=>`<button data-g="${esc(g)}">📁 ${esc(g)}</button>`).join("")
+                             : `<span style="color:var(--muted)">Nessun gruppo ancora — creane uno qui sotto</span>`;
+  list.querySelectorAll("button").forEach(b=> b.onclick=()=> assegnaGruppo(b.dataset.g));
+  $("grpName").value="";
+  $("grpSheet").classList.add("open");
+}
+async function assegnaGruppo(nome){
+  const ps=selectedPhotos();
+  $("grpSheet").classList.remove("open");
+  if(!ps.length) return;
+  const ids=ps.map(p=>p.id);
+  try{
+    const {error} = await sb.from("foto").update({gruppo: nome}).in("id", ids);
+    if(error) throw error;
+    ps.forEach(p=> p.gruppo = nome);
+    toast(nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo`);
+  }catch(err){
+    console.warn("assegnaGruppo", err);
+    toast("Non riesco a salvare il gruppo: " + (err.message||err));
+    return;
+  }
+  S.selmode=false; document.body.classList.remove("selmode"); S.selected.clear();
+  render();
+}
+$("selGroup").onclick = apriGruppi;
+$("grpAdd").onclick = ()=>{
+  const n = $("grpName").value.trim();
+  if(!n){ toast("Scrivi un nome"); return; }
+  assegnaGruppo(n);
+};
+$("grpName").addEventListener("keydown", e=>{ if(e.key==="Enter") $("grpAdd").click(); });
+$("grpNone").onclick = ()=> assegnaGruppo(null);
+$("grpClose").onclick = ()=> $("grpSheet").classList.remove("open");
+$("grpSheet").onclick = e=>{ if(e.target.id==="grpSheet") $("grpSheet").classList.remove("open"); };
+
 $("selShare").onclick=()=> { const ps=selectedPhotos(); sharePhotos(ps); logActivity(ps,"condivise"); };
 $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logActivity(ps,"esportate"); };
 $("selPrint").onclick=async ()=>{
