@@ -901,8 +901,40 @@ function updateEventInfo(){
 }
 updateEventInfo();
 
-/* ---------- import ---------- */
-$("btnImport").onclick = ()=> $("fileInput").click();
+/* ---------- import ----------
+   La finestra si riapre da sola sull'ULTIMA cartella usata per importare (la scheda), grazie
+   all'id: Chrome ricorda la posizione per quell'id, invece di ripartire da Documenti. */
+async function leggiCartellaFoto(dir){
+  const trovati=[];
+  async function walk(d, prefix, depth){
+    if(depth>4 || trovati.length>8000) return;
+    for await (const [name,h] of d.entries()){
+      if(name.startsWith(".") || name==="System Volume Information") continue;
+      if(h.kind==="directory") await walk(h, prefix+name+"/", depth+1);
+      else trovati.push({h, rel:prefix+name});
+    }
+  }
+  await walk(dir, dir.name+"/", 0);
+  const files=[];
+  for(const it of trovati){
+    try{ const f=await it.h.getFile(); f._rel=it.rel; if(isImage(f)) files.push(f); }catch(_){}
+  }
+  return files;
+}
+$("btnImport").onclick = async ()=>{
+  if(!window.showDirectoryPicker){ $("fileInput").click(); return; }   // browser vecchi
+  let dir;
+  try{ dir = await showDirectoryPicker({mode:"read", id:"fayimport"}); }
+  catch(_){ return; }                                                  // annullato
+  try{
+    toast("Leggo la cartella…");
+    importaFiles(await leggiCartellaFoto(dir));
+  }catch(err){
+    console.warn("import cartella", err);
+    toast("Cartella non leggibile: riprovo con la finestra classica");
+    $("fileInput").click();
+  }
+};
 
 // --- Ripristino anteprime dagli originali locali (stessi codici dal nome file) ---
 $("btnRestore").onclick = ()=>{
