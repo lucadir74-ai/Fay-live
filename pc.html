@@ -2179,7 +2179,19 @@ $("adjReset").onclick = ()=>{
 };
 
 /* ---------- monitor cliente ---------- */
-$("btnMonitor").onclick = openMonitor;
+// lo stesso tasto apre e chiude il monitor cliente
+$("btnMonitor").onclick = ()=>{
+  const M=state.monitor;
+  if(M.win && !M.win.closed){
+    stopSlideshow();
+    try{ M.win.close(); }catch(_){}
+    M.win=null; M.ctx=null; M.canvas=null;
+    setMonState("off");
+    toast("Monitor cliente chiuso");
+    return;
+  }
+  openMonitor();
+};
 async function openMonitor(){
   const M=state.monitor;
   if(M.win && !M.win.closed){ M.win.focus(); return; }
@@ -2217,6 +2229,11 @@ function setMonState(mode){
   $("monDot").classList.toggle("on", mode!=="off");
   $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
   $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — Esc per riprendere lo slideshow" : "";
+  const b = $("btnMonitor");
+  if(b){
+    b.textContent = (mode==="off") ? "Avvia slideshow" : "Chiudi slideshow";
+    b.title = (mode==="off") ? "Apre il monitor cliente e avvia lo slideshow" : "Chiude il monitor cliente";
+  }
 }
 function buildSlideshowQueue(){
   // in ordine di codice: prima per lettera, poi per numero
