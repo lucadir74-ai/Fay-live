@@ -233,7 +233,8 @@
         <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
         <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
         <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
-        <span><kbd>M</kbd></span><span>mostra sul monitor cliente la foto o la selezione</span>
+        <span><kbd>-</kbd></span><span>manda sul monitor cliente la foto o la selezione</span>
+        <span><kbd>+</kbd></span><span>toglie dal monitor (riprende lo slideshow) lasciandola aperta sul PC</span>
         <span><kbd>esc</kbd></span><span>come invio: chiude e fa ripartire lo slideshow</span>
         <span><kbd>doppio clic</kbd></span><span>su una scheda lettera: descrizione del rullo</span>
       </div>
@@ -257,7 +258,7 @@
         <span id="lbStatus" class="hint"></span>
         <div class="spacer"></div>
         <button id="lbPrint" class="primary">Stampa</button>
-        <button id="lbShow">Monitor <kbd>M</kbd></button>
+        <button id="lbShow">Monitor <kbd>-</kbd></button>
         <button id="lbMore" title="Altre azioni">Altro ▾</button>
         <button id="lbClose">Chiudi <kbd>esc</kbd></button>
         <div id="lbMenu" hidden>
@@ -2471,6 +2472,12 @@ addEventListener("keydown", e=>{
     if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
     return;
   }
+  // "+" toglie la foto dal monitor cliente (torna allo slideshow) ma la lascia aperta sul PC
+  if(e.key==="+" ){
+    e.preventDefault();
+    if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); toast("Tolta dal monitor — slideshow ripreso"); }
+    return;
+  }
   if(M.mode==="present" && !lbOpen){
     if(e.key==="ArrowRight"){ presentNav(1); return; }
     if(e.key==="ArrowLeft"){ presentNav(-1); return; }
@@ -2479,7 +2486,7 @@ addEventListener("keydown", e=>{
     if(e.key==="ArrowRight") $("lbNext").click();
     else if(e.key==="ArrowLeft") $("lbPrev").click();
     else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
-    else if(e.key.toLowerCase()==="m") $("lbShow").click();
+    else if(e.key==="-") $("lbShow").click();
     else if(e.key==="Enter"){ e.preventDefault(); closeLightbox(); }
     return;
   }
@@ -2496,7 +2503,7 @@ addEventListener("keydown", e=>{
     const p=list[state.focusIdx]; if(p){ toggleSel(p); paintVisible(); }
   }else if(e.key==="Enter"){
     if(state.focusIdx>=0) openLightbox(state.focusIdx);
-  }else if(e.key.toLowerCase()==="m"){
+  }else if(e.key==="-"){
     if(state.selection.size) presentSelection();
     else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
   }
