@@ -1026,6 +1026,7 @@ async function importaFiles(files){
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
   state.counters[L]=n;
+  ordinaFoto();
   // salva/aggiorna la descrizione rullo sul cloud
   if(sb && cloud.rulli[L] && state.letterDesc[L]){
     sbTry(()=>sb.from("rulli").update({descrizione:state.letterDesc[L]}).eq("id",cloud.rulli[L].id), "descrizione rullo");
@@ -2889,6 +2890,7 @@ async function loadServizioFoto(){
     const r=rulliById[f.rullo_id]; if(!r) continue;
     await addRemotePhoto(f, r.lettera);
   }
+  ordinaFoto();
   renderTabs(); layoutGrid(); updateThumbCloud();
   if(typeof updatePrintQueueBadge==="function") updatePrintQueueBadge();
 }
@@ -2923,6 +2925,7 @@ async function pullNuoveFoto(manuale){
       }
     }
     if(nuove){
+      ordinaFoto();
       renderTabs(); layoutGrid(); updateThumbCloud(); updatePrintQueueBadge();
       const M=state.monitor;
       if(M.win && !M.win.closed && M.mode==="slideshow") M.queue=buildSlideshowQueue();  // entrano anche nello slideshow
@@ -3002,6 +3005,12 @@ async function addRemotePhoto(f, letter){
   if(blob){ p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}}
   state.photos.push(p); state.byCode.set(p.code,p);
 }
+/* La griglia mostra le foto nell'ordine in cui entrano in memoria. Quelle che arrivano dal cloud
+   (realtime o sincronizzazione) non arrivano in ordine di codice, perché le anteprime finiscono
+   di caricarsi in ordine sparso: senza questo riordino su PC2 il rullo partiva da metà. */
+function ordinaFoto(){
+  state.photos.sort((a,b)=> a.letter===b.letter ? a.num-b.num : (a.letter<b.letter?-1:1));
+}
 function blobToThumb(blob){
   return new Promise(async (res,rej)=>{
     try{ const bmp=await decodeScaled(blob,260); const c=document.createElement("canvas");
@@ -3020,6 +3029,7 @@ function subscribeRealtime(){
       if(!r || r.servizio_id!==cloud.servizio.id) return;
       if(state.byCode.has(f.codice)) return;
       await addRemotePhoto(f, r.lettera);
+      ordinaFoto();
       renderTabs(); layoutGrid(); updateThumbCloud();
       const M=state.monitor; if(M.win && !M.win.closed) M.queue=buildSlideshowQueue();
     })
