@@ -209,6 +209,7 @@
     <div class="spacer"></div>
     <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
     <button id="btnMonitor">Avvia slideshow</button>
+    <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
 
   <nav id="letterTabs" hidden></nav>
@@ -227,12 +228,12 @@
       <div id="shortcuts">
         <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
         <span><kbd>doppio clic</kbd></span><span>ingrandisce la foto (anche clic destro)</span>
-        <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · in presentazione fa ripartire lo slideshow</span>
+        <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · chiude la vista insieme e fa ripartire lo slideshow</span>
         <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
         <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
         <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
         <span><kbd>M</kbd></span><span>mostra sul monitor cliente la foto o la selezione</span>
-        <span><kbd>esc</kbd></span><span>chiude · in presentazione fa ripartire lo slideshow</span>
+        <span><kbd>esc</kbd></span><span>come invio: chiude e fa ripartire lo slideshow</span>
         <span><kbd>doppio clic</kbd></span><span>su una scheda lettera: descrizione del rullo</span>
       </div>
     </div>
@@ -243,7 +244,7 @@
         <b id="cmpCount"></b>
         <div class="spacer"></div>
         <button id="cmpShow" class="primary">Mostra sul monitor</button>
-        <button id="cmpClose">Chiudi <kbd>esc</kbd></button>
+        <button id="cmpClose">Chiudi <kbd>invio</kbd></button>
       </div>
       <div id="cmpGrid"></div>
     </div>
@@ -543,7 +544,7 @@ const state = {
   filter: "",
   lightboxIdx: -1,
   lbCustom: null,        // lista personalizzata per il lightbox (vista insieme)
-  monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0 },
+  monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0, letter: null }, // letter: rullo trasmesso (null = tutti)
 };
 
 /* ---------- utilità ---------- */
@@ -1639,6 +1640,9 @@ function renderTabs(){
     };
     if(b.dataset.l) b.ondblclick=()=>editRulloDesc(b.dataset.l);
   });
+  const M=state.monitor;   // rullo trasmesso sparito (giornata svuotata): si torna a tutti
+  if(M.letter && !state.photos.some(p=>p.letter===M.letter)) M.letter=null;
+  setMonState(M.mode);
 }
 function editRulloDesc(L){
   $("ddLetter").textContent=L;
@@ -1773,7 +1777,7 @@ function closeCompare(){
   cmpUrls.splice(0).forEach(u=>URL.revokeObjectURL(u));
 }
 $("selCompare").onclick = openCompare;
-$("cmpClose").onclick = closeCompare;
+$("cmpClose").onclick = ()=>{ closeCompare(); const M=state.monitor; if(M.mode==="present"||M.mode==="mosaic") backToSlideshow(); };
 $("cmpShow").onclick = ()=> presentMosaicSet(selSet());
 
 /* ---------- stampa ed esportazione ---------- */
@@ -2180,14 +2184,23 @@ $("adjReset").onclick = ()=>{
 
 /* ---------- monitor cliente ---------- */
 // lo stesso tasto apre e chiude il monitor cliente
+function closeMonitor(){
+  const M=state.monitor;
+  stopSlideshow();
+  try{ if(M.win && !M.win.closed) M.win.close(); }catch(_){}
+  M.win=null; M.ctx=null; M.canvas=null;
+  setMonState("off");
+  toast("Monitor cliente chiuso");
+}
+$("btnMonClose").onclick = closeMonitor;
+// monitor chiuso: lo apre. monitor aperto: fa ripartire lo slideshow col rullo aperto ORA.
+// È l'unico momento in cui cambia il rullo trasmesso.
 $("btnMonitor").onclick = ()=>{
   const M=state.monitor;
   if(M.win && !M.win.closed){
-    stopSlideshow();
-    try{ M.win.close(); }catch(_){}
-    M.win=null; M.ctx=null; M.canvas=null;
-    setMonState("off");
-    toast("Monitor cliente chiuso");
+    M.letter = state.activeLetter || null;
+    startSlideshow();
+    toast(M.letter ? `Sul monitor: rullo ${M.letter}` : "Sul monitor: tutti i rulli");
     return;
   }
   openMonitor();
@@ -2221,23 +2234,32 @@ async function openMonitor(){
   w.addEventListener("resize",fit); fit();
   setTimeout(()=>{ const h=w.document.getElementById("hint"); if(h) h.remove(); }, 9000);
   const watch=setInterval(()=>{ if(w.closed){ clearInterval(watch); stopSlideshow(); M.win=null; setMonState("off"); } },800);
+  // il rullo trasmesso si fissa QUI e cambia solo quando si riavvia lo slideshow:
+  // cambiare scheda sul PC non tocca quello che sta vedendo il cliente
+  M.letter = state.activeLetter || null;
   setMonState("slideshow");
   startSlideshow();
 }
 function setMonState(mode){
   const M=state.monitor; M.mode=mode;
   $("monDot").classList.toggle("on", mode!=="off");
-  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow" : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
-  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — Esc per riprendere lo slideshow" : "";
-  const b = $("btnMonitor");
+  const rl = state.monitor.letter ? ` (rullo ${state.monitor.letter})` : "";
+  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow"+rl : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
+  $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, invio o Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — invio o Esc per riprendere lo slideshow" : "";
+  const b = $("btnMonitor"), x = $("btnMonClose");
+  const tab = state.activeLetter ? "rullo "+state.activeLetter : "tutti i rulli";
   if(b){
-    b.textContent = (mode==="off") ? "Avvia slideshow" : "Chiudi slideshow";
-    b.title = (mode==="off") ? "Apre il monitor cliente e avvia lo slideshow" : "Chiude il monitor cliente";
+    b.textContent = (mode==="off") ? "Avvia slideshow" : (M.letter===(state.activeLetter||null) ? "Riavvia slideshow" : "Trasmetti "+tab);
+    b.title = (mode==="off") ? "Apre il monitor cliente e trasmette il rullo aperto ora"
+                             : "Fa ripartire lo slideshow trasmettendo "+tab;
   }
+  if(x) x.hidden = (mode==="off");
 }
 function buildSlideshowQueue(){
-  // in ordine di codice: prima per lettera, poi per numero
-  return [...state.photos].sort((a,b)=> a.letter===b.letter ? a.num-b.num : (a.letter<b.letter?-1:1));
+  // solo il rullo trasmesso (null = tutti), in ordine di codice: prima per lettera, poi per numero
+  const L = state.monitor.letter;
+  const src = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  return [...src].sort((a,b)=> a.letter===b.letter ? a.num-b.num : (a.letter<b.letter?-1:1));
 }
 function startSlideshow(){
   const M=state.monitor; stopTimer();
@@ -2246,7 +2268,7 @@ function startSlideshow(){
   M.queue = buildSlideshowQueue(); M.qPos=0;
   const step=async()=>{
     if(!M.win || M.win.closed || M.mode!=="slideshow") return;
-    if(!M.queue.length){ paintMonitorMessage("In attesa di foto…"); return; }
+    if(!M.queue.length){ paintMonitorMessage(M.letter ? `Rullo ${M.letter}: in attesa di foto…` : "In attesa di foto…"); return; }
     if(M.qPos>=M.queue.length) M.qPos=0;
     await paintMonitorMosaic(M.qPos);
     M.qPos++;
@@ -2341,7 +2363,7 @@ async function presentMosaicSet(set){
   M._staticSet=set;
   setMonState("mosaic");
   await drawTilePage(set, "mosaic", false);
-  toast(`${set.length} foto affiancate sul monitor — Esc per riprendere lo slideshow`);
+  toast(`${set.length} foto affiancate sul monitor — invio o Esc per riprendere lo slideshow`);
 }
 function paintMonitorMessage(msg){
   const M=state.monitor; if(!M.ctx) return;
@@ -2385,13 +2407,24 @@ function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) st
 addEventListener("keydown", e=>{
   const tag=document.activeElement.tagName;
   if(tag==="INPUT"||tag==="SELECT"){ if(e.key==="Escape") document.activeElement.blur(); return; }
+  // il tasto appena cliccato resta col fuoco: invio/spazio lo ri-cliccherebbero
+  // invece di chiudere la vista → gli si toglie il fuoco e comanda la tastiera
+  if((e.key==="Enter" || e.key===" ") && tag==="BUTTON"){ e.preventDefault(); document.activeElement.blur(); }
   const M=state.monitor;
   const lbOpen=$("lightbox").classList.contains("open");
+  const cmpOpen=$("compare").classList.contains("open");
   if(e.key==="/"){ e.preventDefault(); $("searchBox").focus(); $("searchBox").select(); return; }
   if(e.key==="Escape"){
     if(lbOpen){ closeLightbox(); }
-    else if($("compare").classList.contains("open")){ closeCompare(); }
+    else if(cmpOpen){ closeCompare(); if(M.mode==="present" || M.mode==="mosaic") backToSlideshow(); }
     else if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); }
+    return;
+  }
+  // invio: chiude la vista insieme / la presentazione e rimanda il monitor allo slideshow
+  if(e.key==="Enter" && !lbOpen && (cmpOpen || M.mode==="present" || M.mode==="mosaic")){
+    e.preventDefault();
+    if(cmpOpen) closeCompare();
+    if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
     return;
   }
   if(M.mode==="present" && !lbOpen){
@@ -2418,8 +2451,7 @@ addEventListener("keydown", e=>{
     e.preventDefault();
     const p=list[state.focusIdx]; if(p){ toggleSel(p); paintVisible(); }
   }else if(e.key==="Enter"){
-    if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
-    else if(state.focusIdx>=0) openLightbox(state.focusIdx);
+    if(state.focusIdx>=0) openLightbox(state.focusIdx);
   }else if(e.key.toLowerCase()==="m"){
     if(state.selection.size) presentSelection();
     else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
