@@ -194,6 +194,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
+      <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
       <button id="btnAutoOrig" title="Se attivo, ogni foto importata sale sul cloud a piena risoluzione: tutte le postazioni stampano anche se questo PC è spento">Caricamento automatico: —</button>
@@ -2482,6 +2483,37 @@ const thumbCache = {
 };
 
 const NEW_SEDE = "__new__";
+
+/* Ricorda sede e giornata aperti, così un aggiornamento della pagina (o una chiusura per sbaglio)
+   riparte da dove si era. La giornata si ripristina solo se la scelta è recente: il giorno dopo
+   si riapre normalmente quella di oggi, non quella vecchia. */
+const ULTIMA_KEY = "faylive_ultima_scelta";
+const ULTIMA_ORE = 14;   // ore entro cui vale anche la data salvata
+function ricordaScelta(){
+  try{
+    localStorage.setItem(ULTIMA_KEY, JSON.stringify({
+      sede: cloud.sede? cloud.sede.id : null,
+      data: cloud.servizio? cloud.servizio.data_servizio : null,
+      ts: Date.now()
+    }));
+  }catch(_){}
+}
+function ultimaScelta(){
+  try{
+    const o=JSON.parse(localStorage.getItem(ULTIMA_KEY)||"null");
+    if(!o || !o.sede) return null;
+    if(Date.now() - (o.ts||0) > ULTIMA_ORE*3600*1000) return {sede:o.sede, data:null};  // solo la sede
+    return o;
+  }catch(_){ return null; }
+}
+async function ripristinaUltimaScelta(){
+  const o=ultimaScelta(); if(!o || !sb) return;
+  const sel=$("sedeSelect");
+  const s=(sel._sedi||[]).find(x=>x.id===o.sede);
+  if(!s) return;                       // sede cancellata nel frattempo: si riparte da zero
+  sel.value=s.id;
+  await chooseSede(s, o.data);
+}
 async function loadSedi(){
   const sel=$("sedeSelect");
   if(!sb){ sel.innerHTML='<option value="">Solo locale</option>'; return; }
@@ -2566,6 +2598,7 @@ async function deleteSede(s){
     await sb.from("sedi").delete().eq("id",s.id);
     // reset stato locale
     cloud.sede=null; cloud.servizio=null; cloud.rulli={};
+    try{ localStorage.removeItem(ULTIMA_KEY); }catch(_){}
     if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
     state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
     state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
@@ -2578,9 +2611,10 @@ async function deleteSede(s){
   }catch(err){ setSync("offline"); toast("Errore cancellando: "+(err.message||err)); console.warn("deleteSede",err); }
 }
 
-async function chooseSede(s){
+async function chooseSede(s, dataVoluta){
   setTimeout(loadMasksForSede, 400);   // le cornici di questa sede
   cloud.sede=s;
+  ricordaScelta();
   $("sedeSelect").value=s.id;
   setSync("syncing","Carico le giornate…");
   const oggi = serviceDateStr();
@@ -2602,10 +2636,11 @@ async function chooseSede(s){
       return `<option value="${sv.id}" data-date="${sv.data_servizio}">${et}</option>`;
     }).join("");
     gsel._servizi = lista;
-    // apri la giornata di oggi
-    const today = lista.find(x=>x.data_servizio===oggi) || lista[0];
-    gsel.value = today.id;
-    await openServizio(today);
+    // riapre la giornata di prima se richiesta, altrimenti quella di oggi
+    const scelta = (dataVoluta && lista.find(x=>x.data_servizio===dataVoluta))
+                || lista.find(x=>x.data_servizio===oggi) || lista[0];
+    gsel.value = scelta.id;
+    await openServizio(scelta);
   }catch(err){
     cloud.online=false; setSync("offline");
     console.warn("sede", err);
@@ -2617,6 +2652,7 @@ async function openServizio(sv){
   // pulisci lo stato foto corrente prima di caricare un'altra giornata
   if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
   cloud.servizio = sv;
+  ricordaScelta();
   cloud.rulli = {};
   state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
   state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
@@ -2723,6 +2759,81 @@ async function loadServizioFoto(){
   if(typeof updatePrintQueueBadge==="function") updatePrintQueueBadge();
 }
 
+/* Sincronizzazione automatica delle nuove foto.
+   Il realtime sull'hotspot cade spesso e non si riconnette: senza questo, le foto importate
+   da un'altra postazione si vedevano solo ricaricando la pagina e riscegliendo sede e giorno.
+   Qui si guarda solo la tabella rulli (poche righe, pochissimi dati): se il contatore del rullo
+   è più avanti dell'ultimo codice che ho in casa, scarico SOLO le foto che mancano. */
+let syncing=false;
+async function pullNuoveFoto(manuale){
+  if(!sb || !cloud.servizio || syncing) return 0;
+  syncing=true;
+  try{
+    const {data:rulli, error} = await sb.from("rulli")
+      .select("id,lettera,ultimo_num,descrizione").eq("servizio_id", cloud.servizio.id);
+    if(error) throw error;
+    let nuove=0, letters=new Set();
+    for(const r of (rulli||[])){
+      cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
+      if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
+      state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num||0);
+      // ultimo numero che ho già di questo rullo
+      let mio=0; for(const p of state.photos){ if(p.letter===r.lettera && p.num>mio) mio=p.num; }
+      if((r.ultimo_num||0) <= mio) continue;            // niente di nuovo: nessuna richiesta pesante
+      const {data:foto} = await sb.from("foto").select("*")
+        .eq("rullo_id", r.id).gt("codice", r.lettera+"-"+pad3(mio)).order("codice");
+      for(const f of (foto||[])){
+        if(state.byCode.has(f.codice)) continue;
+        await addRemotePhoto(f, r.lettera);
+        nuove++; letters.add(r.lettera);
+      }
+    }
+    if(nuove){
+      renderTabs(); layoutGrid(); updateThumbCloud(); updatePrintQueueBadge();
+      const M=state.monitor;
+      if(M.win && !M.win.closed && M.mode==="slideshow") M.queue=buildSlideshowQueue();  // entrano anche nello slideshow
+      toast(`${nuove} nuove foto dal cloud (rullo ${[...letters].join(", ")})`);
+    }else if(manuale){
+      toast("Nessuna foto nuova sul cloud");
+    }
+    await riparaAnteprime();
+    return nuove;
+  }catch(err){
+    console.warn("pullNuoveFoto", err);
+    if(manuale) toast("Cloud non raggiungibile: riprovo tra poco");
+    return 0;
+  }finally{ syncing=false; }
+}
+/* foto arrivate dal cloud rimaste senza immagine (anteprima non ancora caricata da chi ha importato,
+   o scaricamento fallito sull\'hotspot): si riprova, poche per volta, senza bloccare nulla */
+async function riparaAnteprime(){
+  const vuote = state.photos.filter(p=>p.remote && !p.preview).slice(0,40);
+  if(!vuote.length) return;
+  const senzaUrl = vuote.filter(p=>!p.anteprimaUrl).map(p=>p.code);
+  if(senzaUrl.length){
+    try{
+      const {data} = await sb.from("foto").select("codice,anteprima_url").in("codice", senzaUrl);
+      (data||[]).forEach(f=>{ const p=state.byCode.get(f.codice); if(p && f.anteprima_url) p.anteprimaUrl=f.anteprima_url; });
+    }catch(_){}
+  }
+  let ok=0;
+  for(const p of vuote){
+    if(!p.anteprimaUrl) continue;
+    try{
+      const r=await fetch(p.anteprimaUrl); if(!r.ok) continue;
+      const blob=await r.blob(); thumbCache.set(p.code, blob);
+      p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}
+      ok++;
+    }catch(_){}
+  }
+  if(ok){ paintVisible(); updateThumbCloud(); }
+}
+setInterval(()=>{ if(!document.hidden) pullNuoveFoto(); }, 15000);   // ogni 15 secondi
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) pullNuoveFoto(); });
+addEventListener("focus", ()=>pullNuoveFoto());
+addEventListener("online", ()=>pullNuoveFoto());
+$("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(true); };
+
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
   const L=state.activeLetter;
@@ -2802,7 +2913,19 @@ function subscribeRealtime(){
       refreshMailBadge();
       if($("mailDlg").open) loadMailRequests().then(renderMailList);
     })
-    .subscribe();
+    .subscribe(status=>{
+      if(status==="SUBSCRIBED"){ cloud._rtRetry=0; pullNuoveFoto(); return; }
+      // l'hotspot fa cadere il canale: si riprova da soli, con attese crescenti
+      if(status==="CHANNEL_ERROR" || status==="TIMED_OUT" || status==="CLOSED"){
+        const n = (cloud._rtRetry = (cloud._rtRetry||0) + 1);
+        setTimeout(()=>{
+          if(!cloud.servizio) return;
+          try{ sb.removeChannel(cloud.channel); }catch(_){}
+          cloud.channel = null;
+          subscribeRealtime();
+        }, Math.min(30000, 3000*n));
+      }
+    });
   refreshMailBadge();
 }
 
@@ -3129,7 +3252,7 @@ async function cleanupOld(){
 addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
 
 // avvio: popola la tendina sedi; l'app è già utilizzabile
-loadSedi();
+loadSedi().then(ripristinaUltimaScelta);
 if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
 
 </script>
