@@ -208,7 +208,7 @@
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
-    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
+    <input type="text" id="searchBox" placeholder="Codici: 35 36 41-45  ( / )" title="Un codice apre la foto. Più codici separati da spazio o virgola (anche intervalli tipo 41-45) selezionano quelle foto">
     <button id="btnMonitor">Avvia slideshow</button>
     <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
@@ -232,7 +232,7 @@
         <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · chiude la vista insieme e fa ripartire lo slideshow</span>
         <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
         <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
-        <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
+        <span><kbd>/</kbd></span><span>cerca per codice (es. B47). Più codici — "35 36 41-45" — selezionano quelle foto; invio conferma</span>
         <span><kbd>-</kbd></span><span>manda sul monitor cliente la foto o la selezione</span>
         <span><kbd>+</kbd></span><span>toglie dal monitor (riprende lo slideshow) lasciandola aperta sul PC</span>
         <span><kbd>esc</kbd></span><span>come invio: chiude e fa ripartire lo slideshow</span>
@@ -1744,10 +1744,54 @@ function paintVisible(){
 wrap.addEventListener("scroll", paintVisible, {passive:true});
 addEventListener("resize", layoutGrid);
 
-/* ---------- ricerca ---------- */
+/* ---------- ricerca ----------
+   Un codice solo apre la foto. Più codici separati da spazio o virgola (es. "35 36 41-45")
+   selezionano direttamente quelle foto: da lì si stampa, si esporta o si manda sul monitor. */
+let selRicerca = new Set();          // id selezionati dalla ricerca, sostituiti a ogni battuta
+function parseMulti(raw){
+  const pezzi = raw.split(/[\s,;]+/).filter(Boolean);
+  if(pezzi.length<2) return null;
+  const foto=[], persi=[];
+  const lettera = tok => tok || state.activeLetter ||
+    ([...new Set(state.photos.map(p=>p.letter))].length===1 ? state.photos[0].letter : null);
+  for(const tok of pezzi){
+    const t = tok.replace(/[^A-Z0-9-]/g,"");
+    let m = t.match(/^([A-Z])?-?(\d{1,4})-(\d{1,4})$/);   // intervallo: 41-45, B41-45
+    if(m){
+      const L = lettera(m[1]); if(!L){ persi.push(tok); continue; }
+      const da=Math.min(+m[2],+m[3]), a2=Math.max(+m[2],+m[3]);
+      let trovate=0;
+      for(let n=da;n<=a2;n++){ const p=state.byCode.get(fmtCode(L,n)); if(p){ foto.push(p); trovate++; } }
+      if(!trovate) persi.push(tok);
+      continue;
+    }
+    m = t.match(/^([A-Z])?-?(\d{1,4})$/);                  // codice singolo: 35, B35, B-035
+    if(m){
+      const L = lettera(m[1]); if(!L){ persi.push(tok); continue; }
+      const p = state.byCode.get(fmtCode(L, parseInt(m[2],10)));
+      if(p) foto.push(p); else persi.push(tok);
+      continue;
+    }
+    persi.push(tok);
+  }
+  return { foto:[...new Set(foto)], persi };
+}
+function applicaSelezioneRicerca(foto){
+  selRicerca.forEach(id=>state.selection.delete(id));   // la battuta precedente viene sostituita
+  selRicerca.clear();
+  foto.forEach(p=>{ state.selection.add(p.id); selRicerca.add(p.id); queueOriginalUpload(p); });
+  updateSelBar(); paintVisible();
+}
 $("searchBox").oninput = e=>{
   const raw = e.target.value.trim().toUpperCase();
-  if(!raw){ if($("lightbox").classList.contains("open")) closeLightbox(); return; }
+  if(!raw){ if(selRicerca.size) applicaSelezioneRicerca([]); if($("lightbox").classList.contains("open")) closeLightbox(); return; }
+  const multi = parseMulti(raw);
+  if(multi){
+    if($("lightbox").classList.contains("open")) closeLightbox();
+    applicaSelezioneRicerca(multi.foto);
+    return;
+  }
+  if(selRicerca.size) applicaSelezioneRicerca([]);
   const ex = parseQuery(raw);
   if(ex){
     const code = fmtCode(ex.letter, ex.num);
@@ -1769,6 +1813,12 @@ function resetSearch(){
 }
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
+    if(selRicerca.size){                       // la selezione trovata diventa definitiva
+      const multi = parseMulti($("searchBox").value.trim().toUpperCase());
+      const persi = multi ? multi.persi : [];
+      toast(`${selRicerca.size} foto selezionate` + (persi.length? ` — non trovati: ${persi.join(" ")}` : ""));
+      selRicerca.clear();
+    }
     if($("lightbox").classList.contains("open")) closeLightbox();
     resetSearch();
     return;
@@ -1793,14 +1843,14 @@ function updateSelBar(){
   $("selCount").textContent = state.selection.size;
   $("selBar").classList.toggle("show", state.selection.size>0);
 }
-$("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
+$("selClear").onclick = ()=>{ state.selection.clear(); selRicerca.clear(); updateSelBar(); paintVisible(); };
 $("selShow").onclick = ()=> presentSelection();
 /* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
    effettivamente comprate, così l'email del cliente arriva già abbinata alle SUE foto.
    Poi la selezione si azzera: la postazione è pronta per il cliente successivo. */
 function fineVendita(set){
   const codici = (set||[]).map(p=>p.code);
-  state.selection.clear(); updateSelBar(); paintVisible();
+  state.selection.clear(); selRicerca.clear(); updateSelBar(); paintVisible();
   if(codici.length) mostraQrVendita(codici);
 }
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
@@ -2436,7 +2486,8 @@ function repaintMonitor(){
 function presentSelection(){
   const set=selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  presentSet(set);
+  // più foto selezionate = il cliente le vede tutte insieme, non una alla volta
+  if(set.length>1) presentMosaicSet(set); else presentSet(set);
 }
 async function presentSet(set){
   const M=state.monitor;
