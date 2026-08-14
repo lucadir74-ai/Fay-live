@@ -249,7 +249,7 @@ async function openServizio(sv){
     const {data:foto}=await sb.from("foto").select("*").in("rullo_id",ids).order("codice");
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
     });
   }
@@ -268,14 +268,14 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
     })
     .on("postgres_changes",{event:"UPDATE",schema:"public",table:"foto"}, payload=>{
       const f=payload.new; const p=S.byId.get(f.id);
-      if(p){ p.fav=!!f.preferito; p.url=f.anteprima_url||p.url; p.gruppo=f.gruppo||null; render(); }
+      if(p){ p.fav=!!f.preferito; p.url=f.mini_url||f.anteprima_url||p.url; p.bigUrl=f.anteprima_url||p.bigUrl; p.gruppo=f.gruppo||null; render(); }
     })
     .on("postgres_changes",{event:"DELETE",schema:"public",table:"foto"}, payload=>{
       const id=payload.old.id; if(S.byId.has(id)){ S.byId.delete(id); S.photos=S.photos.filter(x=>x.id!==id); render(); }
@@ -563,7 +563,7 @@ $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
 // recupera il blob di una foto: originale dal cloud se c'è, altrimenti anteprima
 async function photoBlob(p){
   if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) return dl.data; }catch(_){} }
-  try{ const r=await fetch(p.url); if(r.ok) return await r.blob(); }catch(_){}
+  try{ const r=await fetch(p.bigUrl || p.url); if(r.ok) return await r.blob(); }catch(_){}
   return null;
 }
 
@@ -652,7 +652,7 @@ async function showCurrent(){
   V.scale=1; V.tx=0; V.ty=0;
   V.img=null; draw();
   try{
-    const im=new Image(); im.crossOrigin="anonymous"; im.src=p.url;
+    const im=new Image(); im.crossOrigin="anonymous"; im.src=p.bigUrl || p.url;
     await im.decode(); V.img=im; draw();
   }catch(_){}
 }
@@ -745,7 +745,7 @@ async function refresh(manuale){
       if(eF) throw eF;
       (foto||[]).forEach(f=>{
         const r = rmap[f.rullo_id]; if(!r) return;
-        const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url,
+        const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null,
                     origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
         const vecchia = S.byId.get(f.id);
         if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile

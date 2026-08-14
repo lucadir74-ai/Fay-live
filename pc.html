@@ -1000,6 +1000,21 @@ $("restoreInput").onchange = async e=>{
         p.anteprimaUrl=sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
         if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
       }
+      // rigenera anche la miniatura, altrimenti la griglia delle altre postazioni resta vuota
+      try{
+        const km = Math.min(1, 420/Math.max(c.width, c.height));
+        const m = document.createElement("canvas");
+        m.width=Math.max(1,Math.round(c.width*km)); m.height=Math.max(1,Math.round(c.height*km));
+        m.getContext("2d").drawImage(c,0,0,m.width,m.height);
+        const miniBlob = await toBlobAsync(m, 0.72);
+        p.mini = miniBlob;
+        const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
+        const um = await sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true});
+        if(!um.error){
+          p.miniUrl = sb.storage.from("anteprime").getPublicUrl(mp).data.publicUrl;
+          if(p.dbId) await sb.from("foto").update({mini_url:p.miniUrl}).eq("id",p.dbId);
+        }
+      }catch(_){}
     }catch(err){ console.warn("ripristino", p.code, err); }
     done++; prog.done++;
     if((done&3)===0){ progUpdate(); paintVisible(); updateThumbCloud(); await new Promise(r=>setTimeout(r,0)); }
@@ -1244,6 +1259,7 @@ async function freshFile(p){
   if(p.file) return p.file;
   // foto remota senza originale locale: usa l'anteprima (ripiego)
   if(p.preview) return new File([p.preview], p.code+"_anteprima.jpg", {type:"image/jpeg"});
+  { const g = await ensurePreview(p); if(g) return new File([g], p.code+"_anteprima.jpg", {type:"image/jpeg"}); }
   throw new Error("originale non disponibile su questa postazione");
 }
 
@@ -1271,7 +1287,7 @@ async function decodeScaled(blob, maxSide, portrait=false){
 }
 
 async function processBatch(batch){
-  const TH=260, PV=1280;
+  const TH=260, PV=1280, MINI=420;
   prog.cancel=false;
   prog.total += batch.length*2; progUpdate();
   let fails=0;
@@ -1322,6 +1338,14 @@ async function processBatch(batch){
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       p.preview = await toBlobAsync(c, 0.85);
       thumbCache.set(ckey(p.code), p.preview);
+      // MINIATURA per la griglia: ricavata dalla grande già decodificata, senza rileggere il file.
+      // ~25 KB invece di ~110: è questa che fa comparire le foto sui tablet.
+      const km = Math.min(1, MINI/Math.max(c.width, c.height));
+      const m = document.createElement("canvas");
+      m.width = Math.max(1, Math.round(c.width*km));
+      m.height = Math.max(1, Math.round(c.height*km));
+      m.getContext("2d").drawImage(c, 0, 0, m.width, m.height);
+      p.mini = await toBlobAsync(m, 0.72);
     }catch(err){ console.warn("anteprima", p.code, err); }
     // sincronizzazione cloud NON bloccante: va in coda parallela, l'import prosegue
     queueThumbSync(p);
@@ -1376,35 +1400,70 @@ function pumpThumbQueue(){
       if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else setSync("online");
       updateThumbCloud();
       pumpThumbQueue();
-      if(!pend) pumpOrigQueue();   // anteprime finite: ora la banda è tutta per gli originali
+      if(!pend){ pumpBigQueue(); pumpOrigQueue(); }   // miniature finite: prima le grandi, poi gli originali
     });
   }
 }
 addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 
-// carica anteprima + riga foto. Ritorna true se ok, false se da riprovare. Non forza offline.
+// Carica la MINIATURA (piccola) + riga foto: è quello che serve per vedere la griglia
+// sui tablet e sulle altre postazioni. L'anteprima grande da 1280 sale dopo, in seconda corsia.
 async function syncPhotoUp(p){
   if(!sb || !cloud.servizio || p.remote) return true;
   try{
     await ensureRullo(p.letter);
-    if(p.preview && !p.anteprimaUrl){
-      const ap = cloud.servizio.id+"/"+p.code+".jpg";
-      const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
+    if(p.mini && !p.miniUrl){
+      const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
+      const up = await sb.storage.from("anteprime").upload(mp, p.mini, {contentType:"image/jpeg", upsert:true});
       if(up.error) throw up.error;
-      p.anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+      p.miniUrl = sb.storage.from("anteprime").getPublicUrl(mp).data.publicUrl;
     }
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
-      anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
+      mini_url: p.miniUrl, anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
     }, {onConflict:"rullo_id,codice"}).select().single();
     if(error) throw error;
     p.dbId = data.id;
     cloud.online=true;
+    queueBigPreview(p);      // la grande sale dopo, quando le miniature hanno finito
     return true;
   }catch(err){
     console.warn("syncPhotoUp", p.code, err);
     return false; // verrà rimessa in coda
+  }
+}
+
+/* Seconda corsia: anteprima grande da 1280 (serve per aprire la foto e per il monitor).
+   Parte solo quando la coda delle miniature è vuota: prima si deve VEDERE, poi si rifinisce. */
+const bigQueue = [];
+let bigActive = 0;
+const BIG_PARALLEL = 4;
+function queueBigPreview(p){
+  if(!sb || !cloud.servizio || p.remote || p.anteprimaUrl || !p.preview) return;
+  if(p._inBig) return;
+  p._inBig = true; bigQueue.push(p); pumpBigQueue();
+}
+function pumpBigQueue(){
+  while(bigActive < BIG_PARALLEL && bigQueue.length && !thumbQueue.length && !thumbActive){
+    const p = bigQueue.shift();
+    bigActive++;
+    (async ()=>{
+      try{
+        const ap = cloud.servizio.id+"/"+p.code+".jpg";
+        const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
+        if(up.error) throw up.error;
+        p.anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+        if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
+      }catch(err){
+        console.warn("anteprima grande", p.code, err);
+        p._bigTries=(p._bigTries||0)+1;
+        if(p._bigTries<=5) setTimeout(()=>{ p._inBig=false; queueBigPreview(p); }, 2000*p._bigTries);
+      }finally{
+        bigActive--; p._inBig=false; updateThumbCloud(); pumpBigQueue();
+        if(!bigQueue.length && !bigActive) pumpOrigQueue();
+      }
+    })();
   }
 }
 
@@ -1468,9 +1527,10 @@ function pumpOrigQueue(){
     origActive++;
     uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
   }
-  // 2) poi il sottofondo, MA solo quando le anteprime hanno finito: sull'hotspot due originali da 2 MB
-  //    affamano otto anteprime da 100 KB, e il tablet resta indietro. Prima si vede, poi si carica il resto.
-  while(autoOrigOn() && !origQueue.length && !thumbQueue.length && !thumbActive && origBg.length &&
+  // 2) poi il sottofondo, MA solo quando miniature e anteprime grandi hanno finito: sull'hotspot
+  //    due originali da 2 MB affamano le immagini piccole, e il tablet resta indietro.
+  while(autoOrigOn() && !origQueue.length && !thumbQueue.length && !thumbActive &&
+        !bigQueue.length && !bigActive && origBg.length &&
         origBgActive < ORIG_BG_PARALLEL && origActive < ORIG_PARALLEL){
     const p = origBg.pop();
     origActive++; origBgActive++;
@@ -1631,8 +1691,9 @@ function friendlyErr(err, code){
 async function getBig(p, maxSide=1920){
   if(bigCache.has(p.id)){ const b=bigCache.get(p.id); bigCache.delete(p.id); bigCache.set(p.id,b); return b; }
   let bmp;
-  if(p.preview){
-    bmp = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+  const grande = p.file || p.arch ? null : await ensurePreview(p);   // scarica la 1280 se serve
+  if(grande || p.preview){
+    bmp = await createImageBitmap(grande || p.preview, {imageOrientation:"from-image"});
   }else{
     bmp = await decodeBig(p, maxSide);
   }
@@ -1875,9 +1936,10 @@ async function renderFull(p, withOverlay=true){
     catch(_){ src=null; }
   }
   if(!src){
-    if(!p.preview) throw new Error(p.code+": originale non disponibile su nessuna postazione");
+    const grande = await ensurePreview(p);
+    if(!grande) throw new Error(p.code+": originale non disponibile su nessuna postazione");
     lowQuality=true;
-    src = await createImageBitmap(p.preview, {imageOrientation:"from-image"});
+    src = await createImageBitmap(grande, {imageOrientation:"from-image"});
   }
   const ev = state.event || {};
   const iw=src.width, ih=src.height, S=Math.min(iw,ih);
@@ -2039,7 +2101,9 @@ async function exportPhotos(set){
   for(const p of set){
     let blob = await ensureOriginalBlob(p);
     let name = p.code+".jpg";
-    if(!blob){ if(p.preview){ blob=p.preview; name=p.code+"_anteprima.jpg"; fallback++; } else { toast(p.code+": originale non disponibile"); continue; } }
+    if(!blob){ const grande = await ensurePreview(p);
+      if(grande){ blob=grande; name=p.code+"_anteprima.jpg"; fallback++; }
+      else { toast(p.code+": originale non disponibile"); continue; } }
     if(dir){
       // scrive direttamente nella cartella scelta (niente popup download)
       try{
@@ -2808,6 +2872,7 @@ async function clearCurrentDay(onlyLetter){
     for(const bucket of ["anteprime","originali"]){
       try{
         const paths = codici.map(c=>sid+"/"+c+".jpg");
+        if(bucket==="anteprime") paths.push(...codici.map(c=>sid+"/"+c+"_m.jpg"));   // anche le miniature
         if(paths.length) await sb.storage.from(bucket).remove(paths);
       }catch(_){}
     }
@@ -2871,7 +2936,7 @@ async function loadServizioFoto(){
 let riempendo = false;
 function mostraArrivo(){
   const el = $("stArrivo"); if(!el) return;
-  const mancanti = state.photos.filter(p=>p.remote && !p.preview).length;
+  const mancanti = state.photos.filter(p=>p.remote && !p.thumb).length;
   const tot = state.photos.length;
   if(mancanti){
     el.hidden = false;
@@ -2886,7 +2951,7 @@ async function caricaAnteprimeMancanti(){
   mostraArrivo();
   try{
     let giri = 0;
-    while(state.photos.some(p=>p.remote && !p.preview) && giri < 200){
+    while(state.photos.some(p=>p.remote && !p.thumb) && giri < 200){
       const fatte = await riparaAnteprime();
       giri++;
       mostraArrivo();
@@ -2970,24 +3035,27 @@ async function pullNuoveFoto(manuale){
 /* foto arrivate dal cloud rimaste senza immagine (anteprima non ancora caricata da chi ha importato,
    o scaricamento fallito sull\'hotspot): si riprova, poche per volta, senza bloccare nulla */
 async function riparaAnteprime(){
-  const vuote = state.photos.filter(p=>p.remote && !p.preview).slice(0,40);
+  const vuote = state.photos.filter(p=>p.remote && !p.thumb).slice(0,40);
   if(!vuote.length) return 0;
-  const senzaUrl = vuote.filter(p=>!p.anteprimaUrl).map(p=>p.code);
+  const senzaUrl = vuote.filter(p=>!p.miniUrl && !p.anteprimaUrl).map(p=>p.code);
   if(senzaUrl.length){
     try{
-      const {data} = await sb.from("foto").select("codice,anteprima_url").in("codice", senzaUrl);
-      (data||[]).forEach(f=>{ const p=state.byCode.get(f.codice); if(p && f.anteprima_url) p.anteprimaUrl=f.anteprima_url; });
+      const {data} = await sb.from("foto").select("codice,mini_url,anteprima_url").in("codice", senzaUrl);
+      (data||[]).forEach(f=>{ const p=state.byCode.get(f.codice);
+        if(p){ if(f.mini_url) p.miniUrl=f.mini_url; if(f.anteprima_url) p.anteprimaUrl=f.anteprima_url; } });
     }catch(_){}
   }
   let ok=0;
-  // in parallelo a gruppi di 6: su hotspot conta più la latenza della banda
-  const da = vuote.filter(p=>p.anteprimaUrl);
+  // per la griglia basta la MINIATURA: la grande si scarica solo quando serve davvero
+  const da = vuote.filter(p=>p.miniUrl || p.anteprimaUrl);
   for(let i=0;i<da.length;i+=6){
     await Promise.all(da.slice(i,i+6).map(async p=>{
       try{
-        const r=await fetch(p.anteprimaUrl); if(!r.ok) return;
-        const blob=await r.blob(); thumbCache.set(ckey(p.code), blob);
-        p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}
+        const url = p.miniUrl || p.anteprimaUrl;
+        const r=await fetch(url); if(!r.ok) return;
+        const blob=await r.blob();
+        if(!p.miniUrl){ thumbCache.set(ckey(p.code), blob); p.preview=blob; }   // era la grande
+        try{ p.thumb=await blobToThumb(blob); }catch(_){}
         ok++;
       }catch(_){}
     }));
@@ -2996,6 +3064,24 @@ async function riparaAnteprime(){
   }
   if(ok){ paintVisible(); updateThumbCloud(); }
   return ok;
+}
+
+/* La grande da 1280 serve solo per aprire la foto, mandarla sul monitor, stamparla o esportarla
+   quando l'originale non c'è. Si scarica al momento, non all'apertura della giornata. */
+async function ensurePreview(p){
+  if(p.preview) return p.preview;
+  const cached = await thumbCache.get(ckey(p.code));
+  if(cached){ p.preview=cached; return p.preview; }
+  if(!p.anteprimaUrl && p.dbId && sb){
+    try{ const {data}=await sb.from("foto").select("anteprima_url").eq("id",p.dbId).single();
+      if(data && data.anteprima_url) p.anteprimaUrl=data.anteprima_url; }catch(_){}
+  }
+  if(!p.anteprimaUrl) return null;
+  try{
+    const r=await fetch(p.anteprimaUrl); if(!r.ok) return null;
+    const blob=await r.blob(); thumbCache.set(ckey(p.code), blob);
+    p.preview=blob; return blob;
+  }catch(_){ return null; }
 }
 setInterval(()=>{ if(!document.hidden) pullNuoveFoto(); }, 15000);   // ogni 15 secondi
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) pullNuoveFoto(); });
@@ -3010,9 +3096,10 @@ function updateThumbCloud(){
   $("stTotal").textContent = scope.length;
   const el=$("stThumbCloud"); if(!el) return;
   if(!cloud.servizio){ el.textContent="—"; return; }
-  // conta sempre su TUTTA la giornata: è l'avanzamento che serve sapere, non quello del rullo aperto
+  // conta sempre su TUTTA la giornata, e conta le MINIATURE: sono quelle che fanno
+  // comparire le foto su tablet e altre postazioni
   const tot=state.photos.length;
-  const onCloud=state.photos.filter(p=>p.anteprimaUrl).length;
+  const onCloud=state.photos.filter(p=>p.miniUrl || p.anteprimaUrl).length;
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
   el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
@@ -3031,7 +3118,8 @@ function addRemotePhotoFast(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
-            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, anteprimaUrl:f.anteprima_url, remote:true };
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -3039,13 +3127,19 @@ async function addRemotePhoto(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
-            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, anteprimaUrl:f.anteprima_url, remote:true };
-  // prova la cache locale, poi la rete
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
+  // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
-  if(!blob && f.anteprima_url){
-    try{ const r=await fetch(f.anteprima_url); if(r.ok){ blob=await r.blob(); thumbCache.set(ckey(f.codice), blob); } }catch(_){}
+  if(blob){ p.preview=blob; }
+  if(!blob){
+    const url = f.mini_url || f.anteprima_url;
+    if(url){
+      try{ const r=await fetch(url); if(r.ok){ blob=await r.blob();
+        if(!f.mini_url){ thumbCache.set(ckey(f.codice), blob); p.preview=blob; } } }catch(_){}
+    }
   }
-  if(blob){ p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}}
+  if(blob){ try{ p.thumb=await blobToThumb(blob); }catch(_){}}
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 /* La griglia mostra le foto nell'ordine in cui entrano in memoria. Quelle che arrivano dal cloud
