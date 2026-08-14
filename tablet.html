@@ -298,18 +298,18 @@ function visible(){
   return list;
 }
 function render(){
-  // schede rullo
+  // schede rullo — niente "Tutte": mille foto in una griglia sola rallentano il tablet
   const ls=letters(); const nav=$("tabs"); nav.hidden=ls.length===0;
-  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
-  const favN=scope.filter(p=>p.fav).length;   // preferiti del rullo attivo (o di tutti su "Tutte")
+  if(ls.length && (!S.letter || !ls.includes(S.letter))){ S.letter = ls[0]; S.gruppo = null; }
+  const scope = S.photos.filter(p=>p.letter===S.letter);
+  const favN=scope.filter(p=>p.fav).length;   // preferiti del rullo attivo
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
-    `<div class="rtab ${!S.letter?'on':''}" data-l="">Tutte <span class="cnt">${S.photos.length}</span></div>`+
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
     gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G && p.letter===S.letter).length}</span></div>`).join("");
   nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
-    else { S.gruppo=null; S.letter=b.dataset.l||null; }
+    else { S.gruppo=null; S.letter=b.dataset.l||S.letter; }
     render(); $("grid").scrollTop=0;
   });
 
@@ -320,8 +320,14 @@ function render(){
   // griglia
   const list=visible(); const g=$("grid");
   $("empty").hidden = !!S.sede;
-  if(!S.sede){ g.innerHTML=""; return; }
-  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; return; }
+  if(!S.sede){ g.innerHTML=""; lastGrid=""; return; }
+  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; lastGrid=""; return; }
+  // se la griglia è identica a quella già disegnata, non la rifaccio: il controllo automatico
+  // ogni 25 secondi ricostruiva tutto e faceva ridisegnare le anteprime da capo
+  const firma = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0")+"|"+
+                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")).join(",");
+  if(firma===lastGrid && g.childElementCount){ updateSelBar(); return; }
+  lastGrid = firma;
   resetLazy();
   g.innerHTML = list.map((p,i)=>`
     <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
@@ -459,6 +465,7 @@ async function logActivity(list, azione){
    con 500 foto sono ~50 MB su hotspot e centinaia di immagini decodificate in memoria.
    Ora si carica solo quello che sta per entrare in vista, poche alla volta. */
 let lazyObs = null;
+let lastGrid = "";              // firma della griglia già disegnata
 const drawQueue = [];
 let drawActive = 0;
 const DRAW_PARALLEL = 4;        // quante anteprime scarico/disegno insieme
@@ -488,22 +495,32 @@ function pumpDraw(){
   }
 }
 
-// disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
+// disegna l'anteprima su canvas.
+// Si scarica il file e si decodifica con createImageBitmap: l'<img> con decode() su Android
+// a volte si considera pronta quando non lo è, ed è così che uscivano le foto tagliate a metà.
+// Si decodifica anche PICCOLA (la cella è ~110px, non serve un'immagine da 1280): meno memoria e più velocità.
 const thumbBmpCache = new Map();
+const BMP_W = 340;
 async function drawThumb(cv, p){
   try{
     let bmp = thumbBmpCache.get(p.url);
     if(!bmp){
-      const im=new Image(); im.crossOrigin="anonymous"; im.decoding="async"; im.src=p.url;
-      await im.decode();
-      bmp = im; thumbBmpCache.set(p.url, im);
-      // 400 immagini da 1280px decodificate sono oltre un giga di memoria: su Android il tablet
-      // rallenta e la scheda si ricarica da sola. Ne tengo poche, tanto il file resta nella cache di Chrome.
-      if(thumbBmpCache.size>80){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
+      const r = await fetch(p.url, {cache:"force-cache"});
+      if(!r.ok) return;
+      const blob = await r.blob();
+      try{ bmp = await createImageBitmap(blob, {resizeWidth:BMP_W, resizeQuality:"medium"}); }
+      catch(_){ bmp = await createImageBitmap(blob); }
+      thumbBmpCache.set(p.url, bmp);
+      if(thumbBmpCache.size>150){
+        const k = thumbBmpCache.keys().next().value;
+        const vecchia = thumbBmpCache.get(k);
+        thumbBmpCache.delete(k);
+        try{ vecchia.close && vecchia.close(); }catch(_){}
+      }
     }
     await new Promise(r=>requestAnimationFrame(r)); // aspetta che il layout sia pronto
     // foto orizzontale → cella larga (span 2) così non resta piccola
-    if(bmp.naturalWidth > bmp.naturalHeight*1.15){
+    if(bmp.width > bmp.height*1.15){
       p.wide = true;   // me lo ricordo: al prossimo render la cella nasce già larga, senza salti
       const cell=cv.closest(".cell"); if(cell && !cell.classList.contains("wide")){ cell.classList.add("wide"); await new Promise(r=>requestAnimationFrame(r)); }
     }
@@ -514,9 +531,10 @@ async function drawThumb(cv, p){
     cv.height=Math.round(rect.height*dpr);
     const ctx=cv.getContext("2d");
     ctx.fillStyle="#000"; ctx.fillRect(0,0,cv.width,cv.height);
-    const k=Math.min(cv.width/bmp.naturalWidth, cv.height/bmp.naturalHeight);
-    const w=bmp.naturalWidth*k, h=bmp.naturalHeight*k;
+    const k=Math.min(cv.width/bmp.width, cv.height/bmp.height);
+    const w=bmp.width*k, h=bmp.height*k;
     ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
+    cv.dataset.drawn="1";
   }catch(_){}
 }
 function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
@@ -536,7 +554,8 @@ async function toggleFav(p){
   const favN=scope.filter(x=>x.fav).length;
   $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
   // se sto guardando solo i preferiti e ne tolgo uno, aggiorno la vista
-  if(S.favOnly && !p.fav) render();
+  if(S.favOnly && !p.fav){ lastGrid=""; render(); }
+  else lastGrid="";   // la cella è già aggiornata a mano, ma la firma non deve restare vecchia
   if(sb){ try{ await sb.from("foto").update({preferito:p.fav}).eq("id",p.id); }catch(_){ toast("Preferito salvato, sincronizzo appena possibile"); } }
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
