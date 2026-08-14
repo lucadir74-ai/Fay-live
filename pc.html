@@ -990,7 +990,7 @@ $("restoreInput").onchange = async e=>{
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       const prevBlob=await toBlobAsync(c,0.85);
-      p.preview=prevBlob; thumbCache.set(p.code, prevBlob);
+      p.preview=prevBlob; thumbCache.set(ckey(p.code), prevBlob);
       if(!p.thumb){ try{ p.thumb=await blobToThumb(prevBlob); }catch(_){} }
       // ricarica sul cloud mantenendo lo stesso codice/riga
       const ap=cloud.servizio.id+"/"+p.code+".jpg";
@@ -1312,7 +1312,7 @@ async function processBatch(batch){
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       p.preview = await toBlobAsync(c, 0.85);
-      thumbCache.set(p.code, p.preview);
+      thumbCache.set(ckey(p.code), p.preview);
     }catch(err){ console.warn("anteprima", p.code, err); }
     // sincronizzazione cloud NON bloccante: va in coda parallela, l'import prosegue
     queueThumbSync(p);
@@ -2545,6 +2545,11 @@ addEventListener("keydown", e=>{
    ===================================================================== */
 
 // cache locale delle anteprime (IndexedDB) per l'offline
+/* Chiave della cache locale: DEVE contenere la giornata.
+   I codici ripartono da A-001 a ogni svuotamento, quindi con la sola sigla una postazione
+   ripescava dal proprio disco la vecchia foto A-001 al posto di quella nuova. */
+function ckey(code){ return (cloud.servizio? cloud.servizio.id : "nosrv") + "|" + code; }
+
 const thumbCache = {
   db:null,
   open(){ return this.db? Promise.resolve(this.db) : new Promise((res,rej)=>{
@@ -2882,6 +2887,22 @@ async function pullNuoveFoto(manuale){
     const {data:rulli, error} = await sb.from("rulli")
       .select("id,lettera,ultimo_num,descrizione").eq("servizio_id", cloud.servizio.id);
     if(error) throw error;
+    /* Rulli spariti dal cloud (giornata o rullo svuotati da un'altra postazione): finora
+       restavano a video qui, perché la sincronizzazione sapeva solo AGGIUNGERE. */
+    const vive = new Set((rulli||[]).map(r=>r.lettera));
+    const fantasmi = state.photos.filter(p=>p.remote && !vive.has(p.letter));
+    if(fantasmi.length){
+      const morte = new Set(fantasmi.map(p=>p.code));
+      state.photos = state.photos.filter(p=>!morte.has(p.code));
+      state.byCode = new Map(state.photos.map(p=>[p.code,p]));
+      for(const id of [...state.selection]) if(!state.photos.find(p=>p.id===id)) state.selection.delete(id);
+      [...new Set(fantasmi.map(p=>p.letter))].forEach(L=>{
+        if(!state.photos.some(p=>p.letter===L)){ delete state.counters[L]; delete state.letterDesc[L]; delete cloud.rulli[L]; }
+      });
+      cellPool.forEach(el=>el.remove()); cellPool.clear();
+      renderTabs(); layoutGrid(); updateThumbCloud();
+      toast(`${fantasmi.length} foto rimosse: svuotate dal cloud da un'altra postazione`);
+    }
     let nuove=0, letters=new Set();
     for(const r of (rulli||[])){
       cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
@@ -2943,7 +2964,7 @@ async function riparaAnteprime(){
     await Promise.all(da.slice(i,i+6).map(async p=>{
       try{
         const r=await fetch(p.anteprimaUrl); if(!r.ok) return;
-        const blob=await r.blob(); thumbCache.set(p.code, blob);
+        const blob=await r.blob(); thumbCache.set(ckey(p.code), blob);
         p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}
         ok++;
       }catch(_){}
@@ -2997,9 +3018,9 @@ async function addRemotePhoto(f, letter){
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, anteprimaUrl:f.anteprima_url, remote:true };
   // prova la cache locale, poi la rete
-  let blob = await thumbCache.get(f.codice);
+  let blob = await thumbCache.get(ckey(f.codice));
   if(!blob && f.anteprima_url){
-    try{ const r=await fetch(f.anteprima_url); if(r.ok){ blob=await r.blob(); thumbCache.set(f.codice, blob); } }catch(_){}
+    try{ const r=await fetch(f.anteprima_url); if(r.ok){ blob=await r.blob(); thumbCache.set(ckey(f.codice), blob); } }catch(_){}
   }
   if(blob){ p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}}
   state.photos.push(p); state.byCode.set(p.code,p);
