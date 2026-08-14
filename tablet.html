@@ -26,6 +26,9 @@
   .favtoggle:active{background:var(--line)}
   .favtoggle.on{border-color:var(--fav);color:var(--fav)}
   .favtoggle .heart{font-size:18px}
+  .favtoggle.busy{border-color:var(--accent);color:var(--accent);opacity:.75}
+  .favtoggle.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
 
   /* schede rullo grandi, scorrevoli */
   nav{display:flex;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line);
@@ -123,6 +126,7 @@
     <select id="sedeSel"><option value="">Sede…</option></select>
     <select id="giornoSel" hidden></select>
     <div class="spacer"></div>
+    <button class="favtoggle" id="btnRefresh"><span>⟳</span><span>Aggiorna</span></button>
     <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
@@ -185,6 +189,7 @@ try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
 const $ = id => document.getElementById(id);
 const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, gruppo:null, favOnly:false, channel:null, selmode:false, selected:new Set() };
 
+const SEDE_KEY = "faylive_tablet_sede";
 const CUTOFF_H = 6;
 function serviceDateStr(){
   const d=new Date(Date.now()-CUTOFF_H*3600*1000);
@@ -200,6 +205,12 @@ async function loadSedi(){
   if(error){ setDot(false,"Errore sedi"); return; }
   $("sedeSel").innerHTML='<option value="">Sede…</option>'+data.map(s=>`<option value="${s.id}">${esc(s.nome)}</option>`).join("");
   $("sedeSel")._sedi=data;
+  // riapre da sola l'ultima sede usata su questo tablet
+  const ultima = (()=>{ try{ return localStorage.getItem(SEDE_KEY); }catch(_){ return null; } })();
+  if(ultima){
+    const s = data.find(x=>x.id===ultima);
+    if(s){ $("sedeSel").value=s.id; chooseSede(s); }
+  }
 }
 $("sedeSel").onchange = e=>{
   const s=(e.target._sedi||[]).find(x=>x.id===e.target.value);
@@ -207,6 +218,7 @@ $("sedeSel").onchange = e=>{
 };
 async function chooseSede(s){
   S.sede=s; setDot(true,"Carico…");
+  try{ localStorage.setItem(SEDE_KEY, s.id); }catch(_){}
   const oggi=serviceDateStr();
   const {data:giorni}=await sb.from("servizi").select("*").eq("sede_id",s.id).order("data_servizio",{ascending:false});
   let lista=giorni||[];
@@ -249,7 +261,8 @@ async function openServizio(sv){
 /* ---------- tempo reale ---------- */
 function subscribe(){
   if(!S.servizio) return;
-  S.channel = sb.channel("tab-"+S.servizio.id)
+  if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
+  S.channel = sb.channel("tab-"+S.servizio.id+"-"+Date.now())
     .on("postgres_changes",{event:"INSERT",schema:"public",table:"foto"}, async payload=>{
       const f=payload.new;
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
@@ -627,6 +640,93 @@ viewer.addEventListener("touchend",e=>{
   touchStart=null;
 },{passive:false});
 function dist(t){ const a=t[0], b=t[1]; return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+
+/* ---------- aggiornamento (manuale e automatico) ---------- */
+let opBusy = 0;      // >0 mentre sto condividendo/esportando: non aggiorno sotto i piedi
+let refreshing = false;
+
+// avvolge condivisione/esportazione per sapere quando sono in corso
+(function(){
+  const _share = sharePhotos, _export = exportPhotos;
+  sharePhotos  = async function(...a){ opBusy++; try{ return await _share(...a); } finally{ opBusy--; } };
+  exportPhotos = async function(...a){ opBusy++; try{ return await _export(...a); } finally{ opBusy--; } };
+})();
+
+async function refresh(manuale){
+  if(!sb || !S.sede || refreshing) return;
+  refreshing = true;
+  const btn = $("btnRefresh"); if(btn) btn.classList.add("busy");
+  try{
+    // se non c'è ancora una giornata aperta, riparto dalla sede
+    if(!S.servizio){ await chooseSede(S.sede); return; }
+
+    const g = $("grid");
+    const scroll = g.scrollTop;
+    const prevLetter = S.letter, prevGruppo = S.gruppo;
+    const prima = S.photos.length;
+
+    const {data:rulli, error:eR} = await sb.from("rulli").select("*").eq("servizio_id", S.servizio.id);
+    if(eR) throw eR;
+    const rmap = {}; (rulli||[]).forEach(r=> rmap[r.id]={lettera:r.lettera, desc:r.descrizione});
+    const ids = Object.keys(rmap);
+
+    const nuove = []; const map = new Map();
+    if(ids.length){
+      const {data:foto, error:eF} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice");
+      if(eF) throw eF;
+      (foto||[]).forEach(f=>{
+        const r = rmap[f.rullo_id]; if(!r) return;
+        const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url,
+                    origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+        nuove.push(p); map.set(p.id, p);
+      });
+    }
+
+    S.rulli = rmap; S.photos = nuove; S.byId = map;
+    // tengo il rullo/gruppo che stavo guardando, se esiste ancora
+    S.letter = (prevLetter && nuove.some(p=>p.letter===prevLetter)) ? prevLetter : null;
+    S.gruppo = (prevGruppo && nuove.some(p=>p.gruppo===prevGruppo)) ? prevGruppo : null;
+    // tengo la selezione, scartando le foto sparite
+    S.selected = new Set([...S.selected].filter(id=> map.has(id)));
+
+    render();
+    g.scrollTop = scroll;
+    requestAnimationFrame(()=>{ g.scrollTop = scroll; });
+
+    const diff = nuove.length - prima;
+    const ora = new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+    setDot(true, "Aggiornato alle "+ora);
+    if(diff > 0) toast(diff===1 ? "1 foto nuova" : `${diff} foto nuove`);
+    else if(manuale) toast("Nessuna foto nuova");
+
+    subscribe();   // riaggancia il tempo reale se il collegamento era caduto
+  }catch(err){
+    console.warn("refresh", err);
+    setDot(false, "Aggiornamento non riuscito");
+    if(manuale) toast("Aggiornamento non riuscito — controlla la linea");
+  }finally{
+    refreshing = false;
+    const b = $("btnRefresh"); if(b) b.classList.remove("busy");
+  }
+}
+
+$("btnRefresh").onclick = ()=> refresh(true);
+
+// aggiornamento automatico: solo a schermo acceso e quando non sto facendo altro
+function autoRefreshOk(){
+  return document.visibilityState === "visible"
+      && !opBusy
+      && !S.selmode
+      && !$("viewer").classList.contains("open")
+      && !$("grpSheet").classList.contains("open");
+}
+setInterval(()=>{ if(autoRefreshOk()) refresh(false); }, 25000);
+
+// al rientro nell'app (dopo Gmail, Filemail, schermo spento…) mi riallineo subito
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible" && autoRefreshOk()) refresh(false);
+});
+addEventListener("online", ()=>{ if(autoRefreshOk()) refresh(false); });
 
 /* avvio */
 loadSedi();
