@@ -322,8 +322,9 @@ function render(){
   $("empty").hidden = !!S.sede;
   if(!S.sede){ g.innerHTML=""; return; }
   if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; return; }
+  resetLazy();
   g.innerHTML = list.map((p,i)=>`
-    <div class="cell ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
+    <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
       ${(p.gruppo && S.letter)?`<span class="grp">${esc(p.gruppo)}</span>`:""}
@@ -349,7 +350,8 @@ function render(){
     c.addEventListener("touchstart", startLP, {passive:true});
     c.addEventListener("touchmove", cancelLP, {passive:true});
     c.addEventListener("touchend", cancelLP, {passive:true});
-    drawThumb(cv, p);
+    // la foto si scarica solo quando la cella sta per entrare in vista
+    observeCell(c);
   });
   updateSelBar();
 }
@@ -452,6 +454,40 @@ async function logActivity(list, azione){
     });
   }catch(_){}
 }
+/* ---------- caricamento a scorrimento ----------
+   Prima il tablet scaricava e decodificava TUTTE le anteprime della griglia in una volta:
+   con 500 foto sono ~50 MB su hotspot e centinaia di immagini decodificate in memoria.
+   Ora si carica solo quello che sta per entrare in vista, poche alla volta. */
+let lazyObs = null;
+const drawQueue = [];
+let drawActive = 0;
+const DRAW_PARALLEL = 4;        // quante anteprime scarico/disegno insieme
+
+function resetLazy(){
+  if(lazyObs){ try{ lazyObs.disconnect(); }catch(_){} }
+  drawQueue.length = 0;         // butto via il lavoro della griglia precedente
+  lazyObs = new IntersectionObserver(entries=>{
+    for(const en of entries){
+      if(!en.isIntersecting) continue;
+      const cell = en.target;
+      lazyObs.unobserve(cell);
+      const p = S.byId.get(cell.dataset.id);
+      const cv = cell.querySelector("canvas");
+      if(p && cv) queueDraw(cv, p);
+    }
+  }, { root: $("grid"), rootMargin: "600px 0px" });   // un po' di anticipo sullo scorrimento
+}
+function observeCell(cell){ if(lazyObs) lazyObs.observe(cell); }
+function queueDraw(cv, p){ drawQueue.push([cv, p]); pumpDraw(); }
+function pumpDraw(){
+  while(drawActive < DRAW_PARALLEL && drawQueue.length){
+    const [cv, p] = drawQueue.shift();
+    if(!cv.isConnected) continue;              // cella già sostituita da un nuovo render
+    drawActive++;
+    drawThumb(cv, p).finally(()=>{ drawActive--; pumpDraw(); });
+  }
+}
+
 // disegna l'anteprima su canvas (evita il bug dei JPEG progressivi su Android)
 const thumbBmpCache = new Map();
 async function drawThumb(cv, p){
@@ -461,11 +497,14 @@ async function drawThumb(cv, p){
       const im=new Image(); im.crossOrigin="anonymous"; im.decoding="async"; im.src=p.url;
       await im.decode();
       bmp = im; thumbBmpCache.set(p.url, im);
-      if(thumbBmpCache.size>400){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
+      // 400 immagini da 1280px decodificate sono oltre un giga di memoria: su Android il tablet
+      // rallenta e la scheda si ricarica da sola. Ne tengo poche, tanto il file resta nella cache di Chrome.
+      if(thumbBmpCache.size>80){ const k=thumbBmpCache.keys().next().value; thumbBmpCache.delete(k); }
     }
     await new Promise(r=>requestAnimationFrame(r)); // aspetta che il layout sia pronto
     // foto orizzontale → cella larga (span 2) così non resta piccola
     if(bmp.naturalWidth > bmp.naturalHeight*1.15){
+      p.wide = true;   // me lo ricordo: al prossimo render la cella nasce già larga, senza salti
       const cell=cv.closest(".cell"); if(cell && !cell.classList.contains("wide")){ cell.classList.add("wide"); await new Promise(r=>requestAnimationFrame(r)); }
     }
     const rect=cv.getBoundingClientRect();
@@ -689,6 +728,8 @@ async function refresh(manuale){
         const r = rmap[f.rullo_id]; if(!r) return;
         const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.anteprima_url,
                     origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+        const vecchia = S.byId.get(f.id);
+        if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile
         nuove.push(p); map.set(p.id, p);
       });
     }
