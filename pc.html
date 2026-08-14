@@ -208,7 +208,7 @@
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
-    <input type="text" id="searchBox" placeholder="Codici: 35 36 41-45  ( / )" title="Un codice apre la foto. Più codici separati da spazio o virgola (anche intervalli tipo 41-45) selezionano quelle foto">
+    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
     <button id="btnMonitor">Avvia slideshow</button>
     <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
@@ -232,7 +232,7 @@
         <span><kbd>invio</kbd></span><span>ingrandisce la foto evidenziata · chiude quella aperta · chiude la vista insieme e fa ripartire lo slideshow</span>
         <span><kbd>spazio</kbd></span><span>seleziona con la tastiera</span>
         <span><kbd>frecce</kbd></span><span>navigano tra le foto</span>
-        <span><kbd>/</kbd></span><span>cerca per codice (es. B47). Più codici — "35 36 41-45" — selezionano quelle foto; invio conferma</span>
+        <span><kbd>/</kbd></span><span>cerca per codice (es. B47) — invio poi chiude</span>
         <span><kbd>-</kbd></span><span>manda sul monitor cliente la foto o la selezione</span>
         <span><kbd>+</kbd></span><span>toglie dal monitor (riprende lo slideshow) lasciandola aperta sul PC</span>
         <span><kbd>esc</kbd></span><span>come invio: chiude e fa ripartire lo slideshow</span>
@@ -1235,10 +1235,13 @@ async function freshFile(p){
 function toBlobAsync(c, q){ return new Promise(res=>c.toBlob(res,"image/jpeg",q)); }
 
 // decodifica ridimensionata con tripla scorta (opzioni piene → senza orientamento → via <img>)
-async function decodeScaled(blob, maxSide){
-  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium", imageOrientation:"from-image"}); }
+// maxSide = lato lungo. Per le foto verticali va vincolata l'ALTEZZA, altrimenti con resizeWidth
+// una verticale esce 1280 di larghezza e 1920 di altezza: più del doppio dei pixel, e dei byte.
+async function decodeScaled(blob, maxSide, portrait=false){
+  const sz = portrait ? {resizeHeight:maxSide} : {resizeWidth:maxSide};
+  try{ return await createImageBitmap(blob, {...sz, resizeQuality:"medium", imageOrientation:"from-image"}); }
   catch(_){ }
-  try{ return await createImageBitmap(blob, {resizeWidth:maxSide, resizeQuality:"medium"}); }
+  try{ return await createImageBitmap(blob, {...sz, resizeQuality:"medium"}); }
   catch(_){ }
   const url=URL.createObjectURL(blob);
   try{
@@ -1298,7 +1301,8 @@ async function processBatch(batch){
     }
     try{
       const srcBlob = buf? new Blob([buf], {type:p.file.type||"image/jpeg"}) : p.file;
-      const bmp = await decodeScaled(srcBlob, PV);
+      // il verso l'ho già misurato in FASE 1 (p.w/p.h): così la verticale non esce sovradimensionata
+      const bmp = await decodeScaled(srcBlob, PV, (p.h||0) > (p.w||0));
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       p.preview = await toBlobAsync(c, 0.85);
@@ -1357,6 +1361,7 @@ function pumpThumbQueue(){
       if(pend) setSync("syncing","Sincronizzo ("+pend+")"); else setSync("online");
       updateThumbCloud();
       pumpThumbQueue();
+      if(!pend) pumpOrigQueue();   // anteprime finite: ora la banda è tutta per gli originali
     });
   }
 }
@@ -1448,8 +1453,9 @@ function pumpOrigQueue(){
     origActive++;
     uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
   }
-  // 2) poi il sottofondo, solo se non c'è nulla di urgente in attesa; dalla più recente alla più vecchia
-  while(autoOrigOn() && !origQueue.length && origBg.length &&
+  // 2) poi il sottofondo, MA solo quando le anteprime hanno finito: sull'hotspot due originali da 2 MB
+  //    affamano otto anteprime da 100 KB, e il tablet resta indietro. Prima si vede, poi si carica il resto.
+  while(autoOrigOn() && !origQueue.length && !thumbQueue.length && !thumbActive && origBg.length &&
         origBgActive < ORIG_BG_PARALLEL && origActive < ORIG_PARALLEL){
     const p = origBg.pop();
     origActive++; origBgActive++;
@@ -1487,7 +1493,7 @@ function updateOrigCount(){
   const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
   let txt = base;
   if(urg) txt += " · carico originali: "+urg;
-  if(bg)  txt += " · in sottofondo: "+bg;
+  if(bg)  txt += " · in sottofondo: "+bg + ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : "");
   if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
   $("stArch").textContent = txt;
   if(urg) setSync("syncing","Carico originali ("+urg+")");
@@ -1744,54 +1750,10 @@ function paintVisible(){
 wrap.addEventListener("scroll", paintVisible, {passive:true});
 addEventListener("resize", layoutGrid);
 
-/* ---------- ricerca ----------
-   Un codice solo apre la foto. Più codici separati da spazio o virgola (es. "35 36 41-45")
-   selezionano direttamente quelle foto: da lì si stampa, si esporta o si manda sul monitor. */
-let selRicerca = new Set();          // id selezionati dalla ricerca, sostituiti a ogni battuta
-function parseMulti(raw){
-  const pezzi = raw.split(/[\s,;]+/).filter(Boolean);
-  if(pezzi.length<2) return null;
-  const foto=[], persi=[];
-  const lettera = tok => tok || state.activeLetter ||
-    ([...new Set(state.photos.map(p=>p.letter))].length===1 ? state.photos[0].letter : null);
-  for(const tok of pezzi){
-    const t = tok.replace(/[^A-Z0-9-]/g,"");
-    let m = t.match(/^([A-Z])?-?(\d{1,4})-(\d{1,4})$/);   // intervallo: 41-45, B41-45
-    if(m){
-      const L = lettera(m[1]); if(!L){ persi.push(tok); continue; }
-      const da=Math.min(+m[2],+m[3]), a2=Math.max(+m[2],+m[3]);
-      let trovate=0;
-      for(let n=da;n<=a2;n++){ const p=state.byCode.get(fmtCode(L,n)); if(p){ foto.push(p); trovate++; } }
-      if(!trovate) persi.push(tok);
-      continue;
-    }
-    m = t.match(/^([A-Z])?-?(\d{1,4})$/);                  // codice singolo: 35, B35, B-035
-    if(m){
-      const L = lettera(m[1]); if(!L){ persi.push(tok); continue; }
-      const p = state.byCode.get(fmtCode(L, parseInt(m[2],10)));
-      if(p) foto.push(p); else persi.push(tok);
-      continue;
-    }
-    persi.push(tok);
-  }
-  return { foto:[...new Set(foto)], persi };
-}
-function applicaSelezioneRicerca(foto){
-  selRicerca.forEach(id=>state.selection.delete(id));   // la battuta precedente viene sostituita
-  selRicerca.clear();
-  foto.forEach(p=>{ state.selection.add(p.id); selRicerca.add(p.id); queueOriginalUpload(p); });
-  updateSelBar(); paintVisible();
-}
+/* ---------- ricerca ---------- */
 $("searchBox").oninput = e=>{
   const raw = e.target.value.trim().toUpperCase();
-  if(!raw){ if(selRicerca.size) applicaSelezioneRicerca([]); if($("lightbox").classList.contains("open")) closeLightbox(); return; }
-  const multi = parseMulti(raw);
-  if(multi){
-    if($("lightbox").classList.contains("open")) closeLightbox();
-    applicaSelezioneRicerca(multi.foto);
-    return;
-  }
-  if(selRicerca.size) applicaSelezioneRicerca([]);
+  if(!raw){ if($("lightbox").classList.contains("open")) closeLightbox(); return; }
   const ex = parseQuery(raw);
   if(ex){
     const code = fmtCode(ex.letter, ex.num);
@@ -1813,12 +1775,6 @@ function resetSearch(){
 }
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
-    if(selRicerca.size){                       // la selezione trovata diventa definitiva
-      const multi = parseMulti($("searchBox").value.trim().toUpperCase());
-      const persi = multi ? multi.persi : [];
-      toast(`${selRicerca.size} foto selezionate` + (persi.length? ` — non trovati: ${persi.join(" ")}` : ""));
-      selRicerca.clear();
-    }
     if($("lightbox").classList.contains("open")) closeLightbox();
     resetSearch();
     return;
@@ -1843,14 +1799,14 @@ function updateSelBar(){
   $("selCount").textContent = state.selection.size;
   $("selBar").classList.toggle("show", state.selection.size>0);
 }
-$("selClear").onclick = ()=>{ state.selection.clear(); selRicerca.clear(); updateSelBar(); paintVisible(); };
+$("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
 $("selShow").onclick = ()=> presentSelection();
 /* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
    effettivamente comprate, così l'email del cliente arriva già abbinata alle SUE foto.
    Poi la selezione si azzera: la postazione è pronta per il cliente successivo. */
 function fineVendita(set){
   const codici = (set||[]).map(p=>p.code);
-  state.selection.clear(); selRicerca.clear(); updateSelBar(); paintVisible();
+  state.selection.clear(); updateSelBar(); paintVisible();
   if(codici.length) mostraQrVendita(codici);
 }
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
@@ -2486,8 +2442,7 @@ function repaintMonitor(){
 function presentSelection(){
   const set=selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  // più foto selezionate = il cliente le vede tutte insieme, non una alla volta
-  if(set.length>1) presentMosaicSet(set); else presentSet(set);
+  presentSet(set);
 }
 async function presentSet(set){
   const M=state.monitor;
