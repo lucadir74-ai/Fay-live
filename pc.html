@@ -388,6 +388,7 @@
     <span>Archivio: <b id="stArch">non impostato</b></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
+    <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
     <b id="stThumbs" hidden></b>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
@@ -1065,6 +1066,14 @@ async function importaFiles(files){
   }
   state.counters[L]=n;
   ordinaFoto();
+  // ci si sposta sul rullo appena importato: prima, senza più la scheda "Tutte",
+  // le foto nuove finivano in un rullo che non era quello aperto e sembrava non fosse successo nulla
+  if(state.activeLetter!==L){
+    state.activeLetter = L;
+    state.focusIdx = -1;
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    wrap.scrollTop = 0;
+  }
   // salva/aggiorna la descrizione rullo sul cloud
   if(sb && cloud.rulli[L] && state.letterDesc[L]){
     sbTry(()=>sb.from("rulli").update({descrizione:state.letterDesc[L]}).eq("id",cloud.rulli[L].id), "descrizione rullo");
@@ -2860,18 +2869,31 @@ async function loadServizioFoto(){
 /* Scarica in sottofondo le anteprime delle foto arrivate dal cloud, finché ne restano.
    Gira una volta sola per volta, così non si accavalla con la sincronizzazione periodica. */
 let riempendo = false;
+function mostraArrivo(){
+  const el = $("stArrivo"); if(!el) return;
+  const mancanti = state.photos.filter(p=>p.remote && !p.preview).length;
+  const tot = state.photos.length;
+  if(mancanti){
+    el.hidden = false;
+    el.textContent = `⇩ ${tot-mancanti}/${tot} anteprime — ne stanno arrivando altre…`;
+  }else{
+    el.hidden = true; el.textContent = "";
+  }
+}
 async function caricaAnteprimeMancanti(){
   if(riempendo) return;
   riempendo = true;
+  mostraArrivo();
   try{
     let giri = 0;
     while(state.photos.some(p=>p.remote && !p.preview) && giri < 200){
       const fatte = await riparaAnteprime();
       giri++;
+      mostraArrivo();
       if(!fatte) break;                       // niente da fare o rete giù: si riprova al prossimo giro
       await new Promise(r=>setTimeout(r,0));
     }
-  }finally{ riempendo = false; }
+  }finally{ riempendo = false; mostraArrivo(); }
 }
 
 /* Sincronizzazione automatica delle nuove foto.
@@ -2970,6 +2992,7 @@ async function riparaAnteprime(){
       }catch(_){}
     }));
     paintVisible();
+    if(typeof mostraArrivo==="function") mostraArrivo();
   }
   if(ok){ paintVisible(); updateThumbCloud(); }
   return ok;
