@@ -51,6 +51,13 @@
   }
   .sub{margin:0;color:var(--muted);font-size:14px}
   .sub em{font-style:normal;display:block;font-size:12.5px;opacity:.7;margin-top:3px}
+  /* foto della vendita appena chiusa: il QR se le porta dietro */
+  .foto{
+    margin:14px auto 0;padding:8px 12px;max-width:100%;
+    border:1px solid rgba(232,181,75,.35);border-radius:2px;
+    font-size:12px;letter-spacing:.06em;color:var(--gold);
+  }
+  .foto span{display:block;margin-top:4px;font-size:11px;letter-spacing:.1em;color:#B2AC9F;word-break:break-word}
 
   form{margin:22px 0 0}
   label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;text-align:left}
@@ -109,6 +116,7 @@
         <p class="eyebrow">Frame About You</p>
         <h1>Ricevi le tue foto</h1>
         <p class="sub">Scrivi la tua email, te le mandiamo noi.<em>Type your email — we'll send your photos.</em></p>
+        <p class="foto" id="fotoInfo" hidden></p>
       </div>
 
       <form id="f" novalidate>
@@ -139,6 +147,14 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 const params = new URLSearchParams(location.search);
 const servizioId = params.get("s") || "";
+// codici delle foto acquistate, messi nel QR dalla postazione a vendita chiusa
+const codici = (params.get("c") || "").split(",").map(c=>c.trim()).filter(Boolean);
+if(codici.length){
+  const box = document.getElementById("fotoInfo");
+  box.hidden = false;
+  box.innerHTML = (codici.length===1 ? "1 foto" : codici.length+" foto") +
+                  "<span>" + codici.join(" · ").replace(/[<>&"]/g,"") + "</span>";
+}
 
 const em = document.getElementById("em");
 const hint = document.getElementById("hint");
@@ -191,6 +207,7 @@ document.getElementById("f").addEventListener("submit", async e=>{
     const { error } = await sb.from("richieste_email").insert({
       servizio_id: String(servizioId),
       email: val,
+      codici: codici.length ? codici.join(",") : null,
       stato: "attesa"
     });
     if(error) throw error;

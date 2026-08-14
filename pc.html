@@ -409,6 +409,16 @@
   </div>
 </dialog>
 
+<dialog id="qrVenditaDlg">
+  <h3 style="margin-bottom:6px">Foto vendute — email del cliente</h3>
+  <p class="hint" style="margin-bottom:12px">Fai inquadrare questo codice al cliente: scriverà lui la sua email e la richiesta arriva in "Da inviare" già con questi codici.</p>
+  <div id="qrVenditaBox" style="display:flex;justify-content:center;background:#fff;border-radius:12px;padding:12px"></div>
+  <p id="qrVenditaCod" style="margin:12px 0;font-family:var(--mono);font-size:13px;color:var(--muted);word-break:break-all"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="qrVenditaClose" class="primary">Fatto</button>
+  </div>
+</dialog>
+
 <dialog id="mailDlg">
   <h3 style="margin-bottom:4px">Da inviare — email dei clienti</h3>
   <p class="hint" style="margin-bottom:10px">Arrivano dal QR sul monitor cliente. L'invio lo fai tu da Gmail.</p>
@@ -1795,8 +1805,16 @@ function updateSelBar(){
 }
 $("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
 $("selShow").onclick = ()=> presentSelection();
-$("selPrint").onclick = ()=> printPhotos(selSet());
-$("selExport").onclick = ()=> exportPhotos(selSet());
+/* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
+   effettivamente comprate, così l'email del cliente arriva già abbinata alle SUE foto.
+   Poi la selezione si azzera: la postazione è pronta per il cliente successivo. */
+function fineVendita(set){
+  const codici = (set||[]).map(p=>p.code);
+  state.selection.clear(); updateSelBar(); paintVisible();
+  if(codici.length) mostraQrVendita(codici);
+}
+$("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
+$("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
 
 /* ---------- vista insieme (selezione affiancata) ---------- */
 const cmpUrls=[];
@@ -2289,7 +2307,7 @@ function setMonState(mode){
   const M=state.monitor; M.mode=mode;
   $("monDot").classList.toggle("on", mode!=="off");
   const rl = state.monitor.letter ? ` (rullo ${state.monitor.letter})` : "";
-  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow"+rl : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
+  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow"+rl : mode==="mosaic"? "Monitor: selezione affiancata" : mode==="qrvendita"? "Monitor: QR per l'email del cliente" : "Monitor: presentazione";
   $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, invio o Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — invio o Esc per riprendere lo slideshow" : "";
   const b = $("btnMonitor"), x = $("btnMonClose");
   const tab = state.activeLetter ? "rullo "+state.activeLetter : "tutti i rulli";
@@ -2419,6 +2437,7 @@ function paintMonitorMessage(msg){
 }
 function repaintMonitor(){
   const M=state.monitor;
+  if(M.mode==="qrvendita"){ paintMonitorQrVendita(); return; }
   if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
   else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
   else if(M._last) paintMonitorPhoto(M._last, M.mode!=="off"); // in presentazione il codice resta visibile
@@ -3091,20 +3110,20 @@ $("reportClose").onclick=()=>$("reportDlg").close();
 const mail = { qrCanvas:null, qrFor:null, rows:[] };
 
 function mailQrEnabled(){ return localStorage.getItem("faylive_qr") !== "0"; }
-function emailPageUrl(){
+/* QR d'angolo: generico, per chi vuole le foto ma non ha ancora comprato.
+   Il QR della VENDITA (con i codici delle foto acquistate) è un'altra cosa: vedi qrVendita. */
+function emailPageUrl(codici){
   const base = location.href.replace(/[^/]*$/, "");
-  return base + "email.html?s=" + encodeURIComponent(cloud.servizio ? cloud.servizio.id : "");
+  let u = base + "email.html?s=" + encodeURIComponent(cloud.servizio ? cloud.servizio.id : "");
+  if(codici && codici.length) u += "&c=" + encodeURIComponent(codici.join(","));
+  return u;
 }
-
-// prepara (una volta per servizio) il QR come canvas fuori schermo
-function ensureQR(){
-  if(!cloud.servizio || typeof qrcode !== "function") return null;
-  const url = emailPageUrl();
-  if(mail.qrFor === url && mail.qrCanvas) return mail.qrCanvas;
+// disegna un QR su un canvas nuovo
+function makeQR(url, px){
+  if(typeof qrcode !== "function") return null;
   try{
-    const qr = qrcode(0, "M");
-    qr.addData(url); qr.make();
-    const n = qr.getModuleCount(), px = 8, pad = 4;
+    const qr = qrcode(0, "M"); qr.addData(url); qr.make();
+    const n = qr.getModuleCount(), pad = 4;
     const c = document.createElement("canvas");
     c.width = c.height = (n + pad*2) * px;
     const x = c.getContext("2d");
@@ -3112,9 +3131,19 @@ function ensureQR(){
     x.fillStyle = "#000";
     for(let r=0;r<n;r++) for(let col=0;col<n;col++)
       if(qr.isDark(r,col)) x.fillRect((col+pad)*px, (r+pad)*px, px, px);
-    mail.qrCanvas = c; mail.qrFor = url;
     return c;
   }catch(_){ return null; }
+}
+
+// prepara (una volta per servizio) il QR come canvas fuori schermo
+function ensureQR(){
+  if(!cloud.servizio || typeof qrcode !== "function") return null;
+  const url = emailPageUrl();
+  if(mail.qrFor === url && mail.qrCanvas) return mail.qrCanvas;
+  const c = makeQR(url, 8);
+  if(!c) return null;
+  mail.qrCanvas = c; mail.qrFor = url;
+  return c;
 }
 
 // riquadro fisso in basso a destra del monitor cliente
@@ -3144,6 +3173,55 @@ function drawMonitorQR(){
   g.restore();
 }
 
+/* ---------- QR della vendita chiusa ---------- */
+function mostraQrVendita(codici){
+  if(!mailQrEnabled()){ return; }
+  if(!cloud.servizio){ toast("Nessuna giornata cloud aperta: QR non disponibile"); return; }
+  const url = emailPageUrl(codici);
+  const c = makeQR(url, 8);
+  if(!c){ toast("QR non disponibile"); return; }
+  const box = $("qrVenditaBox");
+  box.innerHTML = "";
+  c.style.width = "260px"; c.style.height = "260px"; c.style.imageRendering = "pixelated";
+  box.append(c);
+  $("qrVenditaCod").textContent = codici.length + (codici.length===1?" foto: ":" foto: ") + codici.join("  ");
+  $("qrVenditaDlg").showModal();
+  // lo stesso QR, in grande, anche sul monitor cliente: il cliente inquadra da dove è
+  const M = state.monitor;
+  if(M.win && !M.win.closed){
+    stopTimer();
+    M._qrVendita = makeQR(url, 16);
+    M._qrCodici = codici.length;
+    setMonState("qrvendita");
+    paintMonitorQrVendita();
+  }
+}
+function paintMonitorQrVendita(){
+  const M = state.monitor; if(!M.ctx || !M._qrVendita) return;
+  const g = M.ctx, cw = M.canvas.width, ch = M.canvas.height;
+  g.fillStyle = "#000"; g.fillRect(0,0,cw,ch);
+  const side = Math.round(Math.min(cw,ch)*0.52);
+  const pad  = Math.round(side*0.09);
+  const bx = (cw-side)/2 - pad, by = (ch-side)/2 - pad*1.2;
+  g.fillStyle = "#fff";
+  g.fillRect(bx, by, side+pad*2, side+pad*2);
+  g.drawImage(M._qrVendita, bx+pad, by+pad, side, side);
+  g.fillStyle = "#fff";
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = `700 ${Math.round(ch*0.045)}px "Segoe UI", sans-serif`;
+  g.fillText("Inquadra per ricevere le tue foto", cw/2, by + side + pad*2 + ch*0.06, cw*0.9);
+  g.font = `${Math.round(ch*0.028)}px "Segoe UI", sans-serif`;
+  g.fillStyle = "#9AA3B2";
+  g.fillText("Scan to get your photos by email", cw/2, by + side + pad*2 + ch*0.115, cw*0.9);
+  g.textAlign = "left"; g.textBaseline = "alphabetic";
+}
+$("qrVenditaClose").onclick = ()=> $("qrVenditaDlg").close();
+$("qrVenditaDlg").addEventListener("close", ()=>{
+  const M = state.monitor;
+  M._qrVendita = null;
+  if(M.win && !M.win.closed && M.mode==="qrvendita") startSlideshow();   // il monitor riprende
+});
+
 async function loadMailRequests(){
   if(!sb || !cloud.servizio) return [];
   try{
@@ -3168,9 +3246,10 @@ function renderMailList(){
     const t = new Date(r.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
     const done = r.stato==="inviata";
     const mailTxt = (r.email||"").replace(/[<>&"]/g,"");
+    const cod = (r.codici||"").replace(/[<>&"]/g,"");
     return `<div style="padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap;opacity:${done?.5:1}">
       <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
-      <b style="flex:1;min-width:180px;word-break:break-all;${done?'text-decoration:line-through':''}">${mailTxt}</b>
+      <b style="flex:1;min-width:180px;word-break:break-all;${done?'text-decoration:line-through':''}">${mailTxt}${cod?`<span style="display:block;font-weight:400;font-size:12px;color:var(--muted);font-family:var(--mono)">${cod}</span>`:""}</b>
       <button data-act="copy" data-id="${r.id}">Copia</button>
       <button data-act="gmail" data-id="${r.id}">Gmail</button>
       <button data-act="done" data-id="${r.id}" class="${done?'':'primary'}">${done?'Riapri':'Inviata'}</button>
