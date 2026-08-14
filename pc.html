@@ -2812,16 +2812,37 @@ async function loadServizioFoto(){
   const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
   const ids=(rulli||[]).map(r=>r.id);
   if(!ids.length){ renderTabs(); layoutGrid(); return; }
-  // SOLO le foto dei rulli di questa giornata
-  const {data:foto} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice");
+  // SOLO le foto dei rulli di questa giornata.
+  // Prima si registrano tutte (nessun download): la griglia e le schede compaiono subito.
+  // Le anteprime arrivano dopo, in sottofondo e in parallelo — prima erano scaricate una alla
+  // volta dentro questo ciclo, e su 1000 foto la giornata restava su "Apro la giornata…" per minuti.
+  const {data:foto} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice").limit(20000);
   for(const f of (foto||[])){
     if(state.byCode.has(f.codice)) continue;
     const r=rulliById[f.rullo_id]; if(!r) continue;
-    await addRemotePhoto(f, r.lettera);
+    addRemotePhotoFast(f, r.lettera);
   }
   ordinaFoto();
   renderTabs(); layoutGrid(); updateThumbCloud();
   if(typeof updatePrintQueueBadge==="function") updatePrintQueueBadge();
+  caricaAnteprimeMancanti();     // non si aspetta: riempie la griglia man mano
+}
+
+/* Scarica in sottofondo le anteprime delle foto arrivate dal cloud, finché ne restano.
+   Gira una volta sola per volta, così non si accavalla con la sincronizzazione periodica. */
+let riempendo = false;
+async function caricaAnteprimeMancanti(){
+  if(riempendo) return;
+  riempendo = true;
+  try{
+    let giri = 0;
+    while(state.photos.some(p=>p.remote && !p.preview) && giri < 200){
+      const fatte = await riparaAnteprime();
+      giri++;
+      if(!fatte) break;                       // niente da fare o rete giù: si riprova al prossimo giro
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }finally{ riempendo = false; }
 }
 
 /* Sincronizzazione automatica delle nuove foto.
@@ -2871,7 +2892,7 @@ async function pullNuoveFoto(manuale){
     }else if(manuale){
       toast("Nessuna foto nuova sul cloud");
     }
-    await riparaAnteprime();
+    caricaAnteprimeMancanti();   // in sottofondo, non blocca il controllo periodico
     return nuove;
   }catch(err){
     console.warn("pullNuoveFoto", err);
@@ -2883,7 +2904,7 @@ async function pullNuoveFoto(manuale){
    o scaricamento fallito sull\'hotspot): si riprova, poche per volta, senza bloccare nulla */
 async function riparaAnteprime(){
   const vuote = state.photos.filter(p=>p.remote && !p.preview).slice(0,40);
-  if(!vuote.length) return;
+  if(!vuote.length) return 0;
   const senzaUrl = vuote.filter(p=>!p.anteprimaUrl).map(p=>p.code);
   if(senzaUrl.length){
     try{
@@ -2892,16 +2913,21 @@ async function riparaAnteprime(){
     }catch(_){}
   }
   let ok=0;
-  for(const p of vuote){
-    if(!p.anteprimaUrl) continue;
-    try{
-      const r=await fetch(p.anteprimaUrl); if(!r.ok) continue;
-      const blob=await r.blob(); thumbCache.set(p.code, blob);
-      p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}
-      ok++;
-    }catch(_){}
+  // in parallelo a gruppi di 6: su hotspot conta più la latenza della banda
+  const da = vuote.filter(p=>p.anteprimaUrl);
+  for(let i=0;i<da.length;i+=6){
+    await Promise.all(da.slice(i,i+6).map(async p=>{
+      try{
+        const r=await fetch(p.anteprimaUrl); if(!r.ok) return;
+        const blob=await r.blob(); thumbCache.set(p.code, blob);
+        p.preview=blob; try{ p.thumb=await blobToThumb(blob); }catch(_){}
+        ok++;
+      }catch(_){}
+    }));
+    paintVisible();
   }
   if(ok){ paintVisible(); updateThumbCloud(); }
+  return ok;
 }
 setInterval(()=>{ if(!document.hidden) pullNuoveFoto(); }, 15000);   // ogni 15 secondi
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) pullNuoveFoto(); });
@@ -2930,6 +2956,16 @@ $("stThumbCloud").onclick = ()=>{
 };
 
 // inserisce nella griglia una foto che arriva dal cloud (senza file originale locale)
+/* Aggiunge SOLO la scheda della foto, senza scaricare l'anteprima.
+   Serve all'apertura di una giornata già piena: prima si vede la griglia, poi arrivano le immagini. */
+function addRemotePhotoFast(f, letter){
+  if(state.byCode.has(f.codice)) return;
+  const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
+            file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, anteprimaUrl:f.anteprima_url, remote:true };
+  state.photos.push(p); state.byCode.set(p.code,p);
+}
+
 async function addRemotePhoto(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
