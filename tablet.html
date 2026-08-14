@@ -285,10 +285,14 @@ function subscribe(){
 
 /* ---------- rendering griglia ---------- */
 function letters(){ return [...new Set(S.photos.map(p=>p.letter))].sort(); }
-function gruppi(){ return [...new Set(S.photos.map(p=>p.gruppo).filter(Boolean))].sort(); }
+// i gruppi appartengono al rullo in cui sono stati creati: fuori da quel rullo non esistono
+function gruppi(){
+  if(!S.letter) return [];
+  return [...new Set(S.photos.filter(p=>p.letter===S.letter).map(p=>p.gruppo).filter(Boolean))].sort();
+}
 function visible(){
   let list;
-  if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo);        // il gruppo attraversa i rulli
+  if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo && p.letter===S.letter);   // resta dentro il rullo
   else list = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
   if(S.favOnly) list = list.filter(p=>p.fav);
   return list;
@@ -302,7 +306,7 @@ function render(){
   nav.innerHTML =
     `<div class="rtab ${!S.letter?'on':''}" data-l="">Tutte <span class="cnt">${S.photos.length}</span></div>`+
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
-    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G).length}</span></div>`).join("");
+    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G && p.letter===S.letter).length}</span></div>`).join("");
   nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
     else { S.gruppo=null; S.letter=b.dataset.l||null; }
@@ -322,7 +326,7 @@ function render(){
     <div class="cell ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
-      ${p.gruppo?`<span class="grp">${esc(p.gruppo)}</span>`:""}
+      ${(p.gruppo && S.letter)?`<span class="grp">${esc(p.gruppo)}</span>`:""}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`).join("");
@@ -378,7 +382,9 @@ $("selAll").onclick=()=>{
 function apriGruppi(){
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
-  $("grpCount").textContent = ps.length===1 ? "1 foto selezionata" : ps.length+" foto selezionate";
+  // i gruppi vivono dentro un rullo: da "Tutte" non si crea nulla
+  if(!S.letter){ toast("Scegli prima un rullo"); return; }
+  $("grpCount").textContent = (ps.length===1 ? "1 foto selezionata" : ps.length+" foto selezionate")+" · rullo "+S.letter;
   const list=$("grpList");
   const gs=gruppi();
   list.innerHTML = gs.length ? gs.map(g=>`<button data-g="${esc(g)}">📁 ${esc(g)}</button>`).join("")
@@ -388,15 +394,20 @@ function apriGruppi(){
   $("grpSheet").classList.add("open");
 }
 async function assegnaGruppo(nome){
-  const ps=selectedPhotos();
+  const tutte=selectedPhotos();
   $("grpSheet").classList.remove("open");
-  if(!ps.length) return;
+  if(!tutte.length) return;
+  // sicurezza: se la selezione contiene foto di altri rulli, le lascio fuori
+  const ps = S.letter ? tutte.filter(p=>p.letter===S.letter) : tutte;
+  const escluse = tutte.length - ps.length;
+  if(!ps.length){ toast("Nessuna foto del rullo "+S.letter+" tra quelle selezionate"); return; }
   const ids=ps.map(p=>p.id);
   try{
     const {error} = await sb.from("foto").update({gruppo: nome}).in("id", ids);
     if(error) throw error;
     ps.forEach(p=> p.gruppo = nome);
-    toast(nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo`);
+    toast((nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo`)
+          + (escluse ? ` · ${escluse} di altri rulli non toccate` : ""));
   }catch(err){
     console.warn("assegnaGruppo", err);
     toast("Non riesco a salvare il gruppo: " + (err.message||err));
@@ -685,7 +696,7 @@ async function refresh(manuale){
     S.rulli = rmap; S.photos = nuove; S.byId = map;
     // tengo il rullo/gruppo che stavo guardando, se esiste ancora
     S.letter = (prevLetter && nuove.some(p=>p.letter===prevLetter)) ? prevLetter : null;
-    S.gruppo = (prevGruppo && nuove.some(p=>p.gruppo===prevGruppo)) ? prevGruppo : null;
+    S.gruppo = (prevGruppo && S.letter && nuove.some(p=>p.gruppo===prevGruppo && p.letter===S.letter)) ? prevGruppo : null;
     // tengo la selezione, scartando le foto sparite
     S.selected = new Set([...S.selected].filter(id=> map.has(id)));
 
