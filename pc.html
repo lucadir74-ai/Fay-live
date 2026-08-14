@@ -997,7 +997,7 @@ $("restoreInput").onchange = async e=>{
       const ap=cloud.servizio.id+"/"+p.code+".jpg";
       const up=await sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true});
       if(!up.error){
-        p.anteprimaUrl=sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+        p.anteprimaUrl=pubUrl(ap);
         if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
       }
       // rigenera anche la miniatura, altrimenti la griglia delle altre postazioni resta vuota
@@ -1011,7 +1011,7 @@ $("restoreInput").onchange = async e=>{
         const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
         const um = await sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true});
         if(!um.error){
-          p.miniUrl = sb.storage.from("anteprime").getPublicUrl(mp).data.publicUrl;
+          p.miniUrl = pubUrl(mp);
           if(p.dbId) await sb.from("foto").update({mini_url:p.miniUrl}).eq("id",p.dbId);
         }
       }catch(_){}
@@ -1408,6 +1408,13 @@ addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 
 // Carica la MINIATURA (piccola) + riga foto: è quello che serve per vedere la griglia
 // sui tablet e sulle altre postazioni. L'anteprima grande da 1280 sale dopo, in seconda corsia.
+function pubUrl(path){
+  const u = sb.storage.from("anteprime").getPublicUrl(path).data.publicUrl;
+  // marcatore di versione: lo stesso percorso può essere riscritto (nuovo import, ripristino
+  // anteprime) e senza questo browser e tablet continuerebbero a mostrare l'immagine vecchia
+  return u + (u.includes("?") ? "&" : "?") + "v=" + Date.now();
+}
+
 async function syncPhotoUp(p){
   if(!sb || !cloud.servizio || p.remote) return true;
   try{
@@ -1416,7 +1423,7 @@ async function syncPhotoUp(p){
       const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
       const up = await sb.storage.from("anteprime").upload(mp, p.mini, {contentType:"image/jpeg", upsert:true});
       if(up.error) throw up.error;
-      p.miniUrl = sb.storage.from("anteprime").getPublicUrl(mp).data.publicUrl;
+      p.miniUrl = pubUrl(mp);
     }
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
@@ -1453,7 +1460,7 @@ function pumpBigQueue(){
         const ap = cloud.servizio.id+"/"+p.code+".jpg";
         const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
         if(up.error) throw up.error;
-        p.anteprimaUrl = sb.storage.from("anteprime").getPublicUrl(ap).data.publicUrl;
+        p.anteprimaUrl = pubUrl(ap);
         if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
       }catch(err){
         console.warn("anteprima grande", p.code, err);

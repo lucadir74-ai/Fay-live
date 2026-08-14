@@ -468,7 +468,7 @@ let lazyObs = null;
 let lastGrid = "";              // firma della griglia già disegnata
 const drawQueue = [];
 let drawActive = 0;
-const DRAW_PARALLEL = 4;        // quante anteprime scarico/disegno insieme
+const DRAW_PARALLEL = 8;        // quante miniature scarico/disegno insieme (sono ~25 KB)
 
 function resetLazy(){
   if(lazyObs){ try{ lazyObs.disconnect(); }catch(_){} }
@@ -502,10 +502,13 @@ function pumpDraw(){
 const thumbBmpCache = new Map();
 const BMP_W = 340;
 async function drawThumb(cv, p){
+  // la cella può essere stata riusata da un nuovo render mentre scaricavo: se il codice
+  // non corrisponde più, non disegno, altrimenti si vedrebbe una foto sotto il codice sbagliato
+  if(cv.dataset.code !== p.code) return;
   try{
     let bmp = thumbBmpCache.get(p.url);
     if(!bmp){
-      const r = await fetch(p.url, {cache:"force-cache"});
+      const r = await fetch(p.url);
       if(!r.ok) return;
       const blob = await r.blob();
       try{ bmp = await createImageBitmap(blob, {resizeWidth:BMP_W, resizeQuality:"medium"}); }
@@ -526,6 +529,7 @@ async function drawThumb(cv, p){
     }
     const rect=cv.getBoundingClientRect();
     if(rect.width<2 || rect.height<2) return;
+    if(cv.dataset.code !== p.code || !cv.isConnected) return;   // ricontrollo dopo le attese
     const dpr=Math.min(devicePixelRatio||1, 2);
     cv.width=Math.round(rect.width*dpr);
     cv.height=Math.round(rect.height*dpr);
