@@ -59,6 +59,12 @@
   .ltab .stat.pr{color:var(--ok)}
   .ltab .stat.ex{color:#7FB8F0}
   .ltab.active .stat.pr,.ltab.active .stat.ex{color:var(--accent-ink);opacity:.8}
+  /* riepilogo giornata: solo numeri, non si clicca e non carica niente */
+  .daysum{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:9px;
+    background:transparent;border:1px dashed var(--line);white-space:nowrap;cursor:default;color:var(--muted)}
+  .daysum .lt{font-weight:800;font-size:13px;letter-spacing:.5px;color:var(--muted)}
+  .daysum .stat{font-size:11.5px;font-weight:600}
+  .daysum .stat.pr{color:var(--ok)} .daysum .stat.ex{color:#7FB8F0}
   #statusBar b{color:var(--ink)}
   #monitorState{display:flex;align-items:center;gap:6px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--danger)}
@@ -1680,10 +1686,22 @@ function renderTabs(){
       <span class="stat ex">⇩ ${s.ex}</span>
     </button>`;
   };
-  nav.innerHTML = tab(null,"Tutte") + letters.map(L=>tab(L,L)).join("");
+  // "Tutte" non è più una scheda apribile: su mille foto la griglia diventava pesante.
+  // Al suo posto un riepilogo della giornata, che mostra solo i numeri e non carica nulla.
+  if(letters.length && (!state.activeLetter || !letters.includes(state.activeLetter))){
+    state.activeLetter = letters[0];
+  }
+  const g=stats(null);
+  const riepilogo = letters.length ? `<div class="daysum" title="Riepilogo della giornata (non apribile)">
+      <span class="lt">GIORNATA</span>
+      <span class="stat">${g.n} foto</span>
+      <span class="stat pr">🖨 ${g.pr}</span>
+      <span class="stat ex">⇩ ${g.ex}</span>
+    </div>` : "";
+  nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
   nav.querySelectorAll(".ltab").forEach(b=>{
     b.onclick=()=>{
-      state.activeLetter = b.dataset.l || null;
+      state.activeLetter = b.dataset.l || state.activeLetter;
       state.focusIdx = -1;
       cellPool.forEach(el=>el.remove()); cellPool.clear();
       wrap.scrollTop=0;
@@ -2740,19 +2758,25 @@ $("giornoSelect").onchange = e=>{
 /* ---------- svuota giornata (solo cloud) ---------- */
 $("btnClearDay").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
-  const L = state.activeLetter; // null = tutte
+  const L = state.activeLetter;
   const foto = L ? state.photos.filter(p=>p.letter===L) : state.photos;
   const n = foto.length;
+  const tot = state.photos.length;
   const dataStr = cloud.servizio.data_servizio;
   const ambito = L ? `il rullo <b>${L}</b>` : `tutti i rulli`;
+  // senza più la scheda "Tutte", la scelta di svuotare l'intera giornata si fa qui
   $("clearText").innerHTML = `Verranno cancellate <b>dal cloud</b> le foto di ${ambito}`+
     (cloud.sede?` (${cloud.sede.nome}, ${dataStr})`:"")+`: <b>${n}</b> foto, con anteprime e originali caricati.<br><br>`+
+    (L? `<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+           <input type="checkbox" id="clearAllDay"> Svuota invece <b>tutta la giornata</b> (${tot} foto, tutti i rulli)
+         </label>` : "")+
     `Gli originali sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
   const dlg=$("clearDlg"); dlg.showModal();
   $("clearNo").onclick=()=>dlg.close();
   $("clearYes").onclick=async ()=>{
+    const tutta = $("clearAllDay") && $("clearAllDay").checked;
     dlg.close();
-    await clearCurrentDay(L);
+    await clearCurrentDay(tutta ? null : L);
   };
 };
 
@@ -2942,8 +2966,9 @@ function updateThumbCloud(){
   $("stTotal").textContent = scope.length;
   const el=$("stThumbCloud"); if(!el) return;
   if(!cloud.servizio){ el.textContent="—"; return; }
-  const tot=scope.length;
-  const onCloud=scope.filter(p=>p.anteprimaUrl).length;
+  // conta sempre su TUTTA la giornata: è l'avanzamento che serve sapere, non quello del rullo aperto
+  const tot=state.photos.length;
+  const onCloud=state.photos.filter(p=>p.anteprimaUrl).length;
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
   el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
