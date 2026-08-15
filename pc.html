@@ -2697,10 +2697,13 @@ function repaintMonitor(){
 }
 
 /* ---------- presentazione (foto singola o set) ---------- */
+/* Con più foto selezionate il cliente vuole vederle TUTTE insieme: prima serviva passare
+   da "Vedi insieme", un giro inutile. Una sola foto va invece a schermo pieno. */
 function presentSelection(){
   const set=selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  presentSet(set);
+  if(set.length===1) presentSet(set);
+  else presentMosaicSet(set);
 }
 async function presentSet(set){
   const M=state.monitor;
