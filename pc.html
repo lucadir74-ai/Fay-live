@@ -207,6 +207,7 @@
       <button id="btnAutoOrig" title="Se attivo, ogni foto importata sale sul cloud a piena risoluzione: tutte le postazioni stampano anche se questo PC è spento">Caricamento automatico: —</button>
       <button id="btnPushAll" title="Carica ORA sul cloud gli originali di questa giornata (utile per giornate vecchie o se il caricamento automatico era spento)">Carica originali sul cloud</button>
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
+      <button id="btnDiagThumb" title="Dice perché le miniature non compaiono e prova a rigenerarle subito">Diagnosi miniature</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <hr>
       <button id="btnClearDay">Svuota giornata</button>
@@ -960,6 +961,54 @@ $("btnImport").onclick = async ()=>{
 $("btnRestore").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
   $("restoreInput").click();
+};
+/* Diagnosi miniature: dice in chiaro quante foto hanno la miniatura, da dove potrebbero
+   prenderla e qual è l'errore reale se la generazione fallisce (prima era ingoiato in silenzio). */
+$("btnDiagThumb").onclick = async ()=>{
+  const P = state.photos;
+  const senza = P.filter(p=>!p.thumb);
+  const conFile = senza.filter(p=>p.file || p.arch).length;
+  const conMini = senza.filter(p=>p.miniUrl).length;
+  const conAnt  = senza.filter(p=>p.anteprimaUrl).length;
+  const orfane  = senza.filter(p=>!p.file && !p.arch && !p.miniUrl && !p.anteprimaUrl).length;
+
+  let prova = "nessuna foto da provare";
+  const c = senza[0];
+  if(c){
+    prova = `provo ${c.code}: `;
+    try{
+      if(c.file || c.arch){
+        const f = c.arch ? await c.arch.getFile() : c.file;
+        if(!f) throw new Error("file su disco non leggibile");
+        c.thumb = await blobToThumb(f);
+        prova += "OK da disco";
+      } else if(c.miniUrl || c.anteprimaUrl){
+        const r = await fetch(c.miniUrl || c.anteprimaUrl);
+        if(!r.ok) throw new Error("scaricamento HTTP "+r.status);
+        c.thumb = await blobToThumb(await r.blob());
+        prova += "OK dal cloud";
+      } else {
+        prova += "nessuna sorgente (né disco né cloud)";
+      }
+    }catch(err){ prova += "FALLITA — " + (err && err.message ? err.message : err); }
+    paintVisible();
+  }
+
+  alert(
+    "DIAGNOSI MINIATURE\n\n" +
+    `Foto nella giornata: ${P.length}\n` +
+    `Con miniatura: ${P.length - senza.length}\n` +
+    `Senza miniatura: ${senza.length}\n\n` +
+    `Di quelle senza miniatura:\n` +
+    `  · con originale su questo PC: ${conFile}\n` +
+    `  · con miniatura sul cloud: ${conMini}\n` +
+    `  · con anteprima grande sul cloud: ${conAnt}\n` +
+    `  · senza nessuna sorgente: ${orfane}\n\n` +
+    `Riempimento in corso: ${riempendo ? "sì" : "no"}\n` +
+    prova + "\n\nOra riavvio il riempimento."
+  );
+  riempendo = false;              // se era rimasto incastrato, si riparte
+  caricaAnteprimeMancanti();
 };
 $("btnClearCache").onclick = async ()=>{
   if(!confirm("Svuota la memoria locale delle anteprime su questo PC e ricarica dal cloud.\nLe foto sul cloud NON vengono toccate. Procedere?")) return;
