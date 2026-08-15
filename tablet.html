@@ -167,6 +167,7 @@
       <span id="vCode"></span>
       <button class="vAct" id="vShare">↗ Condividi</button>
       <button class="vAct" id="vExport">⬇ Esporta</button>
+      <button class="vAct" id="vSend">✈ Invia</button>
       <button id="vClose">✕</button>
     </div>
     <canvas id="vCanvas"></canvas>
@@ -696,6 +697,26 @@ function chiediEmail(quante){
   });
 }
 
+/* Conferma ben visibile: il toast sparisce da solo e in mezzo al lavoro non lo si vede. */
+function mostraEsito(testo){
+  const ov=$("mailOverlay");
+  $("mailTitolo").textContent="Inviate ✓";
+  $("mailSotto").textContent=testo;
+  $("mailInput").style.display="none";
+  $("mailErrore").textContent="";
+  $("mailAnnulla").style.display="none";
+  $("mailOk").textContent="Chiudi";
+  ov.style.display="flex";
+  $("mailOk").onclick=()=>{
+    ov.style.display="none";
+    // rimetto la finestra com'era, pronta per il prossimo cliente
+    $("mailTitolo").textContent="Ricevi le tue foto";
+    $("mailInput").style.display="";
+    $("mailAnnulla").style.display="";
+    $("mailOk").textContent="Invia le foto";
+  };
+}
+
 async function inviaConFilemail(list, ctx){
   if(!list.length){ toast("Nessuna foto da inviare"+(ctx||"")); return; }
   if(!sb || !S.servizio){ toast("Cloud non raggiungibile"); return; }
@@ -732,8 +753,8 @@ async function inviaConFilemail(list, ctx){
       toast("Invio non riuscito: "+(out.dettaglio||out.errore||"errore sconosciuto"));
       return;
     }
-    toast(`Inviate ${out.inviate||files.length} foto a ${email}`);
     logActivity(list,"inviate");
+    mostraEsito(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl cliente riceve un link valido 7 giorni.`);
   }catch(err){
     console.warn("filemail", err);
     toast("Invio non riuscito: controlla la connessione");
@@ -744,6 +765,14 @@ $("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.lette
 // tasti nel visore: agiscono sulla FOTO aperta
 $("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logActivity([p],"condivise"); } };
 $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); logActivity([p],"esportate"); } };
+/* Dal visualizzatore: se ci sono preferiti nel rullo si inviano TUTTI insieme (il cliente
+   ne sceglie parecchie e le guarda una per una), altrimenti solo la foto aperta. */
+$("vSend").onclick = ()=>{
+  const p=V.list[V.idx]; if(!p) return;
+  const preferiti = activeFavs();
+  const lista = preferiti.length ? preferiti : [p];
+  inviaConFilemail(lista, S.letter?" nel rullo "+S.letter:"");
+};
 
 /* ---------- visore con zoom (pinch) e swipe ---------- */
 const V = { list:[], idx:0, img:null, scale:1, tx:0, ty:0, canvas:null, ctx:null };
