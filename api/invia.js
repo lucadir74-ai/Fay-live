@@ -10,6 +10,9 @@
  *
  * Variabili d'ambiente richieste su Vercel (Settings → Environment Variables):
  *  FILEMAIL_API_KEY   la chiave presa dal pannello Filemail
+ *  FILEMAIL_EMAIL     email dell'account Filemail (frameaboutyou@gmail.com)
+ *  FILEMAIL_PASSWORD  password dello stesso account — serve: senza utente autenticato
+ *                     Filemail rifiuta l'apertura del trasferimento con "please login"
  *  SUPABASE_HOST      solo il dominio del progetto, es. abcdefgh.supabase.co
  *                     (serve a impedire che questo endpoint spedisca file altrui)
  *  FILEMAIL_GIORNI    facoltativa, giorni di validità del link (default 7)
@@ -75,10 +78,30 @@ export default async function handler(req, res) {
        riporta il messaggio d'errore vero di Filemail, non uno generico. */
     const problemi = [];
 
+    /* Filemail vuole un utente autenticato: la sola chiave API non basta e la initialize
+       risponde "please login". Qui si fa la login e si tiene il logintoken. */
+    let logintoken = null;
+    const utente = (process.env.FILEMAIL_EMAIL || "").trim();
+    const pwd = process.env.FILEMAIL_PASSWORD || "";
+    if (utente && pwd) {
+      try {
+        const q = new URLSearchParams({ apikey: key, username: utente, password: pwd, source: "Web" });
+        const lr = await fetch("https://www.filemail.com/api/authentication/login?" + q.toString(), {
+          headers: { "User-Agent": "Fay Live" }
+        });
+        const lj = await lr.json().catch(() => ({}));
+        logintoken = lj?.logintoken || lj?.data?.logintoken || null;
+        if (!logintoken) problemi.push("login: " + (lj?.errormessage || lj?.responsestatus || ("HTTP " + lr.status)));
+      } catch (e) { problemi.push("login: " + String(e && e.message || e)); }
+    } else {
+      problemi.push("login: FILEMAIL_EMAIL o FILEMAIL_PASSWORD non configurate su Vercel");
+    }
+
     async function initJson() {
       const r = await fetch(conChiave(API + "/transfer/initialize"), {
         method: "POST", headers: intestazioni,
         body: JSON.stringify({
+          logintoken: logintoken || undefined,
           to: [email], from: mittente || undefined, subject: sub, message: msg,
           days: giorni, confirmation: false, notify: false, sourcedetails: "Fay Live"
         })
@@ -95,6 +118,7 @@ export default async function handler(req, res) {
         days: String(giorni), confirmation: "false", notify: "false"
       });
       if (mittente) corpo.set("from", mittente);
+      if (logintoken) corpo.set("logintoken", logintoken);
       const r = await fetch("https://www.filemail.com/api/transfer/initialize", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Fay Live" },
