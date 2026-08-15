@@ -3562,6 +3562,7 @@ function renderMailList(){
       <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
       <b style="flex:1;min-width:180px;word-break:break-all;${done?'text-decoration:line-through':''}">${mailTxt}${cod?`<span style="display:block;font-weight:400;font-size:12px;color:var(--muted);font-family:var(--mono)">${cod}</span>`:""}</b>
       <button data-act="copy" data-id="${r.id}">Copia</button>
+      <button data-act="filemail" data-id="${r.id}" class="${done?'':'primary'}" title="Invia le foto al cliente con Filemail">✈ Invia</button>
       <button data-act="gmail" data-id="${r.id}">Gmail</button>
       <button data-act="done" data-id="${r.id}" class="${done?'':'primary'}">${done?'Riapri':'Inviata'}</button>
       <button data-act="del" data-id="${r.id}" title="Elimina">✕</button>
@@ -3616,6 +3617,8 @@ $("mailList").onclick = async e=>{
   if(act==="copy"){
     try{ await navigator.clipboard.writeText(row.email); toast("Email copiata"); }
     catch(_){ toast("Copia non riuscita"); }
+  } else if(act==="filemail"){
+    await inviaConFilemail(row, b);
   } else if(act==="gmail"){
     const su = encodeURIComponent("Le tue foto — Frame About You");
     window.open("https://mail.google.com/mail/?view=cm&fs=1&to="+encodeURIComponent(row.email)+"&su="+su, "_blank");
@@ -3630,6 +3633,67 @@ $("mailList").onclick = async e=>{
     renderMailList(); refreshMailBadge();
   }
 };
+/* Invio dei file digitali via Filemail.
+   Il browser NON carica le foto: manda solo gli indirizzi alla funzione su Vercel,
+   che le prende da Supabase e le passa a Filemail. Così l'hotspot non viene toccato
+   e l'invio funziona anche se il PC che ha importato è spento. */
+async function inviaConFilemail(row, btn){
+  const codici = (row.codici||"").split(/[\s,;]+/).filter(Boolean);
+  if(!codici.length){ toast("Questa richiesta non ha codici foto associati"); return; }
+
+  // Gli originali NON sono pubblici: servono link firmati a scadenza breve,
+  // che la funzione su Vercel usa per scaricarli. Scadono da soli dopo 15 minuti.
+  const trovate = [], mancanti = [];
+  for(const c of codici){
+    const p = state.byCode.get(c);
+    if(!p){ mancanti.push(c); continue; }
+    const path = cloud.servizio ? cloud.servizio.id+"/"+p.code+".jpg" : null;
+    if(!path){ mancanti.push(c); continue; }
+    try{
+      const {data, error} = await sb.storage.from("originali").createSignedUrl(path, 900);
+      if(error || !data || !data.signedUrl){ mancanti.push(c); continue; }
+      trovate.push({nome: c+".jpg", url: data.signedUrl});
+    }catch(_){ mancanti.push(c); }
+  }
+  if(!trovate.length){
+    toast("Gli originali non sono sul cloud: caricali (Altro → Carica originali) e riprova");
+    return;
+  }
+  const avviso = mancanti.length
+    ? `\n\nATTENZIONE: ${mancanti.length} foto non sono sul cloud e NON verranno inviate (${mancanti.join(", ")}).`
+    : "";
+  if(!confirm(`Invio ${trovate.length} foto a ${row.email} tramite Filemail.${avviso}\n\nProcedo?`)) return;
+
+  const testo = btn.textContent;
+  btn.disabled = true; btn.textContent = "Invio…";
+  try{
+    const r = await fetch("/api/invia", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        email: row.email,
+        files: trovate,
+        oggetto: "Le tue foto — Frame About You",
+        messaggio: "Grazie per la serata! Ecco le tue foto."
+      })
+    });
+    const out = await r.json();
+    if(!r.ok || !out.ok){
+      console.warn("filemail", out);
+      toast("Invio non riuscito: " + (out.dettaglio || out.errore || "errore sconosciuto"));
+      return;
+    }
+    row.stato = "inviata";
+    await sbTry(()=>sb.from("richieste_email").update({stato:"inviata"}).eq("id",row.id), "stato email");
+    renderMailList(); refreshMailBadge();
+    toast(`Inviate ${out.inviate} foto a ${row.email}` + (out.saltate? ` (${out.saltate} saltate)` : ""));
+  }catch(err){
+    console.warn("filemail", err);
+    toast("Invio non riuscito: controlla la connessione");
+  }finally{
+    btn.disabled = false; btn.textContent = testo;
+  }
+}
+
 $("mailClear").onclick = async ()=>{
   if(!sb || !cloud.servizio) return;
   await sbTry(()=>sb.from("richieste_email").delete()
