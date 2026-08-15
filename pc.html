@@ -198,6 +198,7 @@
     <button id="btnTools" title="Impostazioni e manutenzione">Altro ▾</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <div id="toolsMenu" hidden>
+      <button id="btnStats">Report giornata</button>
       <button id="btnReport">Report attività</button>
       <button id="btnArchive">Archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
@@ -376,6 +377,8 @@
       <button id="selCompare" class="primary">Vedi insieme</button>
       <button id="selShow">Mostra sul monitor</button>
       <button id="selPrint">Stampa</button>
+      <button id="selOmaggio" title="Segna queste copie come regalate al cliente">🎁 Omaggio</button>
+      <button id="selScarto" title="Segna queste copie come stampate per errore e non vendute">🗑 Scarto</button>
       <button id="selExport">Esporta file</button>
       <button id="selClear">Svuota</button>
     </div>
@@ -428,6 +431,16 @@
       <button id="mailClear">Svuota inviate</button>
       <button id="mailClose" class="primary">Chiudi</button>
     </span>
+  </div>
+</dialog>
+
+<dialog id="statsDlg">
+  <h3 style="margin-bottom:4px">Report giornata</h3>
+  <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
+  <div id="statsBody" style="max-height:62vh;overflow:auto"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <button id="statsCsv">Salva come CSV</button>
+    <button id="statsClose" class="primary">Chiudi</button>
   </div>
 </dialog>
 
@@ -1076,7 +1089,7 @@ async function importaFiles(files){
   for(const f of files){
     n++;
     const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
-              file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
+              file:f, thumb:null, ts:f.lastModified, prints:0, exported:false, omaggi:0, scarti:0 };
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
   state.counters[L]=n;
@@ -1428,7 +1441,8 @@ async function syncPhotoUp(p){
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
-      mini_url: p.miniUrl, anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
+      mini_url: p.miniUrl, anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported,
+      omaggi: p.omaggi||0, scarti: p.scarti||0
     }, {onConflict:"rullo_id,codice"}).select().single();
     if(error) throw error;
     p.dbId = data.id;
@@ -1837,6 +1851,8 @@ function paintVisible(){
     let flags="";
     if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
     if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
+    if(p.omaggi>0) flags+=`<span class="flag">🎁${p.omaggi>1?"×"+p.omaggi:""}</span>`;
+    if(p.scarti>0) flags+=`<span class="flag">🗑${p.scarti>1?"×"+p.scarti:""}</span>`;
     const st=statusOf(p);
     const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
     if(el._html!==html){ el.innerHTML=html; el._html=html; }
@@ -2841,6 +2857,126 @@ $("giornoSelect").onchange = e=>{
 };
 
 /* ---------- svuota giornata (solo cloud) ---------- */
+/* ---------- omaggi e scarti (si segnano solo dal PC) ----------
+   Contano le COPIE, non le foto: la stessa foto può essere stampata due volte,
+   una venduta e una scartata. */
+async function segnaCopie(campo){
+  const set = selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  const key = campo==="omaggi" ? "omaggi" : "scarti";
+  set.forEach(p=>{ p[key] = (p[key]||0)+1; });
+  renderTabs(); paintVisible(); refreshLbStatus();
+  for(const p of set){
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({[key]:p[key]}).eq("id",p.dbId), "omaggi/scarti");
+  }
+  const nome = key==="omaggi" ? "omaggio" : "scarto";
+  toast(set.length===1 ? `${set[0].code}: +1 ${nome}` : `${set.length} foto: +1 ${nome} ciascuna`);
+}
+$("selOmaggio").onclick = ()=> segnaCopie("omaggi");
+$("selScarto").onclick  = ()=> segnaCopie("scarti");
+
+/* ---------- report della giornata ---------- */
+const PESO_ORIG = 2 * 1024 * 1024;      // ~2 MB per originale
+const PESO_ANTE = 110 * 1024;           // anteprima 1280
+const PESO_MINI = 25 * 1024;            // miniatura griglia
+const LIMITE_PRO = 100 * 1024 * 1024 * 1024;   // 100 GB inclusi nel piano Pro
+
+function mb(bytes){
+  if(bytes >= 1024*1024*1024) return (bytes/1024/1024/1024).toFixed(2)+" GB";
+  return Math.round(bytes/1024/1024)+" MB";
+}
+function datiReport(){
+  const righe = {};
+  for(const p of state.photos){
+    const r = righe[p.letter] || (righe[p.letter] = {foto:0, stampe:0, omaggi:0, scarti:0, esportate:0});
+    r.foto++;
+    r.stampe += (p.prints||0);
+    r.omaggi += (p.omaggi||0);
+    r.scarti += (p.scarti||0);
+    if(p.exported) r.esportate++;
+  }
+  return righe;
+}
+function apriStats(){
+  const righe = datiReport();
+  const L = Object.keys(righe).sort();
+  const tot = {foto:0, stampe:0, omaggi:0, scarti:0, esportate:0};
+  L.forEach(k=>{ ["foto","stampe","omaggi","scarti","esportate"].forEach(c=> tot[c]+=righe[k][c]); });
+  const vendute = Math.max(0, tot.stampe - tot.omaggi - tot.scarti);
+
+  $("statsWhen").textContent = (cloud.sede? cloud.sede.nome : "—")+
+    (cloud.servizio? " — "+cloud.servizio.data_servizio : "");
+
+  const th = 'style="text-align:right;padding:6px 10px"';
+  const td = 'style="text-align:right;padding:6px 10px;border-top:1px solid var(--line)"';
+  let h = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr style="color:var(--muted)">
+      <th style="text-align:left;padding:6px 10px">Rullo</th>
+      <th ${th}>Foto</th><th ${th}>Stampe</th><th ${th}>Omaggi</th>
+      <th ${th}>Scarti</th><th ${th}>Vendute</th><th ${th}>Esportate</th>
+    </tr>`;
+  L.forEach(k=>{
+    const r = righe[k];
+    const v = Math.max(0, r.stampe - r.omaggi - r.scarti);
+    h += `<tr>
+      <td style="padding:6px 10px;border-top:1px solid var(--line);font-weight:700">${k}</td>
+      <td ${td}>${r.foto}</td><td ${td}>${r.stampe}</td>
+      <td ${td}>${r.omaggi||"—"}</td><td ${td}>${r.scarti||"—"}</td>
+      <td ${td}><b>${v}</b></td><td ${td}>${r.esportate||"—"}</td></tr>`;
+  });
+  h += `<tr style="background:rgba(255,255,255,.04);font-weight:800">
+      <td style="padding:8px 10px;border-top:2px solid var(--line)">TOTALE</td>
+      <td ${td}>${tot.foto}</td><td ${td}>${tot.stampe}</td>
+      <td ${td}>${tot.omaggi}</td><td ${td}>${tot.scarti}</td>
+      <td ${td}>${vendute}</td><td ${td}>${tot.esportate}</td></tr></table>`;
+
+  if(tot.scarti) h += `<p style="color:var(--muted);font-size:12.5px;margin-top:10px">
+    Carta sprecata: <b>${tot.scarti}</b> ${tot.scarti===1?"stampa":"stampe"}
+    (${tot.stampe? Math.round(tot.scarti*100/tot.stampe) : 0}% del totale stampato).</p>`;
+
+  // --- spazio sul cloud: STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
+  const stimaGiorno = state.photos.length * (PESO_ORIG + PESO_ANTE + PESO_MINI);
+  const gg = (typeof GIORNI_ORIGINALI!=="undefined") ? GIORNI_ORIGINALI : 15;
+  const ggA = (typeof GIORNI_ANTEPRIME!=="undefined") ? GIORNI_ANTEPRIME : 90;
+  const proiezione = state.photos.length * PESO_ORIG * gg
+                   + state.photos.length * (PESO_ANTE+PESO_MINI) * ggA;
+  const perc = Math.min(100, Math.round(proiezione*100/LIMITE_PRO));
+  const colore = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
+  h += `<h4 style="margin:18px 0 8px">Spazio sul cloud</h4>
+    <div style="font-size:13px;line-height:1.9">
+      <div>Questa giornata occupa circa <b>${mb(stimaGiorno)}</b></div>
+      <div>A questo ritmo, con ${gg} giorni di originali e ${ggA} di anteprime: <b style="color:${colore}">${mb(proiezione)}</b> su 100 GB del piano Pro (${perc}%)</div>
+      <div style="height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin:8px 0">
+        <div style="height:100%;width:${perc}%;background:${colore}"></div>
+      </div>
+      <div style="color:var(--muted);font-size:12px">
+        Stima calcolata sulle foto (~2 MB l'originale), non il dato reale di Supabase.
+        Il valore ufficiale è nella dashboard, sezione Usage.
+      </div>
+    </div>`;
+  if(perc>90) h += `<p style="color:var(--danger);font-size:12.5px;margin-top:8px">
+    ⚠ A questo ritmo lo spazio non basta: riduci i giorni di conservazione degli originali.</p>`;
+
+  $("statsBody").innerHTML = h;
+  $("statsDlg").showModal();
+}
+$("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; apriStats(); };
+$("statsClose").onclick = ()=> $("statsDlg").close();
+$("statsCsv").onclick = ()=>{
+  const righe = datiReport();
+  const L = Object.keys(righe).sort();
+  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;Vendute;Esportate\n";
+  L.forEach(k=>{ const r=righe[k];
+    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, Math.max(0,r.stampe-r.omaggi-r.scarti), r.esportate].join(";")+"\n";
+  });
+  const nome = "report_"+((cloud.sede?cloud.sede.nome:"faylive").replace(/\W+/g,"_"))+
+               "_"+(cloud.servizio? cloud.servizio.data_servizio : "oggi")+".csv";
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8"}));
+  a.download=nome; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+};
+
 $("btnClearDay").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
   const L = state.activeLetter;
@@ -3126,6 +3262,7 @@ function addRemotePhotoFast(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            omaggi:f.omaggi||0, scarti:f.scarti||0,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
@@ -3135,6 +3272,7 @@ async function addRemotePhoto(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            omaggi:f.omaggi||0, scarti:f.scarti||0,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
