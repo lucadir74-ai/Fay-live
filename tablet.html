@@ -238,6 +238,23 @@ $("giornoSel").onchange=e=>{
   const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
   if(sv) openServizio(sv);
 };
+/* Supabase restituisce al massimo 1000 righe per volta: con giornate da
+   oltre 1000 foto i rulli finali sparivano. Qui leggo a blocchi finché finisce. */
+const BLOCCO = 1000;
+async function caricaFotoDeiRulli(ids){
+  let tutte = [], da = 0;
+  while(true){
+    const {data, error} = await sb.from("foto").select("*")
+      .in("rullo_id", ids).order("codice").range(da, da + BLOCCO - 1);
+    if(error) throw error;
+    const parte = data || [];
+    tutte = tutte.concat(parte);
+    if(parte.length < BLOCCO) break;
+    da += BLOCCO;
+  }
+  return tutte;
+}
+
 async function openServizio(sv){
   if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
   S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null; S.gruppo=null;
@@ -246,7 +263,7 @@ async function openServizio(sv){
   (rulli||[]).forEach(r=>S.rulli[r.id]={lettera:r.lettera, desc:r.descrizione});
   const ids=(rulli||[]).map(r=>r.id);
   if(ids.length){
-    const {data:foto}=await sb.from("foto").select("*").in("rullo_id",ids).order("codice");
+    const foto = await caricaFotoDeiRulli(ids);
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
       const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
@@ -284,7 +301,13 @@ function subscribe(){
 }
 
 /* ---------- rendering griglia ---------- */
-function letters(){ return [...new Set(S.photos.map(p=>p.letter))].sort(); }
+// le schede vengono dai rulli della giornata (non dalle foto già scaricate),
+// così ci sono tutte anche se le foto stanno ancora arrivando
+function letters(){
+  const daiRulli = Object.values(S.rulli||{}).map(r=>r&&r.lettera).filter(Boolean);
+  const dalleFoto = S.photos.map(p=>p.letter);
+  return [...new Set([...daiRulli, ...dalleFoto])].sort();
+}
 // i gruppi appartengono al rullo in cui sono stati creati: fuori da quel rullo non esistono
 function gruppi(){
   if(!S.letter) return [];
@@ -745,8 +768,7 @@ async function refresh(manuale){
 
     const nuove = []; const map = new Map();
     if(ids.length){
-      const {data:foto, error:eF} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice");
-      if(eF) throw eF;
+      const foto = await caricaFotoDeiRulli(ids);
       (foto||[]).forEach(f=>{
         const r = rmap[f.rullo_id]; if(!r) return;
         const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null,
@@ -759,7 +781,8 @@ async function refresh(manuale){
 
     S.rulli = rmap; S.photos = nuove; S.byId = map;
     // tengo il rullo/gruppo che stavo guardando, se esiste ancora
-    S.letter = (prevLetter && nuove.some(p=>p.letter===prevLetter)) ? prevLetter : null;
+    const lettereRulli = new Set(Object.values(rmap).map(r=>r.lettera));
+    S.letter = (prevLetter && lettereRulli.has(prevLetter)) ? prevLetter : null;
     S.gruppo = (prevGruppo && S.letter && nuove.some(p=>p.gruppo===prevGruppo && p.letter===S.letter)) ? prevGruppo : null;
     // tengo la selezione, scartando le foto sparite
     S.selected = new Set([...S.selected].filter(id=> map.has(id)));

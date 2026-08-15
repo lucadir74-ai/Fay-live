@@ -3088,6 +3088,23 @@ async function clearCurrentDay(onlyLetter){
   }
 }
 
+/* Supabase consegna al massimo 1000 righe per richiesta, e .limit() più alto NON lo supera:
+   con giornate da più di 1000 foto le postazioni che rileggevano dal cloud vedevano solo i
+   primi rulli. Qui si legge a blocchi finché la giornata è finita. */
+const BLOCCO_CLOUD = 1000;
+async function leggiTutte(fabbricaQuery){
+  let tutte = [], da = 0;
+  while(true){
+    const {data, error} = await fabbricaQuery().range(da, da + BLOCCO_CLOUD - 1);
+    if(error) throw error;
+    const parte = data || [];
+    tutte = tutte.concat(parte);
+    if(parte.length < BLOCCO_CLOUD) break;
+    da += BLOCCO_CLOUD;
+  }
+  return tutte;
+}
+
 // carica dal cloud i rulli e le foto della GIORNATA corrente (filtra per i rulli di questo servizio)
 async function loadServizioFoto(){
   if(!sb || !cloud.servizio) return;
@@ -3103,7 +3120,13 @@ async function loadServizioFoto(){
   // Prima si registrano tutte (nessun download): la griglia e le schede compaiono subito.
   // Le anteprime arrivano dopo, in sottofondo e in parallelo — prima erano scaricate una alla
   // volta dentro questo ciclo, e su 1000 foto la giornata restava su "Apro la giornata…" per minuti.
-  const {data:foto} = await sb.from("foto").select("*").in("rullo_id", ids).order("codice").limit(20000);
+  let foto = [];
+  try{
+    foto = await leggiTutte(()=> sb.from("foto").select("*").in("rullo_id", ids).order("codice"));
+  }catch(err){
+    console.warn("loadServizioFoto", err);
+    toast("Cloud lento o non raggiungibile: alcune foto potrebbero mancare, usa Aggiorna");
+  }
   for(const f of (foto||[])){
     if(state.byCode.has(f.codice)) continue;
     const r=rulliById[f.rullo_id]; if(!r) continue;
@@ -3208,7 +3231,7 @@ async function pullNuoveFoto(manuale){
       const {count} = await sb.from("foto").select("id",{count:"exact",head:true}).eq("rullo_id", r.id);
       if(count==null || count<=miei) continue;
       // elenco dei soli codici (poche decine di KB), poi scarico solo quelli che mi mancano
-      const {data:codici} = await sb.from("foto").select("codice").eq("rullo_id", r.id);
+      const codici = await leggiTutte(()=> sb.from("foto").select("codice").eq("rullo_id", r.id).order("codice"));
       const mancanti = (codici||[]).map(x=>x.codice).filter(c=>!state.byCode.has(c));
       for(let i=0;i<mancanti.length;i+=200){
         const {data:foto} = await sb.from("foto").select("*")
