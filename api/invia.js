@@ -170,16 +170,43 @@ export default async function handler(req, res) {
       return res.status(502).json({ errore: "Nessuna foto è stata caricata su Filemail" });
     }
 
-    // 3) chiude il trasferimento: è qui che parte la mail al cliente
-    const endRes = await fetch(conChiave(API + "/transfer/complete"), {
-      method: "PUT",
-      headers: intestazioni,
-      body: JSON.stringify({ transferid, transferkey })
-    });
-    const fine = await endRes.json();
-    if (!endRes.ok) {
-      return res.status(502).json({ errore: "Trasferimento non completato",
-                                    dettaglio: fine?.errormessage || fine?.responsestatus || null });
+    /* 3) chiude il trasferimento: è qui che parte la mail al cliente.
+       Come per l'apertura, si provano tutte e due le vie: se il trasferimento è stato
+       aperto con l'API classica, chiuderlo su api-public non funziona (e viceversa). */
+    const problemiFine = [];
+    let fine = null;
+
+    async function completeJson() {
+      const r = await fetch(conChiave(API + "/transfer/complete"), {
+        method: "PUT", headers: intestazioni,
+        body: JSON.stringify({ transferid, transferkey, logintoken: logintoken || undefined })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.responsestatus === undefined || String(j.responsestatus).toUpperCase() === "OK")) return j;
+      problemiFine.push("JSON: " + (j?.errormessage || j?.responsestatus || ("HTTP " + r.status)));
+      return null;
+    }
+
+    async function completeClassica() {
+      const corpo = new URLSearchParams({ apikey: key, transferid, transferkey });
+      if (logintoken) corpo.set("logintoken", logintoken);
+      const r = await fetch("https://www.filemail.com/api/transfer/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Fay Live" },
+        body: corpo.toString()
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.responsestatus === undefined || String(j.responsestatus).toUpperCase() === "OK")) return j;
+      problemiFine.push("classica: " + (j?.errormessage || j?.responsestatus || ("HTTP " + r.status)));
+      return null;
+    }
+
+    fine = (await completeJson()) || (await completeClassica());
+    if (!fine) {
+      return res.status(502).json({
+        errore: "Trasferimento non completato",
+        dettaglio: `caricate ${inviati.length} foto su ${files.length}. ` + problemiFine.join("  |  ")
+      });
     }
 
     return res.status(200).json({
