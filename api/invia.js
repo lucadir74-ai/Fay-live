@@ -23,10 +23,17 @@ export const config = { maxDuration: 60 };   // il download+upload richiede temp
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ errore: "Metodo non consentito" });
 
-  const key = process.env.FILEMAIL_API_KEY;
-  const host = process.env.SUPABASE_HOST;
+  const key = (process.env.FILEMAIL_API_KEY || "").trim();
   if (!key)  return res.status(500).json({ errore: "FILEMAIL_API_KEY non configurata su Vercel" });
-  if (!host) return res.status(500).json({ errore: "SUPABASE_HOST non configurata su Vercel" });
+
+  /* Il valore incollato a mano su Vercel arriva spesso con https://, una barra finale,
+     spazi o un a capo invisibile: prima si confrontava alla lettera e l'invio veniva
+     rifiutato anche quando il dominio era quello giusto. Qui si ripulisce. */
+  const host = (process.env.SUPABASE_HOST || "")
+    .trim().replace(/^["']|["']$/g, "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .toLowerCase();
 
   const { email, files, oggetto, messaggio } = req.body || {};
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
@@ -41,8 +48,15 @@ export default async function handler(req, res) {
   for (const f of files) {
     let u;
     try { u = new URL(f.url); } catch { return res.status(400).json({ errore: "Indirizzo file non valido" }); }
-    if (u.protocol !== "https:" || u.hostname !== host)
-      return res.status(400).json({ errore: "Indirizzo file non ammesso: " + u.hostname });
+    const h = u.hostname.toLowerCase();
+    // se SUPABASE_HOST non è impostata si accetta comunque solo Supabase, mai domini qualsiasi
+    const ammesso = host ? (h === host) : /\.supabase\.co$/.test(h);
+    if (u.protocol !== "https:" || !ammesso)
+      return res.status(400).json({
+        errore: "Indirizzo file non ammesso",
+        dettaglio: `il file arriva da "${h}", mentre SUPABASE_HOST su Vercel vale "${host || "(non impostata)"}". ` +
+                   `Se i due domini coincidono, il deploy sta ancora usando il valore vecchio: rifai un Redeploy.`
+      });
   }
 
   const intestazioni = { "X-API-Key": key, "Content-Type": "application/json" };
