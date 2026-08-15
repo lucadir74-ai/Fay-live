@@ -65,26 +65,56 @@ export default async function handler(req, res) {
   try {
     // 1) apre il trasferimento
     const giorni = parseInt(process.env.FILEMAIL_GIORNI || "7", 10);
-    const initRes = await fetch(conChiave(API + "/transfer/initialize"), {
-      method: "POST",
-      headers: intestazioni,
-      body: JSON.stringify({
-        to: [email],
-        from: process.env.FILEMAIL_MITTENTE || undefined,
-        subject: oggetto || "Le tue foto",
-        message: messaggio || "Ecco le tue foto. Il link resta attivo " + giorni + " giorni.",
-        days: giorni,
-        confirmation: false,
-        notify: false,
-        sourcedetails: "Fay Live"
-      })
-    });
-    const init = await initRes.json();
-    if (!initRes.ok || !init?.data?.transferid) {
-      return res.status(502).json({ errore: "Filemail non ha aperto il trasferimento",
-                                    dettaglio: init?.errormessage || init?.responsestatus || null });
+    const mittente = (process.env.FILEMAIL_MITTENTE || "").trim();
+    const msg = messaggio || ("Ecco le tue foto. Il link resta attivo " + giorni + " giorni.");
+    const sub = oggetto || "Le tue foto";
+
+    /* Filemail ha due modi di ricevere la initialize e non è documentato in modo univoco
+       quale accetti il vostro account: si prova prima il formato JSON, poi quello classico
+       a parametri (dove "to" è una lista separata da virgole). Se falliscono entrambi si
+       riporta il messaggio d'errore vero di Filemail, non uno generico. */
+    const problemi = [];
+
+    async function initJson() {
+      const r = await fetch(conChiave(API + "/transfer/initialize"), {
+        method: "POST", headers: intestazioni,
+        body: JSON.stringify({
+          to: [email], from: mittente || undefined, subject: sub, message: msg,
+          days: giorni, confirmation: false, notify: false, sourcedetails: "Fay Live"
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.data?.transferid && (j.responsestatus === undefined || j.responsestatus === "OK")) return j.data;
+      problemi.push("JSON: " + (j?.errormessage || j?.responsestatus || ("HTTP " + r.status)));
+      return null;
     }
-    const { transferid, transferkey, transferurl } = init.data;
+
+    async function initClassica() {
+      const corpo = new URLSearchParams({
+        apikey: key, to: email, subject: sub, message: msg,
+        days: String(giorni), confirmation: "false", notify: "false"
+      });
+      if (mittente) corpo.set("from", mittente);
+      const r = await fetch("https://www.filemail.com/api/transfer/initialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Fay Live" },
+        body: corpo.toString()
+      });
+      const j = await r.json().catch(() => ({}));
+      const dati = j?.data || j;
+      if (r.ok && dati?.transferid && (j.responsestatus === undefined || j.responsestatus === "OK")) return dati;
+      problemi.push("classica: " + (j?.errormessage || j?.responsestatus || ("HTTP " + r.status)));
+      return null;
+    }
+
+    const dati = (await initJson()) || (await initClassica());
+    if (!dati) {
+      return res.status(502).json({
+        errore: "Filemail non ha aperto il trasferimento",
+        dettaglio: problemi.join("  |  ")
+      });
+    }
+    const { transferid, transferkey, transferurl } = dati;
 
     // 2) scarica ogni foto da Supabase e la passa a Filemail
     //    (le foto pesano ~2 MB: sotto i 50 MB non serve spezzettarle)
