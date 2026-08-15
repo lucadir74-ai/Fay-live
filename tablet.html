@@ -134,6 +134,7 @@
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
     <button class="favtoggle" id="btnSend"><span>✈</span><span>Invia</span></button>
+    <button class="favtoggle" id="btnFavClear"><span>✕</span><span>Pulisci preferiti</span></button>
   </header>
 
   <nav id="tabs" hidden></nav>
@@ -295,6 +296,7 @@ async function openServizio(sv){
       S.photos.push(p); S.byId.set(p.id,p);
     });
   }
+  applicaFavLocali(S.photos);
   setDot(true,"Sincronizzato");
   subscribe();
   render();
@@ -317,7 +319,7 @@ function subscribe(){
     })
     .on("postgres_changes",{event:"UPDATE",schema:"public",table:"foto"}, payload=>{
       const f=payload.new; const p=S.byId.get(f.id);
-      if(p){ p.fav=!!f.preferito; p.url=f.mini_url||f.anteprima_url||p.url; p.bigUrl=f.anteprima_url||p.bigUrl; p.gruppo=f.gruppo||null; render(); }
+      if(p){ p.fav = favLocali.has(p.id) ? favLocali.get(p.id) : !!f.preferito; p.url=f.mini_url||f.anteprima_url||p.url; p.bigUrl=f.anteprima_url||p.bigUrl; p.gruppo=f.gruppo||null; render(); }
     })
     .on("postgres_changes",{event:"DELETE",schema:"public",table:"foto"}, payload=>{
       const id=payload.old.id; if(S.byId.has(id)){ S.byId.delete(id); S.photos=S.photos.filter(x=>x.id!==id); render(); }
@@ -591,9 +593,18 @@ async function drawThumb(cv, p){
 }
 function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
 
-/* ---------- preferiti (sincronizzati col PC via campo preferito) ---------- */
+/* ---------- preferiti (sincronizzati col PC via campo preferito) ----------
+   I preferiti sono la memoria della scelta del cliente e NON devono mai sparire da soli:
+   né quando si aggiorna, né dopo un invio. Si azzerano solo col tasto "Pulisci preferiti".
+   Quello che il cloud non ha ancora registrato (linea caduta) resta qui e vince
+   sul valore letto dal database al prossimo aggiornamento. */
+const favLocali = new Map();          // id foto -> true/false scelto su QUESTO tablet
+function ricordaFav(p){ favLocali.set(p.id, p.fav); }
+function applicaFavLocali(lista){ lista.forEach(p=>{ if(favLocali.has(p.id)) p.fav = favLocali.get(p.id); }); }
+
 async function toggleFav(p){
   p.fav=!p.fav;
+  ricordaFav(p);
   // aggiorna solo questa cella, senza ridisegnare tutta la griglia
   const cell=document.querySelector('#grid .cell[data-id="'+p.id+'"]');
   if(cell){
@@ -608,9 +619,34 @@ async function toggleFav(p){
   // se sto guardando solo i preferiti e ne tolgo uno, aggiorno la vista
   if(S.favOnly && !p.fav){ lastGrid=""; render(); }
   else lastGrid="";   // la cella è già aggiornata a mano, ma la firma non deve restare vecchia
-  if(sb){ try{ await sb.from("foto").update({preferito:p.fav}).eq("id",p.id); }catch(_){ toast("Preferito salvato, sincronizzo appena possibile"); } }
+  if(sb){
+    try{
+      const {error} = await sb.from("foto").update({preferito:p.fav}).eq("id",p.id);
+      if(error) throw error;
+      favLocali.delete(p.id);        // il cloud è allineato: basta lui
+    }catch(_){ toast("Preferito salvato qui, lo sincronizzo appena torna la linea"); }
+  }
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
+
+/* Unico modo per azzerare i preferiti: esplicito, e solo sul rullo che stai guardando. */
+$("btnFavClear").onclick = async ()=>{
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const favs = scope.filter(p=>p.fav);
+  if(!favs.length){ toast("Non ci sono preferiti da pulire"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  if(!confirm(`Tolgo i ${favs.length} preferiti${S.letter? " del rullo "+S.letter : ""}?`)) return;
+  favs.forEach(p=>{ p.fav=false; favLocali.set(p.id,false); });
+  S.favOnly=false; lastGrid=""; render();
+  if(sb){
+    for(const p of favs){
+      try{
+        const {error} = await sb.from("foto").update({preferito:false}).eq("id",p.id);
+        if(!error) favLocali.delete(p.id);
+      }catch(_){}
+    }
+  }
+  toast(`${favs.length} preferiti tolti`);
+};
 
 // recupera il blob di una foto: originale dal cloud se c'è, altrimenti anteprima
 async function photoBlob(p){
@@ -921,6 +957,7 @@ async function refresh(manuale){
       });
     }
 
+    applicaFavLocali(nuove);        // i preferiti scelti qui non si perdono con l'aggiornamento
     S.rulli = rmap; S.photos = nuove; S.byId = map;
     // tengo il rullo/gruppo che stavo guardando, se esiste ancora
     const lettereRulli = new Set(Object.values(rmap).map(r=>r.lettera));
