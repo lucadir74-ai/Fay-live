@@ -88,6 +88,16 @@
   .chip{font-size:12.5px;font-weight:700;border-radius:6px;padding:3px 10px;margin-left:4px}
   .chip.pr{background:var(--ok);color:#06210f}
   .chip.ex{background:#7FB8F0;color:#0a1f33}
+  .chip.q{background:rgba(245,185,66,.14);color:var(--accent);border:1px solid var(--accent)}
+  .cell .qdot{position:absolute;right:6px;bottom:6px;width:11px;height:11px;border-radius:50%;border:2px solid rgba(11,14,20,.85)}
+  .qdot.wait{background:var(--accent)}
+  .qdot.none{background:var(--muted);animation:qpulse 1.2s ease-in-out infinite}
+  @keyframes qpulse{0%,100%{opacity:1}50%{opacity:.2}}
+  .ltab .stat.wt{color:var(--accent)}
+  .ltab.active .stat.wt{color:var(--accent-ink);opacity:.9}
+  .daysum .stat.wt{color:var(--accent)}
+  button.warn{border-color:var(--accent);color:var(--accent)}
+  button.primary.warn{background:transparent;color:var(--accent)}
   .flag.print{color:var(--ok)}
   .flag.exp{color:#7FB8F0}
 
@@ -1837,6 +1847,7 @@ function renderTabs(){
   const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
   const tab=(L,label)=>{
     const s=stats(L);
+    const a=contaAttesa(L);
     const active = state.activeLetter===L;
     const desc = L && state.letterDesc[L] ? `<span class="ldesc">${esc(state.letterDesc[L])}</span>` : "";
     return `<button class="ltab${active?" active":""}" data-l="${L||""}" title="${L?"Doppio clic per la descrizione del rullo":""}">
@@ -1844,6 +1855,7 @@ function renderTabs(){
       <span class="stat">${s.n} foto</span>
       <span class="stat pr">🖨 ${s.pr}</span>
       <span class="stat ex">⇩ ${s.ex}</span>
+      ${a.orig? `<span class="stat wt" title="${a.orig} foto senza originale su questa postazione${a.img? " · "+a.img+" ancora senza immagine":""}: stampandole ora uscirebbero in bassa qualità">⏳ ${a.orig}</span>` : ""}
     </button>`;
   };
   // "Tutte" non è più una scheda apribile: su mille foto la griglia diventava pesante.
@@ -1852,11 +1864,13 @@ function renderTabs(){
     state.activeLetter = letters[0];
   }
   const g=stats(null);
+  const ga=contaAttesa(null);
   const riepilogo = letters.length ? `<div class="daysum" title="Riepilogo della giornata (non apribile)">
       <span class="lt">GIORNATA</span>
       <span class="stat">${g.n} foto</span>
       <span class="stat pr">🖨 ${g.pr}</span>
       <span class="stat ex">⇩ ${g.ex}</span>
+      ${ga.orig? `<span class="stat wt" title="Foto della giornata senza originale su questa postazione">⏳ ${ga.orig}</span>` : ""}
     </div>` : "";
   nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
   nav.querySelectorAll(".ltab").forEach(b=>{
@@ -1921,7 +1935,12 @@ function paintVisible(){
     if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
     if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
     const st=statusOf(p);
-    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
+    /* pallino in basso a destra: giallo = c'è solo l'anteprima, grigio lampeggiante = immagine
+       ancora in arrivo. Se l'originale è disponibile non si vede niente, per non sporcare. */
+    const q=qualitaFoto(p);
+    const dot = q==="orig" ? "" :
+      `<span class="qdot ${q==="none"?"none":"wait"}" title="${q==="none"?"Immagine in arrivo dal cloud…":"Solo anteprima: l'originale non è ancora su questa postazione"}"></span>`;
+    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + dot + (flags?`<span class="flags">${flags}</span>`:"");
     if(el._html!==html){ el.innerHTML=html; el._html=html; }
   }
 }
@@ -2237,6 +2256,25 @@ async function ensureExportDir(){
     return state.exportDir;
   }catch(_){ return null; }
 }
+/* ---------- qualità disponibile su QUESTA postazione ----------
+   "orig" = originale a piena risoluzione raggiungibile (file locale o già sul cloud)
+   "ante" = solo anteprima 1280: va bene per il monitor, NON per la stampa
+   "mini" = solo la miniatura della griglia (si vede sgranata se ingrandita)
+   "none" = nessuna immagine ancora arrivata
+   Su PC1 è sempre "orig", perché i file sono sul suo disco: serve alle postazioni 2 e 3,
+   dove finora non si capiva se una foto stesse ancora arrivando o fosse già tutto qui. */
+function qualitaFoto(p){
+  if(p.file || p.arch || p.origUploaded || p.origReadyCloud) return "orig";
+  if(p.preview || p.anteprimaUrl) return "ante";
+  if(p.thumb || p.miniUrl) return "mini";
+  return "none";
+}
+function contaAttesa(L){
+  const ph = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  let img=0, orig=0;
+  for(const p of ph){ const q=qualitaFoto(p); if(q==="none") img++; if(q!=="orig") orig++; }
+  return {img, orig};
+}
 function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
 function statusText(p){
   const parts=[];
@@ -2248,7 +2286,16 @@ function setLbStatus(p){
   let h="";
   if(p.prints>0) h+=`<span class="chip pr">Stampata${p.prints>1?" ×"+p.prints:""}</span>`;
   if(p.exported) h+=`<span class="chip ex">Esportata</span>`;
+  const q=qualitaFoto(p);
+  if(q!=="orig") h+=`<span class="chip q">${q==="none"?"Immagine in arrivo…":"Anteprima · originale in arrivo…"}</span>`;
   $("lbStatus").innerHTML=h;
+  /* il tasto Stampa resta premibile (la finestra di stampa sa già aspettare l'originale),
+     ma si colora d'ambra: così chi stampa di fretta vede che non è ancora alta qualità */
+  const bp=$("lbPrint");
+  if(bp){
+    bp.classList.toggle("warn", q!=="orig");
+    bp.title = q!=="orig" ? "L'originale non è ancora su questa postazione: stampata adesso uscirebbe in bassa qualità" : "";
+  }
 }
 function refreshLbStatus(){
   const p=lbList()[state.lightboxIdx];
@@ -2346,6 +2393,39 @@ async function paintLightbox(){
     if(my===lbSeq) $("lbLoading").classList.remove("show");
   }
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
+  // 3) su una postazione senza il file in locale la 1280 su un monitor grande si vede sgranata:
+  //    se l'originale è GIÀ sul cloud lo scarico in sottofondo e sostituisco l'immagine.
+  if(!p.file && !p.arch && p.origReadyCloud && !p.origHiRes) alzaQualita(p, my);
+}
+/* Scarica l'originale dal cloud e ridisegna, se il visualizzatore è ancora su quella foto.
+   Non aspetta nessuno: si attiva solo quando l'originale risulta già caricato. */
+async function alzaQualita(p, my){
+  if(!sb || !cloud.servizio || p._hiBusy) return;
+  p._hiBusy = true;
+  const lo = $("lbLoading"), testo = lo.textContent;
+  lo.textContent = "Scarico l'originale…"; lo.classList.add("show");
+  try{
+    const blob = await ensureOriginalBlob(p);
+    if(!blob) return;
+    const bmp = await createImageBitmap(blob, {imageOrientation:"from-image"});
+    p.origHiRes = true;
+    const vecchio = bigCache.get(p.id);
+    bigCache.set(p.id, bmp);
+    if(vecchio && vecchio!==bmp){ try{ vecchio.close(); }catch(_){} }
+    if(my!==lbSeq) return;
+    const c=$("lbCanvas"), ctx=c.getContext("2d");
+    c.width=bmp.width; c.height=bmp.height;
+    lbBmp = bmp; lbBmpFor = p.id;
+    drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
+    drawOverlay(ctx,c.width,c.height);
+    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
+    setLbStatus(p);
+  }catch(err){ console.warn("alzaQualita", p.code, err); }
+  finally{
+    p._hiBusy = false;
+    lo.textContent = testo;
+    if(my===lbSeq) lo.classList.remove("show");
+  }
 }
 function closeLightbox(){
   $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null;
@@ -3278,6 +3358,21 @@ async function pullNuoveFoto(manuale){
          Si conta invece di guardare l'ultimo codice: se anche questa postazione ha importato
          nello stesso rullo, i numeri alti li ho già io e i buchi lasciati dall'altra postazione
          non si vedrebbero mai. */
+      /* Quali foto di questo rullo hanno già l'originale sul cloud? Serve alle postazioni
+         2 e 3 per sapere cosa possono stampare in alta qualità: il canale in tempo reale
+         cade spesso sull'hotspot, quindi il conteggio va rinfrescato anche da qui.
+         Costa solo l'elenco dei codici, e solo finché qualcosa manca davvero. */
+      const senzaOrig = state.photos.filter(p=>p.letter===r.lettera && !p.file && !p.arch && !p.origUploaded && !p.origReadyCloud);
+      if(senzaOrig.length){
+        try{
+          const pronti = await leggiTutte(()=> sb.from("foto").select("codice")
+            .eq("rullo_id", r.id).not("originale_url","is",null).order("codice"));
+          const set = new Set((pronti||[]).map(x=>x.codice));
+          let cambi = 0;
+          for(const p of senzaOrig) if(set.has(p.code)){ p.origReadyCloud = true; cambi++; }
+          if(cambi){ renderTabs(); paintVisible(); }
+        }catch(_){ /* rete ballerina: si riprova al giro dopo */ }
+      }
       const miei = state.photos.reduce((n,p)=> p.letter===r.lettera ? n+1 : n, 0);
       const {count} = await sb.from("foto").select("id",{count:"exact",head:true}).eq("rullo_id", r.id);
       if(count==null || count<=miei) continue;
@@ -3420,7 +3515,8 @@ function addRemotePhotoFast(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
-            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url,
+            origUrl:f.originale_url||null, origReadyCloud:!!f.originale_url, remote:true };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -3429,7 +3525,8 @@ async function addRemotePhoto(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
-            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url,
+            origUrl:f.originale_url||null, origReadyCloud:!!f.originale_url, remote:true };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
   if(blob){ p.preview=blob; }
@@ -3474,7 +3571,16 @@ function subscribeRealtime(){
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
       const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
       if(p){
-        p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare; renderTabs(); paintVisible();
+        p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare;
+        // l'originale è appena salito sul cloud da un'altra postazione: aggiorno gli indicatori
+        if(f.originale_url && !p.origReadyCloud){
+          p.origReadyCloud = true; p.origUrl = f.originale_url;
+          if($("lightbox").classList.contains("open") && lbPhoto()===p){
+            setLbStatus(p);
+            if(!p.file && !p.arch && !p.origHiRes) alzaQualita(p, lbSeq);
+          }
+        }
+        renderTabs(); paintVisible();
         if(f.richiesta_originale && !p.origUploaded){
           if(p.file || p.arch){
             uploadOneOriginal(p); // subito, senza accodare
