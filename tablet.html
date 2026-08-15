@@ -142,7 +142,10 @@
   <div id="mailOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:60;align-items:center;justify-content:center;padding:24px">
     <div style="background:#14161a;border-radius:18px;padding:26px;width:min(560px,100%);box-shadow:0 20px 60px rgba(0,0,0,.6)">
       <div id="mailTitolo" style="font-size:20px;font-weight:700;margin-bottom:6px">Ricevi le tue foto</div>
-      <div id="mailSotto" style="opacity:.7;font-size:15px;margin-bottom:18px"></div>
+      <div id="mailSotto" style="opacity:.85;font-size:15px;margin-bottom:14px;max-height:40vh;overflow:auto;
+           user-select:text;-webkit-user-select:text;word-break:break-word"></div>
+      <button id="mailCopia" hidden style="width:100%;margin-bottom:12px;font-size:15px;padding:12px;border-radius:10px;
+              border:1px solid #3a3f47;background:transparent;color:#ddd">Copia il messaggio</button>
       <input id="mailInput" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"
              placeholder="nome@email.com"
              style="width:100%;box-sizing:border-box;font-size:22px;padding:16px 14px;border-radius:12px;border:1px solid #3a3f47;background:#0c0e11;color:#fff">
@@ -708,9 +711,16 @@ function mostraEsito(testo, titolo){
   $("mailErrore").textContent="";
   $("mailAnnulla").style.display="none";
   $("mailOk").textContent="Chiudi";
+  const cp=$("mailCopia");
+  cp.hidden=false;
+  cp.onclick=async ()=>{
+    try{ await navigator.clipboard.writeText(testo); cp.textContent="Copiato ✓"; }
+    catch(_){ cp.textContent="Selezionalo e copialo a mano"; }
+  };
   ov.style.display="flex";
   $("mailOk").onclick=()=>{
     ov.style.display="none";
+    cp.hidden=true; cp.textContent="Copia il messaggio";
     // rimetto la finestra com'era, pronta per il prossimo cliente
     $("mailTitolo").textContent="Ricevi le tue foto";
     $("mailInput").style.display="";
