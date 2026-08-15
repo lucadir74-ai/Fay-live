@@ -3177,13 +3177,15 @@ async function caricaAnteprimeMancanti(){
   riempendo = true;
   mostraArrivo();
   try{
-    let giri = 0;
-    while(state.photos.some(p=>p.remote && !p.thumb) && giri < 200){
+    let giri = 0, vuoti = 0;
+    while(state.photos.some(p=>p.remote && !p.thumb) && giri < 400){
       const fatte = await riparaAnteprime();
       giri++;
       mostraArrivo();
-      if(!fatte) break;                       // niente da fare o rete giù: si riprova al prossimo giro
-      await new Promise(r=>setTimeout(r,0));
+      // un giro a vuoto (rete giù o anteprima non ancora caricata da chi ha importato) non
+      // ferma più tutto: si aspetta un momento e si riprova, arrendendosi solo dopo 5 tentativi
+      if(!fatte){ if(++vuoti >= 5) break; await new Promise(r=>setTimeout(r,3000)); }
+      else { vuoti = 0; await new Promise(r=>setTimeout(r,0)); }
     }
   }finally{ riempendo = false; mostraArrivo(); }
 }
@@ -3263,8 +3265,28 @@ async function pullNuoveFoto(manuale){
 /* foto arrivate dal cloud rimaste senza immagine (anteprima non ancora caricata da chi ha importato,
    o scaricamento fallito sull\'hotspot): si riprova, poche per volta, senza bloccare nulla */
 async function riparaAnteprime(){
-  const vuote = state.photos.filter(p=>p.remote && !p.thumb).slice(0,40);
-  if(!vuote.length) return 0;
+  /* Si parte da quello che l'operatore sta guardando: prima le foto della scheda attiva,
+     poi le altre. Le foto già provate e rimaste senza immagine finiscono in fondo, così una
+     manciata di foto senza anteprima sul cloud non blocca più tutte le altre. */
+  const mancano = state.photos.filter(p=>p.remote && !p.thumb);
+  if(!mancano.length) return 0;
+  const inVista = new Set(filteredPhotos().map(p=>p.id));
+  const punteggio = p => (inVista.has(p.id)?0:2) + (p._thumbTentativi?1:0);
+  const vuote = mancano.sort((a,b)=>punteggio(a)-punteggio(b)).slice(0,40);
+
+  /* Su PC1 gli originali sono già sul disco: la miniatura si fa in casa, senza scaricare
+     niente dal cloud (sull'hotspot è la differenza tra pochi secondi e qualche minuto). */
+  let daDisco = 0;
+  await Promise.all(vuote.filter(p=>p.file || p.arch).map(async p=>{
+    try{
+      const f = p.arch ? await p.arch.getFile() : p.file;
+      if(!f) return;
+      p.thumb = await blobToThumb(f);
+      p.remote = false;
+      daDisco++;
+    }catch(_){}
+  }));
+  if(daDisco){ paintVisible(); if(typeof mostraArrivo==="function") mostraArrivo(); }
   const senzaUrl = vuote.filter(p=>!p.miniUrl && !p.anteprimaUrl).map(p=>p.code);
   if(senzaUrl.length){
     try{
@@ -3273,9 +3295,10 @@ async function riparaAnteprime(){
         if(p){ if(f.mini_url) p.miniUrl=f.mini_url; if(f.anteprima_url) p.anteprimaUrl=f.anteprima_url; } });
     }catch(_){}
   }
-  let ok=0;
+  let ok=daDisco;
   // per la griglia basta la MINIATURA: la grande si scarica solo quando serve davvero
-  const da = vuote.filter(p=>p.miniUrl || p.anteprimaUrl);
+  const da = vuote.filter(p=>!p.thumb && (p.miniUrl || p.anteprimaUrl));
+  vuote.forEach(p=>{ if(!p.thumb) p._thumbTentativi=(p._thumbTentativi||0)+1; });
   for(let i=0;i<da.length;i+=6){
     await Promise.all(da.slice(i,i+6).map(async p=>{
       try{
