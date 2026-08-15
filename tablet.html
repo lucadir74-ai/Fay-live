@@ -130,9 +130,26 @@
     <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
+    <button class="favtoggle" id="btnSend"><span>✈</span><span>Invia</span></button>
   </header>
 
   <nav id="tabs" hidden></nav>
+
+  <!-- il cliente scrive QUI la propria email, sul tablet che ha già in mano -->
+  <div id="mailOverlay" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:60;display:flex;align-items:center;justify-content:center;padding:24px">
+    <div style="background:#14161a;border-radius:18px;padding:26px;width:min(560px,100%);box-shadow:0 20px 60px rgba(0,0,0,.6)">
+      <div id="mailTitolo" style="font-size:20px;font-weight:700;margin-bottom:6px">Ricevi le tue foto</div>
+      <div id="mailSotto" style="opacity:.7;font-size:15px;margin-bottom:18px"></div>
+      <input id="mailInput" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"
+             placeholder="nome@email.com"
+             style="width:100%;box-sizing:border-box;font-size:22px;padding:16px 14px;border-radius:12px;border:1px solid #3a3f47;background:#0c0e11;color:#fff">
+      <div id="mailErrore" style="color:#ff8080;font-size:14px;height:20px;margin-top:6px"></div>
+      <div style="display:flex;gap:12px;margin-top:14px">
+        <button id="mailAnnulla" style="flex:1;font-size:18px;padding:16px;border-radius:12px;border:1px solid #3a3f47;background:transparent;color:#ddd">Annulla</button>
+        <button id="mailOk" style="flex:2;font-size:18px;padding:16px;border-radius:12px;border:0;background:#2f7d4f;color:#fff;font-weight:700">Invia le foto</button>
+      </div>
+    </div>
+  </div>
   <div id="grid"></div>
   <div id="empty" hidden>Scegli una sede per vedere le foto</div>
 
@@ -655,6 +672,72 @@ function activeFavs(){
 // tasti in alto: agiscono sui PREFERITI del rullo attivo
 $("btnShare").onclick = ()=> { const ps=activeFavs(); sharePhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"condivise"); };
 $("btnExport").onclick = ()=> { const ps=activeFavs(); exportPhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"esportate"); };
+/* INVIO DIGITALI DAL TABLET (via Filemail, come sul PC).
+   Il tablet NON scarica nessuna foto: chiede solo gli indirizzi firmati e li passa alla
+   funzione su Vercel, che prende i file da Supabase e li manda a Filemail. Sull'hotspot
+   viaggiano poche centinaia di byte invece di decine di MB. */
+function chiediEmail(quante){
+  return new Promise(res=>{
+    const ov=$("mailOverlay"), inp=$("mailInput"), err=$("mailErrore");
+    $("mailSotto").textContent = `${quante} foto — scrivi la tua email, ti arriva un link per scaricarle.`;
+    inp.value=""; err.textContent=""; ov.hidden=false;
+    setTimeout(()=>inp.focus(),50);
+    const chiudi=v=>{ ov.hidden=true; inp.onkeydown=null; res(v); };
+    $("mailAnnulla").onclick=()=>chiudi(null);
+    $("mailOk").onclick=()=>{
+      const v=inp.value.trim();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)){ err.textContent="Controlla l'indirizzo email"; return; }
+      chiudi(v);
+    };
+    inp.onkeydown=e=>{ if(e.key==="Enter") $("mailOk").click(); };
+  });
+}
+
+async function inviaConFilemail(list, ctx){
+  if(!list.length){ toast("Nessuna foto da inviare"+(ctx||"")); return; }
+  if(!sb || !S.servizio){ toast("Cloud non raggiungibile"); return; }
+  const email = await chiediEmail(list.length);
+  if(!email) return;
+
+  toast("Preparo gli originali…");
+  await ensureOriginals(list);
+
+  const files=[], mancanti=[];
+  for(const p of list){
+    if(!p.origPath){ mancanti.push(p.code); continue; }
+    try{
+      const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 900);
+      if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
+      files.push({nome:p.code+".jpg", url:data.signedUrl});
+    }catch(_){ mancanti.push(p.code); }
+  }
+  if(!files.length){ toast("Gli originali non sono ancora sul cloud: riprova tra poco"); return; }
+  if(mancanti.length) toast(`${mancanti.length} foto non pronte, invio le altre (${mancanti.join(", ")})`);
+
+  const b=$("btnSend"); b.disabled=true;
+  toast(`Invio ${files.length} foto a ${email}…`);
+  try{
+    const r=await fetch("/api/invia",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ email, files,
+        oggetto:"Le tue foto — Frame About You",
+        messaggio:"Grazie per la serata! Ecco le tue foto." })
+    });
+    const out=await r.json().catch(()=>({}));
+    if(!r.ok || !out.ok){
+      console.warn("filemail", out);
+      toast("Invio non riuscito: "+(out.dettaglio||out.errore||"errore sconosciuto"));
+      return;
+    }
+    toast(`Inviate ${out.inviate||files.length} foto a ${email}`);
+    logActivity(list,"inviate");
+  }catch(err){
+    console.warn("filemail", err);
+    toast("Invio non riuscito: controlla la connessione");
+  }finally{ b.disabled=false; }
+}
+$("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
+
 // tasti nel visore: agiscono sulla FOTO aperta
 $("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logActivity([p],"condivise"); } };
 $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); logActivity([p],"esportate"); } };
