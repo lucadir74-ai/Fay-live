@@ -494,8 +494,8 @@
   <h3 style="margin-bottom:10px">Conferma import</h3>
   <p id="ciText" style="margin-bottom:14px"></p>
   <div class="field" id="ciLetterField" style="margin-bottom:12px">
-    <label>Lettera del rullo (fotografo)</label>
-    <input type="text" id="ciLetter" maxlength="1" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:70px;text-align:center">
+    <label>Sigla del rullo (fotografo) — da 1 a 3 lettere, es. A, GT</label>
+    <input type="text" id="ciLetter" maxlength="3" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:110px;text-align:center">
   </div>
   <div class="field" style="margin-bottom:16px">
     <label>Descrizione rullo (facoltativa, modificabile dopo)</label>
@@ -983,7 +983,7 @@ $("restoreInput").onchange = async e=>{
   // mappa codice -> file, leggendo il codice dal nome (es. A-047.jpg)
   const byCode=new Map();
   for(const f of files){
-    const m=(f.name.match(/([A-Z])-?(\d{1,4})/i));
+    const m=(f.name.match(/([A-Z]{1,3})-(\d{1,4})/i));
     if(m){ const code=m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0"); byCode.set(code,f); }
   }
   // quali foto della giornata hanno bisogno dell'anteprima?
@@ -1041,7 +1041,7 @@ function detectLetter(f){
   const parts=(f.webkitRelativePath || f._rel || "").split("/");
   if(parts.length>=2){
     const parent=parts[parts.length-2].trim().toUpperCase();
-    if(/^[A-Z]$/.test(parent)) return parent;
+    if(/^[A-Z]{1,3}$/.test(parent)) return parent;
   }
   return null;
 }
@@ -1070,7 +1070,7 @@ async function importaFiles(files){
   const L = await new Promise(res=>{
     $("ciYes").onclick=()=>{
       const v=$("ciLetter").value.trim().toUpperCase();
-      if(!/^[A-Z]$/.test(v)){ toast("Inserisci una lettera (A–Z)"); $("ciLetter").focus(); return; }
+      if(!/^[A-Z]{1,3}$/.test(v)){ toast("Sigla del rullo: da 1 a 3 lettere (es. A, GT, ABC)"); $("ciLetter").focus(); return; }
       const d=$("ciDesc").value.trim();
       if(d) state.letterDesc[v]=d;
       dlg.close(); res(v);
@@ -1152,6 +1152,28 @@ const idb = {
     t.onsuccess=()=>res(); t.onerror=()=>rej(t.error); });}
 };
 
+/* Riattiva l'archivio SENZA chiedere niente, quando Windows ha già dato il permesso
+   in una sessione precedente. Serve dopo ogni ricaricamento della pagina: senza questo,
+   PC1 riparte senza i file in mano e gli originali non salgono più da soli. */
+async function riattivaArchivioSilenzioso(){
+  if(state.archive) return state.archive;
+  if(!window.showDirectoryPicker) return null;
+  try{
+    const saved = await idb.get("archiveDir");
+    if(!saved) return null;
+    const perm = await saved.queryPermission({mode:"readwrite"});   // solo query: niente finestre
+    if(perm !== "granted"){
+      $("stArch").textContent = saved.name + " — DA RIATTIVARE";
+      $("stArch").style.color = "var(--danger)";
+      return null;
+    }
+    state.archive = saved;
+    $("stArch").textContent = saved.name;
+    $("stArch").style.color = "";
+    return saved;
+  }catch(_){ return null; }
+}
+
 async function ensureArchive(){
   if(state.archive) return state.archive;
   if(!window.showDirectoryPicker){
@@ -1202,7 +1224,7 @@ async function ricollegaArchivio(silent){
       for await (const e of d.values()){
         if(e.kind === "directory"){ await scan(e, depth+1); continue; }
         if(!/\.(jpe?g|png|webp)$/i.test(e.name)) continue;
-        const m = e.name.match(/([A-Z])-?(\d{1,4})/i);
+        const m = e.name.match(/([A-Z]{1,3})-(\d{1,4})/i);
         if(!m) continue;
         const code = m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0");
         if(!trovati.has(code)) trovati.set(code, e);
@@ -1730,7 +1752,7 @@ let cols=1, visible=[], cellPool=new Map(); // idx foto filtrata -> div
 
 function parseQuery(q){
   const clean=q.replace(/[^A-Z0-9]/g,"");
-  let m=clean.match(/^([A-Z])(\d{1,4})$/);
+  let m=clean.match(/^([A-Z]{1,3})(\d{1,4})$/);
   if(m) return {letter:m[1], num:parseInt(m[2],10)};
   // solo numero: usa la lettera attiva, oppure l'unica lettera presente
   m=clean.match(/^(\d{1,4})$/);
@@ -3072,6 +3094,26 @@ async function loadServizioFoto(){
   renderTabs(); layoutGrid(); updateThumbCloud();
   if(typeof updatePrintQueueBadge==="function") updatePrintQueueBadge();
   caricaAnteprimeMancanti();     // non si aspetta: riempie la griglia man mano
+  ripartiDopoRicarica();         // riaggancia i file su disco e rimette in coda gli originali
+}
+
+/* Dopo un ricaricamento della pagina il browser perde i collegamenti ai file su disco e
+   la coda di caricamento in corso. Senza questo, PC1 riparte "vuoto": gli originali non
+   salgono più e alla stampa compare la richiesta di attendere l'originale. */
+async function ripartiDopoRicarica(){
+  const dir = await riattivaArchivioSilenzioso();
+  if(!dir){
+    const orfane = state.photos.filter(p=>!p.file && !p.arch && !p.origUploaded).length;
+    if(orfane) toast("Archivio da riattivare: Altro → Archivio… (gli originali non stanno salendo)");
+    return;
+  }
+  const n = await ricollegaArchivio(true);
+  // rimette in coda anche gli originali che erano a metà quando la pagina è stata ricaricata
+  let ri = 0;
+  for(const p of state.photos){
+    if((p.file || p.arch) && !p.origUploaded){ queueOriginalUpload(p, false); ri++; }
+  }
+  if(ri) updateOrigCount();
 }
 
 /* Scarica in sottofondo le anteprime delle foto arrivate dal cloud, finché ne restano.
