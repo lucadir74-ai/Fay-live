@@ -3163,7 +3163,7 @@ async function ripartiDopoRicarica(){
 let riempendo = false;
 function mostraArrivo(){
   const el = $("stArrivo"); if(!el) return;
-  const mancanti = state.photos.filter(p=>p.remote && !p.thumb).length;
+  const mancanti = state.photos.filter(p=>!p.thumb).length;
   const tot = state.photos.length;
   if(mancanti){
     el.hidden = false;
@@ -3178,7 +3178,7 @@ async function caricaAnteprimeMancanti(){
   mostraArrivo();
   try{
     let giri = 0, vuoti = 0;
-    while(state.photos.some(p=>p.remote && !p.thumb) && giri < 400){
+    while(state.photos.some(p=>!p.thumb) && giri < 400){
       const fatte = await riparaAnteprime();
       giri++;
       mostraArrivo();
@@ -3268,7 +3268,9 @@ async function riparaAnteprime(){
   /* Si parte da quello che l'operatore sta guardando: prima le foto della scheda attiva,
      poi le altre. Le foto già provate e rimaste senza immagine finiscono in fondo, così una
      manciata di foto senza anteprima sul cloud non blocca più tutte le altre. */
-  const mancano = state.photos.filter(p=>p.remote && !p.thumb);
+  /* una foto senza miniatura va riempita SEMPRE, anche se non è più marcata "remote":
+     "Ricollega originali" toglie il marchio remote e prima faceva sparire le foto da questa coda */
+  const mancano = state.photos.filter(p=>!p.thumb);
   if(!mancano.length) return 0;
   const inVista = new Set(filteredPhotos().map(p=>p.id));
   const punteggio = p => (inVista.has(p.id)?0:2) + (p._thumbTentativi?1:0);
@@ -3282,7 +3284,6 @@ async function riparaAnteprime(){
       const f = p.arch ? await p.arch.getFile() : p.file;
       if(!f) return;
       p.thumb = await blobToThumb(f);
-      p.remote = false;
       daDisco++;
     }catch(_){}
   }));
