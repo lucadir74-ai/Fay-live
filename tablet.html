@@ -168,6 +168,7 @@
       <button class="vAct" id="vShare">↗ Condividi</button>
       <button class="vAct" id="vExport">⬇ Esporta</button>
       <button class="vAct" id="vSend">✈ Invia</button>
+      <button class="vAct" id="vPrint">🖨 Stampa</button>
       <button id="vClose">✕</button>
     </div>
     <canvas id="vCanvas"></canvas>
@@ -698,10 +699,11 @@ function chiediEmail(quante){
 }
 
 /* Conferma ben visibile: il toast sparisce da solo e in mezzo al lavoro non lo si vede. */
-function mostraEsito(testo){
+function mostraEsito(testo, titolo){
   const ov=$("mailOverlay");
-  $("mailTitolo").textContent="Inviate ✓";
+  $("mailTitolo").textContent=titolo||"Inviate ✓";
   $("mailSotto").textContent=testo;
+  $("mailSotto").style.whiteSpace="pre-line";
   $("mailInput").style.display="none";
   $("mailErrore").textContent="";
   $("mailAnnulla").style.display="none";
@@ -719,7 +721,7 @@ function mostraEsito(testo){
 
 async function inviaConFilemail(list, ctx){
   if(!list.length){ toast("Nessuna foto da inviare"+(ctx||"")); return; }
-  if(!sb || !S.servizio){ toast("Cloud non raggiungibile"); return; }
+  if(!sb || !S.servizio){ mostraEsito("Cloud non raggiungibile: controlla la connessione.","Invio non riuscito"); return; }
   const email = await chiediEmail(list.length);
   if(!email) return;
 
@@ -735,7 +737,10 @@ async function inviaConFilemail(list, ctx){
       files.push({nome:p.code+".jpg", url:data.signedUrl});
     }catch(_){ mancanti.push(p.code); }
   }
-  if(!files.length){ toast("Gli originali non sono ancora sul cloud: riprova tra poco"); return; }
+  if(!files.length){
+    mostraEsito("Gli originali di queste foto non sono ancora sul cloud.\nAspetta che PC1 finisca di caricarli e riprova.","Invio non riuscito");
+    return;
+  }
   if(mancanti.length) toast(`${mancanti.length} foto non pronte, invio le altre (${mancanti.join(", ")})`);
 
   const b=$("btnSend"); b.disabled=true;
@@ -747,17 +752,19 @@ async function inviaConFilemail(list, ctx){
         oggetto:"Le tue foto — Frame About You",
         messaggio:"Grazie per la serata! Ecco le tue foto." })
     });
-    const out=await r.json().catch(()=>({}));
+    const testoGrezzo = await r.text();
+    let out={}; try{ out=JSON.parse(testoGrezzo); }catch(_){}
     if(!r.ok || !out.ok){
-      console.warn("filemail", out);
-      toast("Invio non riuscito: "+(out.dettaglio||out.errore||"errore sconosciuto"));
+      console.warn("filemail", r.status, testoGrezzo);
+      const dettaglio = out.dettaglio || out.errore || (testoGrezzo||"").slice(0,300) || "nessuna risposta dal server";
+      mostraEsito(`Il server ha risposto ${r.status}.\n\n${dettaglio}`, "Invio non riuscito");
       return;
     }
     logActivity(list,"inviate");
     mostraEsito(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl cliente riceve un link valido 7 giorni.`);
   }catch(err){
     console.warn("filemail", err);
-    toast("Invio non riuscito: controlla la connessione");
+    mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
   }finally{ b.disabled=false; }
 }
 $("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
@@ -767,6 +774,16 @@ $("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logA
 $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); logActivity([p],"esportate"); } };
 /* Dal visualizzatore: se ci sono preferiti nel rullo si inviano TUTTI insieme (il cliente
    ne sceglie parecchie e le guarda una per una), altrimenti solo la foto aperta. */
+/* Manda in stampa dal visualizzatore: la foto aperta finisce nella lista "Da stampare" del PC. */
+$("vPrint").onclick = async ()=>{
+  const p=V.list[V.idx]; if(!p) return;
+  if(!sb){ toast("Cloud non raggiungibile"); return; }
+  try{
+    await sb.from("foto").update({da_stampare:true}).eq("id",p.id);
+    logActivity([p],"in stampa");
+    toast(`${p.code} mandata in stampa`);
+  }catch(err){ toast("Non riuscito: "+(err.message||err)); }
+};
 $("vSend").onclick = ()=>{
   const p=V.list[V.idx]; if(!p) return;
   const preferiti = activeFavs();
