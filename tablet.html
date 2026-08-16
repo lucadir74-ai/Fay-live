@@ -163,7 +163,8 @@
   <div id="status">
     <span id="dot"></span><span id="statusText">Scegli una sede</span>
     <span class="spacer" style="flex:1"></span>
-    <span id="prevCount" style="margin-right:14px"></span>
+    <button id="prevCount" style="margin-right:14px;background:var(--surface2);border:1px solid var(--line);
+            color:var(--muted);border-radius:8px;padding:6px 12px;font-size:13px;font-family:inherit;min-height:34px"></button>
     <span id="favCount"></span>
   </div>
 
@@ -239,6 +240,10 @@ async function diagnosiRullo(){
   const senzaNulla = scope.filter(p=>!p.miniUrl && !p.bigUrl).length;
 
   toast("Misuro il peso delle immagini…");
+  const conScadenza = (u)=>{
+    const ac=new AbortController(); const t=setTimeout(()=>ac.abort(), 8000);
+    return fetch(u,{cache:"no-store", signal:ac.signal}).finally(()=>clearTimeout(t));
+  };
   // campione: 5 foto sparse nel rullo
   const passo = Math.max(1, Math.floor(scope.length/5));
   const campione = []; for(let i=0;i<scope.length && campione.length<5;i+=passo) campione.push(scope[i]);
@@ -246,7 +251,7 @@ async function diagnosiRullo(){
   for(const p of campione){
     const u = p.url; if(!u) continue;
     try{
-      const r = await fetch(u, {cache:"no-store"});
+      const r = await conScadenza(u);
       if(!r.ok){ errori++; continue; }
       const b = await r.blob(); byte += b.size; letti++;
     }catch(_){ errori++; }
@@ -267,6 +272,11 @@ async function diagnosiRullo(){
     `sta scaricando le anteprime grandi: è quello che rallenta.`
   );
 }
+
+document.addEventListener("DOMContentLoaded", ()=>{
+  const b=$("prevCount"); if(b) b.onclick=diagnosiRullo;
+});
+{ const b=$("prevCount"); if(b) b.onclick=diagnosiRullo; }   // se il documento è già pronto
 
 function aggiornaIndicatoreAnteprime(){
   const el=$("prevCount"); if(!el) return;
@@ -430,7 +440,6 @@ function render(){
   $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
   $("favOnly").classList.toggle("on", S.favOnly);
   aggiornaIndicatoreAnteprime();
-  const pc=$("prevCount"); if(pc && !pc._diag){ pc._diag=true; pc.style.cursor="pointer"; pc.onclick=diagnosiRullo; }
 
   // griglia
   const list=visible(); const g=$("grid");
@@ -614,7 +623,9 @@ function pumpDraw(){
     const [cv, p] = drawQueue.shift();
     if(!cv.isConnected) continue;              // cella già sostituita da un nuovo render
     drawActive++;
-    drawThumb(cv, p).finally(()=>{ drawActive--; pumpDraw(); });
+    drawThumb(cv, p).then(ok=>{
+      if(ok === false) riprovaCella(cv, p);
+    }).finally(()=>{ drawActive--; pumpDraw(); });
   }
 }
 
@@ -624,15 +635,35 @@ function pumpDraw(){
 // Si decodifica anche PICCOLA (la cella è ~110px, non serve un'immagine da 1280): meno memoria e più velocità.
 const thumbBmpCache = new Map();
 const BMP_W = 340;
+/* Riprova una cella rimasta senza immagine: attese crescenti, senza mai arrendersi
+   finché la cella è ancora sullo schermo. */
+function riprovaCella(cv, p){
+  if(!cv.isConnected || cv.dataset.code !== p.code) return;
+  p._thumbErr = (p._thumbErr||0) + 1;
+  const attesa = Math.min(1500 * p._thumbErr, 20000);
+  setTimeout(()=>{
+    if(!cv.isConnected || cv.dataset.code !== p.code) return;
+    queueDraw(cv, p);
+  }, attesa);
+}
+
 async function drawThumb(cv, p){
   // la cella può essere stata riusata da un nuovo render mentre scaricavo: se il codice
   // non corrisponde più, non disegno, altrimenti si vedrebbe una foto sotto il codice sbagliato
   if(cv.dataset.code !== p.code) return;
+  if(!p.url) return false;                 // non c'è ancora l'anteprima sul cloud: si riproverà
   try{
     let bmp = thumbBmpCache.get(p.url);
     if(!bmp){
-      const r = await fetch(p.url);
-      if(!r.ok) return;
+      /* Prima, se la richiesta falliva o restava appesa, la cella restava NERA per sempre:
+         l'osservatore l'aveva già dimenticata e nessuno riprovava. Sull'hotspot succede
+         spesso. Ora ogni richiesta ha una scadenza e si riprova, diradando i tentativi. */
+      const ac = new AbortController();
+      const scad = setTimeout(()=>ac.abort(), 12000);
+      let r;
+      try{ r = await fetch(p.url, {signal: ac.signal}); }
+      finally{ clearTimeout(scad); }
+      if(!r.ok) throw new Error("HTTP "+r.status);
       const blob = await r.blob();
       try{ bmp = await createImageBitmap(blob, {resizeWidth:BMP_W, resizeQuality:"medium"}); }
       catch(_){ bmp = await createImageBitmap(blob); }
@@ -662,7 +693,12 @@ async function drawThumb(cv, p){
     const w=bmp.width*k, h=bmp.height*k;
     ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
     cv.dataset.drawn="1";
-  }catch(_){}
+    p._thumbErr = 0;
+    return true;
+  }catch(err){
+    console.warn("miniatura", p.code, err && err.message);
+    return false;                 // la cella verrà riprovata invece di restare nera
+  }
 }
 function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
 
