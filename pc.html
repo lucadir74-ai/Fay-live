@@ -258,6 +258,9 @@
         <b id="cmpCount"></b>
         <div class="spacer"></div>
         <button id="cmpShow" class="primary">Mostra sul monitor</button>
+        <button id="cmpPrint">🖨 Stampa</button>
+        <button id="cmpExport">Esporta file</button>
+        <button id="cmpSend">✈ Invia</button>
         <button id="cmpClose">Chiudi <kbd>invio</kbd></button>
       </div>
       <div id="cmpGrid"></div>
@@ -2265,6 +2268,11 @@ function closeCompare(){
 $("selCompare").onclick = openCompare;
 $("cmpClose").onclick = ()=>{ closeCompare(); const M=state.monitor; if(M.mode==="present"||M.mode==="mosaic") backToSlideshow(); };
 $("cmpShow").onclick = ()=> presentMosaicSet(selSet());
+/* Da "Vedi insieme" si chiude la vendita senza dover tornare indietro: è lì che il
+   cliente decide, e uscire dalla vista per stampare faceva perdere il filo. */
+$("cmpPrint").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await printPhotos(set); fineVendita(set); };
+$("cmpExport").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await exportPhotos(set); fineVendita(set); };
+$("cmpSend").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await inviaDiretto(set); };
 
 /* ---------- stampa ed esportazione ---------- */
 async function renderFull(p, withOverlay=true){
