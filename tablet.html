@@ -163,6 +163,7 @@
   <div id="status">
     <span id="dot"></span><span id="statusText">Scegli una sede</span>
     <span class="spacer" style="flex:1"></span>
+    <span id="prevCount" style="margin-right:14px"></span>
     <span id="favCount"></span>
   </div>
 
@@ -224,6 +225,27 @@ function serviceDateStr(){
 }
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1900); }
 function setDot(on,txt){ $("dot").classList.toggle("off",!on); if(txt)$("statusText").textContent=txt; }
+
+/* Indicatore anteprime: dice quante foto del rullo aperto sono già guardabili.
+   Serve a capire se il PC sta ancora caricando o se quello che vedi è tutto. */
+function aggiornaIndicatoreAnteprime(){
+  const el=$("prevCount"); if(!el) return;
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const tot = scope.length;
+  if(!tot){ el.textContent=""; return; }
+  const pronte = scope.filter(p=>p.url).length;      // ha almeno la miniatura: si vede
+  const grandi = scope.filter(p=>p.bigUrl).length;   // apribile a schermo pieno
+  if(pronte>=tot && grandi>=tot){
+    el.textContent = `✓ ${tot} anteprime`;
+    el.style.color = "var(--ok, #4caf50)";
+  }else if(pronte>=tot){
+    el.textContent = `⇩ ${grandi}/${tot} a schermo pieno`;
+    el.style.color = "var(--muted)";
+  }else{
+    el.textContent = `⇩ ${pronte}/${tot} anteprime`;
+    el.style.color = "var(--accent)";
+  }
+}
 
 /* ---------- caricamento sedi / giornate ---------- */
 async function loadSedi(){
@@ -293,7 +315,7 @@ async function openServizio(sv){
     const foto = await caricaFotoDeiRulli(ids);
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
     });
   }
@@ -313,7 +335,7 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
@@ -367,6 +389,7 @@ function render(){
   // conteggio preferiti (del rullo attivo)
   $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
   $("favOnly").classList.toggle("on", S.favOnly);
+  aggiornaIndicatoreAnteprime();
 
   // griglia
   const list=visible(); const g=$("grid");
@@ -958,7 +981,7 @@ async function refresh(manuale){
       const foto = await caricaFotoDeiRulli(ids);
       (foto||[]).forEach(f=>{
         const r = rmap[f.rullo_id]; if(!r) return;
-        const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null,
+        const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null,
                     origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
         const vecchia = S.byId.get(f.id);
         if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile
