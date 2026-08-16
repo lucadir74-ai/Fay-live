@@ -2807,6 +2807,7 @@ async function paintMonitorPhoto(p, withCode){
   M.ctx.save(); M.ctx.translate(dx,dy);
   if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
   M.ctx.restore();
+  drawMonitorQR();                 // sopra tutto: se c'è una vendita aperta il QR resta visibile
   M._last=p;
 }
 const TILE_GRID = {1:[1,1],2:[2,1],3:[3,1],4:[2,2],5:[3,2],6:[3,2],7:[4,2],8:[4,2],9:[3,3],10:[4,3],11:[4,3],12:[4,3]};
@@ -2853,6 +2854,7 @@ async function drawTilePage(page, expectMode, withInfo){
     M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
     M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
   }
+  drawMonitorQR();                 // sopra tutto, anche sul mosaico
 }
 async function paintMonitorMosaic(start){
   const M=state.monitor; if(!M.ctx) return;
@@ -2885,7 +2887,8 @@ function paintMonitorMessage(msg){
 }
 function repaintMonitor(){
   const M=state.monitor;
-  if(venditaAttiva() && drawMonitorQR()) return;   // QR grande: prende tutto lo schermo
+  // se non c'è niente da ridisegnare ma la vendita è aperta, almeno il QR va messo
+  if(!M._last && M.mode!=="slideshow" && M.mode!=="mosaic"){ drawMonitorQR(); return; }
   if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
   else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
   else if(M._last) paintMonitorPhoto(M._last, M.mode!=="off"); // in presentazione il codice resta visibile
