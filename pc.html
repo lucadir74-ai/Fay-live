@@ -615,6 +615,10 @@ function fmtCode(letter,num){ return letter+"-"+pad3(num); }
 function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 
 /* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
+/* La cornice con logo e scritta si applica SOLO alla stampa (e all'anteprima della
+   cornice nelle impostazioni). Su monitor cliente, visualizzatore e tablet le foto si
+   vedono pulite: la cornice sullo schermo copriva parte dell'immagine mentre il cliente
+   la stava valutando. */
 function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
   const ev = state.event; if(!ev) return;
   // mascherina a tutta foto: se c'è quella dell'orientamento giusto, disegno solo lei
@@ -2581,7 +2585,6 @@ async function paintLightbox(){
       c.width=t.width*4; c.height=t.height*4;
       ctx.imageSmoothingEnabled=true;
       drawAdjusted(ctx,t,0,0,c.width,c.height,p);
-      drawOverlay(ctx,c.width,c.height);
       drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
     }catch(_){}
   }else{
@@ -2601,7 +2604,6 @@ async function paintLightbox(){
     c.width=bmp.width; c.height=bmp.height;
     lbBmp = bmp; lbBmpFor = p.id;              // tenuta da parte per i cursori
     drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
-    drawOverlay(ctx,c.width,c.height);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
     if(my!==lbSeq) return;
@@ -2664,7 +2666,6 @@ function applyAdjFromBar(){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     c.width=lbBmp.width; c.height=lbBmp.height;
     drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
-    drawOverlay(ctx,c.width,c.height);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }else{
     paintLightbox();
@@ -2682,7 +2683,6 @@ $("adjReset").onclick = ()=>{
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     c.width=lbBmp.width; c.height=lbBmp.height;
     drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
-    drawOverlay(ctx,c.width,c.height);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }else{
     paintLightbox();
@@ -2798,7 +2798,6 @@ async function paintMonitorPhoto(p, withCode){
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
   drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
   M.ctx.save(); M.ctx.translate(dx,dy);
-  drawOverlay(M.ctx,dw,dh);
   if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
   M.ctx.restore();
   M._last=p;
@@ -2833,7 +2832,6 @@ async function drawTilePage(page, expectMode, withInfo){
     const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
     drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
     M.ctx.save(); M.ctx.translate(dx,dy);
-    drawOverlay(M.ctx,dw,dh);
     drawCodeBadge(M.ctx,dw,dh,p.code);
     M.ctx.restore();
   }
