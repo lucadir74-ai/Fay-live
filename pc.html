@@ -1501,6 +1501,19 @@ function pumpThumbQueue(){
 }
 addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 
+/* Rete di sicurezza: ogni mezzo minuto si controlla che nessuna anteprima grande sia
+   rimasta indietro. Le corsie si riempiono a vicenda e basta un intoppo perché una
+   ripartenza non avvenga: così il rullo non resta bloccato a metà senza motivo. */
+setInterval(()=>{
+  if(!sb || !cloud.servizio) return;
+  if(thumbQueue.length || thumbActive) return;          // prima le miniature, sempre
+  let rimesse = 0;
+  for(const p of state.photos){
+    if(!p.anteprimaUrl && p.preview && !p.remote && !p._inBig){ queueBigPreview(p); rimesse++; }
+  }
+  if(rimesse) console.log("anteprime grandi rimesse in coda:", rimesse);
+}, 30000);
+
 // Carica la MINIATURA (piccola) + riga foto: è quello che serve per vedere la griglia
 // sui tablet e sulle altre postazioni. L'anteprima grande da 1280 sale dopo, in seconda corsia.
 function pubUrl(path){
@@ -1560,7 +1573,11 @@ function pumpBigQueue(){
       }catch(err){
         console.warn("anteprima grande", p.code, err);
         p._bigTries=(p._bigTries||0)+1;
-        if(p._bigTries<=5) setTimeout(()=>{ p._inBig=false; queueBigPreview(p); }, 2000*p._bigTries);
+        /* Prima dopo 5 tentativi falliti la foto veniva abbandonata per sempre: sull'hotspot
+           bastava una manciata di errori e quel rullo restava senza anteprime grandi finché
+           qualcuno non se ne accorgeva. Ora si continua a riprovare, diradando l'attesa. */
+        const attesa = Math.min(2000*p._bigTries, 60000);
+        setTimeout(()=>{ p._inBig=false; queueBigPreview(p); }, attesa);
       }finally{
         bigActive--; p._inBig=false; updateThumbCloud(); pumpBigQueue();
         if(!bigQueue.length && !bigActive) pumpOrigQueue();
@@ -2281,6 +2298,15 @@ async function doPrint(set){
   // chiudi la foto aperta in grande dopo la stampa
   if($("lightbox").classList.contains("open")) closeLightbox();
   set.forEach(p=>{ p.prints++; });
+  /* Una foto appena stampata non è più "da stampare": il segnale arrivato dal tablet si
+     spegne qui, così vale per QUALSIASI modo di stampare — dalla lista, dalla selezione
+     nella griglia o dalla foto aperta — e non solo dal tasto della lista. */
+  const eranoDaStampare = set.filter(p=>p.daStampare);
+  eranoDaStampare.forEach(p=>{
+    p.daStampare = false;
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"richiesta stampa servita");
+  });
+  if(eranoDaStampare.length) updatePrintQueueBadge();
   renderTabs(); paintVisible(); refreshLbStatus();
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
   if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
