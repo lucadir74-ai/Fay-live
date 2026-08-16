@@ -3667,21 +3667,27 @@ function spiegaAnteprimeMancanti(onCloud, tot){
   const elenco = Object.keys(perRullo).sort()
     .map(L=>`${L}: ${perRullo[L]}`).join(" · ");
 
-  // perché sono ferme: si guarda cosa manca a queste foto per poter salire
-  const senzaImmagine = mancanti.filter(p=>!p.preview && !p.file && !p.arch).length;
-  const daAltraPostazione = mancanti.filter(p=>p.remote && !p.preview).length;
+  /* Come si capisce chi può caricarle: NON dal marchio "remote", che dopo una ricarica
+     della pagina finisce anche sulle foto importate da qui. Conta solo cosa ha in mano
+     questa postazione: l'immagine in memoria, oppure il file originale su disco. */
+  const inMemoria = mancanti.filter(p=>p.preview).length;
+  const daDisco   = mancanti.filter(p=>!p.preview && (p.file || p.arch)).length;
+  const altrui    = mancanti.filter(p=>!p.preview && !p.file && !p.arch).length;
   const inCoda = thumbQueue.length + thumbActive;
 
   let motivo;
   if(inCoda){
-    motivo = `Sono ancora in coda (${inCoda} in lavorazione): sta caricando, aspetta.`;
-  } else if(daAltraPostazione){
-    motivo = `${daAltraPostazione} foto appartengono a un'altra postazione: deve caricarle quella, non questa.`;
-  } else if(senzaImmagine){
-    motivo = `${senzaImmagine} foto non hanno più l'immagine in memoria (pagina ricaricata). ` +
-             `Servono gli originali: Altro → Ripristina anteprime, con l'archivio collegato.`;
+    motivo = `Sono in coda (${inCoda} in lavorazione): sta caricando, aspetta.`;
+  } else if(inMemoria){
+    motivo = `${inMemoria} foto ce le ha questa postazione in memoria ma la coda è ferma: clicca qui per rimetterle in caricamento.`;
+  } else if(daDisco){
+    motivo = `${daDisco} foto hanno l'originale su questo PC ma non l'anteprima in memoria (pagina ricaricata). ` +
+             `Rigenerale con Altro → Ripristina anteprime.`;
+  } else if(altrui){
+    motivo = `${altrui} foto non sono su questo PC: né immagine in memoria né file su disco. ` +
+             `Le carica la postazione che le ha importate, oppure collega l'archivio qui con Altro → Ricollega originali.`;
   } else {
-    motivo = `La coda è ferma ma le immagini ci sono: clicca qui per rimetterle in caricamento.`;
+    motivo = `Clicca qui per rimettere in coda quello che manca.`;
   }
 
   return `Mancano ${tot-onCloud} anteprime su ${tot}.\nRulli indietro → ${elenco}\n\n${motivo}`;
