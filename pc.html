@@ -112,6 +112,10 @@
   #lbMenu button{text-align:left;width:100%}
   #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
+  .cmp{position:relative}
+  .cmpDel{position:absolute;top:6px;right:6px;background:rgba(11,14,20,.85);color:#fff;border:1px solid var(--line);
+    border-radius:50%;width:26px;height:26px;line-height:1;cursor:pointer;font-size:13px}
+  .cmp:hover .cmpDel{background:var(--danger);border-color:var(--danger)}
   #btnMail.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
     box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)}
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
@@ -257,10 +261,12 @@
       <div id="cmpTop">
         <b id="cmpCount"></b>
         <div class="spacer"></div>
+        <span class="hint" style="margin-right:auto">Clicca una foto per toglierla</span>
         <button id="cmpShow" class="primary">Mostra sul monitor</button>
         <button id="cmpPrint">🖨 Stampa</button>
         <button id="cmpExport">Esporta file</button>
         <button id="cmpSend">✈ Invia</button>
+        <button id="cmpQr">QR al cliente</button>
         <button id="cmpClose">Chiudi <kbd>invio</kbd></button>
       </div>
       <div id="cmpGrid"></div>
@@ -273,6 +279,7 @@
         <span id="lbStatus" class="hint"></span>
         <div class="spacer"></div>
         <button id="lbFav">♡ Segna <kbd>spazio</kbd></button>
+        <button id="lbQr">QR al cliente</button>
         <button id="lbPrint" class="primary">Stampa</button>
         <button id="lbShow">Monitor <kbd>-</kbd></button>
         <button id="lbMore" title="Altre azioni">Altro ▾</button>
@@ -2244,7 +2251,7 @@ async function inviaDiretto(set){
 const cmpUrls=[];
 function openCompare(){
   const set=selSet();
-  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  if(!set.length){ closeCompare(); toast("Nessuna foto selezionata"); return; }
   $("cmpCount").textContent = set.length+" foto selezionate";
   const g=$("cmpGrid"); g.innerHTML="";
   set.forEach((p,i)=>{
@@ -2253,11 +2260,17 @@ function openCompare(){
     if(p.thumb) img.src=p.thumb;
     if(p.preview){ const u=URL.createObjectURL(p.preview); cmpUrls.push(u); img.src=u; }
     const c=document.createElement("span"); c.className="code"+(statusOf(p)?" "+statusOf(p):""); c.textContent=p.code;
-    d.append(img,c);
-    d.onclick=()=>openLightboxList(set, i);
+    const x=document.createElement("button");
+    x.className="cmpDel"; x.textContent="✕"; x.title="Togli dalla selezione";
+    d.append(img,c,x);
+    /* Un clic toglie la foto dal gruppo: è il gesto che serve quando il cliente cambia
+       idea davanti al mosaico. Doppio clic per aprirla in grande. */
+    d.onclick=()=>{ toggleSel(p); paintVisible(); openCompare(); };
+    d.ondblclick=(ev)=>{ ev.stopPropagation(); openLightboxList(selSet(), Math.max(0, selSet().findIndex(q=>q.id===p.id))); };
     g.append(d);
   });
   $("compare").classList.add("open");
+  aggiornaTastiQr();
 }
 function closeCompare(){
   $("compare").classList.remove("open");
@@ -2266,6 +2279,34 @@ function closeCompare(){
 $("selCompare").onclick = openCompare;
 $("cmpClose").onclick = ()=>{ closeCompare(); const M=state.monitor; if(M.mode==="present"||M.mode==="mosaic") backToSlideshow(); };
 $("cmpShow").onclick = ()=> presentMosaicSet(selSet());
+
+/* Il QR non è più legato alla stampa: lo mandi quando vuoi, sulle foto che stai
+   mostrando, e lo togli quando vuoi. Lo stesso tasto fa le due cose. */
+function alternaQr(codici, btn){
+  if(venditaAttiva()){
+    mail.vendita = null;
+    const M = state.monitor; if(M.win && !M.win.closed) repaintMonitor();
+    toast("QR tolto dal monitor");
+  }else{
+    if(!codici.length){ toast("Nessuna foto da collegare al QR"); return; }
+    inviaQrVendita(codici);
+  }
+  aggiornaTastiQr();
+}
+function aggiornaTastiQr(){
+  const acceso = !!venditaAttiva();
+  for(const id of ["cmpQr","lbQr"]){
+    const b=$(id); if(!b) continue;
+    b.textContent = acceso ? "Chiudi QR" : "QR al cliente";
+    b.classList.toggle("primary", !acceso);
+  }
+}
+$("cmpQr").onclick = ()=> alternaQr(selSet().map(p=>p.code), $("cmpQr"));
+$("lbQr").onclick  = ()=>{
+  const p = lbList()[state.lightboxIdx];
+  const set = state.selection.size ? selSet() : (p?[p]:[]);
+  alternaQr(set.map(x=>x.code), $("lbQr"));
+};
 /* Da "Vedi insieme" si chiude la vendita senza dover tornare indietro: è lì che il
    cliente decide, e uscire dalla vista per stampare faceva perdere il filo. */
 $("cmpPrint").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await printPhotos(set); fineVendita(set); };
@@ -4164,6 +4205,7 @@ function qrClienteHaInviato(email){
   mail.vendita = null;
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();
+  aggiornaTastiQr();
   if($("qrDlg").open){
     $("qrEsito").innerHTML = `✓ Email ricevuta dal cliente${email?` (<b>${email}</b>)`:""}. QR tolto dal monitor.`;
     $("qrYes").textContent = "Manda di nuovo";
@@ -4180,6 +4222,10 @@ async function loadMailRequests(){
   }catch(_){ mail.rows = []; }
   return mail.rows;
 }
+/* Il canale in tempo reale cade sull'hotspot: senza un controllo periodico il tasto
+   "Da inviare" restava spento anche con richieste in attesa. Ora si ricontrolla da solo. */
+setInterval(()=>{ if(sb && cloud.servizio) refreshMailBadge(); }, 15000);
+
 async function refreshMailBadge(){
   await loadMailRequests();
   const n = mail.rows.filter(r=>r.stato!=="inviata").length;
@@ -4327,7 +4373,11 @@ async function inviaConFilemail(row, btn){
       return;
     }
     row.stato = "inviata";
+    /* Una richiesta evasa non deve restare in coda: si segna inviata e si toglie subito
+       dalla lista, così il numero sul tasto è sempre "quante ne devo ancora fare". */
     await sbTry(()=>sb.from("richieste_email").update({stato:"inviata"}).eq("id",row.id), "stato email");
+    row.stato = "inviata";
+    await loadMailRequests();
     renderMailList(); refreshMailBadge();
     toast(`Inviate ${out.inviate} foto a ${row.email}` + (out.saltate? ` (${out.saltate} saltate)` : ""));
   }catch(err){
