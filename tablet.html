@@ -199,6 +199,7 @@
     <span class="cnt" id="selCnt">0 selezionate</span>
     <span style="flex:1"></span>
     <button class="sb" id="selAll">Tutte</button>
+    <button class="sb" id="selNone">Nessuna</button>
     <button class="sb" id="selPrint">🖨 Manda in stampa</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
@@ -426,7 +427,8 @@ function enterSelMode(p, cell){
 }
 function updateSelBar(){
   const n=S.selected.size;
-  const el=$("selCnt"); if(el) el.textContent = n+" selezionate";
+  const el=$("selCnt"); if(el) el.textContent = n ? (n+" selezionate") : "nessuna selezionata";
+  const b=$("selNone"); if(b){ b.disabled = !n; b.style.opacity = n ? "1" : ".45"; }
 }
 function selectedPhotos(){ return [...S.selected].map(id=>S.byId.get(id)).filter(Boolean); }
 
@@ -434,6 +436,13 @@ $("selDone").onclick=()=>{ S.selmode=false; document.body.classList.remove("selm
 $("selAll").onclick=()=>{
   visible().forEach(p=>S.selected.add(p.id));
   document.querySelectorAll("#grid .cell").forEach(c=>{ if(S.selected.has(c.dataset.id)) c.classList.add("sel"); });
+  updateSelBar();
+};
+/* Toglie tutte le selezioni restando in modalità selezione: dopo un tocco sbagliato
+   si riparte da zero senza dover uscire e rifare la pressione lunga. */
+$("selNone").onclick=()=>{
+  S.selected.clear();
+  document.querySelectorAll("#grid .cell.sel").forEach(c=>c.classList.remove("sel"));
   updateSelBar();
 };
 /* ---------- gruppi (sotto-cartelle della giornata) ---------- */
