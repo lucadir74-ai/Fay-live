@@ -1292,10 +1292,11 @@ async function ricollegaArchivio(silent){
     }
     await scan(dayDir, 0);
 
-    let n = 0;
+    let n = 0, giaCollegate = 0, nonInGiornata = 0;
     for(const [code, h] of trovati){
       const p = state.byCode.get(code);
-      if(!p || p.arch || p.file) continue;
+      if(!p){ nonInGiornata++; continue; }
+      if(p.arch || p.file){ giaCollegate++; continue; }
       p.arch = h; p.remote = false; n++;                   // da ora questa postazione è la proprietaria del file
       if(!p.origUploaded && autoOrigOn()) queueOriginalUpload(p, false);   // solo se l'automatico è acceso
     }
@@ -1305,7 +1306,25 @@ async function ricollegaArchivio(silent){
       else toast(`Ricollegati ${n} originali dall'archivio`);
       serviRichieste();                                    // servi subito le richieste in sospeso
     } else if(!silent){
-      toast(`Nessun originale da ricollegare (${trovati.size} file trovati nella cartella del ${dateStr})`);
+      /* "Nessuno da ricollegare" non vuol dire "non ci sono": quasi sempre significa che
+         i file SONO già collegati e il problema è un altro. Dirlo chiaramente evita di
+         cercare nel posto sbagliato. */
+      const senzaFile = state.photos.filter(p=>!p.file && !p.arch).length;
+      alert(
+        `RICOLLEGAMENTO ARCHIVIO — ${dateStr}\n\n` +
+        `File trovati nella cartella: ${trovati.size}\n` +
+        `Già collegati a questa giornata: ${giaCollegate}\n` +
+        `Nell'archivio ma non in questa giornata: ${nonInGiornata}\n` +
+        `Foto della giornata ancora senza file su questo PC: ${senzaFile}\n\n` +
+        (giaCollegate && !senzaFile
+          ? `Gli originali ci sono già tutti: se qualcosa non sale sul cloud NON è un problema di collegamento.\n\n` +
+            `Con il caricamento automatico spento gli originali salgono solo quando servono ` +
+            `(selezione, stampa, invio, richiesta da un'altra postazione): è il comportamento previsto.\n` +
+            `Se invece mancano le ANTEPRIME, usa Ripristina anteprime.`
+          : senzaFile
+            ? `Quelle ${senzaFile} foto sono state importate da un'altra postazione: in questo archivio non ci sono.`
+            : `Nessun file corrispondente nella cartella della giornata.`)
+      );
     }
     return n;
   }catch(err){
@@ -1328,19 +1347,18 @@ idb.get("exportDir").then(h=>{ if(h) $("stExport").textContent = h.name+" (da ri
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
 idb.get("archiveDir").then(h=>{ if(h && !state.archive) $("stArch").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
 
-// <archivio>/<AAAA-MM-GG>/<Lettera>/<NNN ore HH.MM>/  — NNN progressivo per lettera per giorno
+/* <archivio>/<AAAA-MM-GG>/<Lettera>/ — una sola cartella per rullo e per giornata.
+   Prima ogni import creava una sottocartella a parte ("001 ore 21.15"): con quattro
+   scarichi a sera dello stesso fotografo le foto finivano sparse in quattro posti. */
 async function getImportDir(letter){
   if(!state.archive) return null;
   try{
-    const now = new Date();
-    const dateStr = serviceDateStr();
+    /* La cartella segue la GIORNATA APERTA, non l'orologio: importando dopo mezzanotte,
+       o riaprendo una serata passata, i file finivano nella data sbagliata e il
+       ricollegamento non li trovava più. */
+    const dateStr = (cloud.servizio && cloud.servizio.data_servizio) || serviceDateStr();
     const dayDir = await state.archive.getDirectoryHandle(dateStr, {create:true});
-    const letDir = await dayDir.getDirectoryHandle(letter, {create:true});
-    let n=0;
-    for await (const entry of letDir.values()){ if(entry.kind==="directory") n++; }
-    const hm = String(now.getHours()).padStart(2,"0")+"."+String(now.getMinutes()).padStart(2,"0");
-    const impName = String(n+1).padStart(3,"0")+" ore "+hm;
-    return await letDir.getDirectoryHandle(impName, {create:true});
+    return await dayDir.getDirectoryHandle(letter, {create:true});
   }catch(err){
     console.error("archivio", err);
     toast("Non riesco a scrivere nell'archivio: "+(err.message||err));
@@ -1464,8 +1482,11 @@ let thumbActive = 0;
    a due per volta. */
 const THUMB_PARALLEL = 4;
 function queueThumbSync(p){
-  if(!sb || !cloud.servizio || p.remote) return;
-  p._thumbTries = 0;
+  // NB: niente controllo su p.remote — dopo una ricarica anche le foto importate qui
+  // tornano marcate "remote", e prima venivano escluse dal riaccodamento
+  if(!sb || !cloud.servizio) return;
+  if(p._inThumb) return;
+  p._thumbTries = 0; p._inThumb = true;
   thumbQueue.push(p); pumpThumbQueue();
 }
 // crea il rullo una sola volta (evita che 8 upload in parallelo lo creino insieme)
@@ -1488,10 +1509,15 @@ function pumpThumbQueue(){
   while(thumbActive < THUMB_PARALLEL && thumbQueue.length){
     const p = thumbQueue.shift();
     thumbActive++;
+    p._inThumb = false;
     syncPhotoUp(p).then(ok=>{
-      if(!ok && (p._thumbTries||0) < 6){
+      if(!ok){
+        /* Prima dopo 6 tentativi falliti la foto veniva abbandonata in silenzio: bastava
+           una raffica di errori durante l'import di un rullo e quelle foto non salivano
+           MAI più, senza che nessuno lo sapesse. Ora si insiste, diradando i tentativi. */
         p._thumbTries=(p._thumbTries||0)+1;
-        setTimeout(()=>{ thumbQueue.push(p); pumpThumbQueue(); }, 800*p._thumbTries); // backoff
+        const attesa = Math.min(800*p._thumbTries, 60000);
+        setTimeout(()=>{ thumbQueue.push(p); pumpThumbQueue(); }, attesa);
       }
     }).finally(()=>{
       thumbActive--;
@@ -1513,6 +1539,8 @@ setInterval(()=>{
   if(thumbQueue.length || thumbActive) return;          // prima le miniature, sempre
   let rimesse = 0;
   for(const p of state.photos){
+    // prima le MINIATURE: senza quelle la foto non compare proprio sui tablet
+    if(!p.miniUrl && (p.mini || p.preview) && !p._inThumb){ queueThumbSync(p); rimesse++; continue; }
     if(!p.anteprimaUrl && p.preview && !p.remote && !p._inBig){ queueBigPreview(p); rimesse++; }
   }
   if(rimesse) console.log("anteprime grandi rimesse in coda:", rimesse);
