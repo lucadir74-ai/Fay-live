@@ -502,14 +502,12 @@
 </dialog>
 
 <dialog id="printDlg">
-  <h3 style="margin-bottom:10px">Stampa — qualità originali</h3>
+  <h3 style="margin-bottom:10px">Sto aspettando gli originali</h3>
   <p id="pdText" style="margin-bottom:14px"></p>
   <div id="pdWaiting" style="margin-bottom:14px"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
-    <button id="pdCancel">Annulla</button>
-    <button id="pdReady">Stampa solo le pronte</button>
-    <button id="pdWait" class="primary">Aspetta gli originali</button>
-    <button id="pdAll">Stampa tutte ora</button>
+    <button id="pdCancel">Annulla la stampa</button>
+    <button id="pdAll">Stampa comunque, senza aspettare</button>
   </div>
 </dialog>
 
@@ -2331,24 +2329,19 @@ async function printPhotos(set){
 
   if(!missing.length){ return doPrint(set); }
 
-  // finestra decisione
+  /* Non si chiede più cosa fare: gli originali si aspettano SEMPRE, perché stampare in
+     bassa qualità non è mai la scelta giusta. La finestra serve solo a dire che stanno
+     arrivando, e lascia una via d'uscita se proprio non arrivano. */
   const dlg=$("printDlg");
-  $("pdText").innerHTML = `<b>${ready.length}</b> foto pronte in alta qualità, <b>${missing.length}</b> in attesa dell'originale `+
-    `(${missing.map(p=>p.code).join(", ")}).`;
+  $("pdText").innerHTML =
+    `<b>${ready.length}</b> foto già pronte, <b>${missing.length}</b> in arrivo ` +
+    `(${missing.map(p=>p.code).join(", ")}).<br>La stampa parte appena ci sono tutte.`;
   $("pdWaiting").innerHTML="";
-  $("pdReady").style.display = ready.length? "" : "none";
   dlg.showModal();
 
-  const choice = await new Promise(res=>{
-    $("pdCancel").onclick=()=>{dlg.close();res("cancel");};
-    $("pdReady").onclick =()=>{dlg.close();res("ready");};
-    $("pdAll").onclick   =()=>{dlg.close();res("all");};
-    $("pdWait").onclick  =()=>res("wait");   // non chiude: mostra attesa
-  });
-
-  if(choice==="cancel") return;
-  if(choice==="ready"){ if(ready.length) doPrint(ready); return; }
-  if(choice==="all"){ doPrint(set); return; }
+  let annullato = false, stampaSubito = false;
+  $("pdCancel").onclick = ()=>{ annullato = true; dlg.close(); };
+  $("pdAll").onclick    = ()=>{ stampaSubito = true; dlg.close(); };
 
   // choice === "wait": aspetta gli originali mancanti, con avanzamento
   const wrap=$("pdWaiting");
@@ -2356,7 +2349,7 @@ async function printPhotos(set){
   const stillMissing = new Set(missing.map(p=>p.code));
   const inizioAttesa = Date.now();
   const deadline = Date.now()+150000; // max 2 min e mezzo: su hotspot il caricamento è lento
-  while(stillMissing.size && Date.now()<deadline){
+  while(stillMissing.size && Date.now()<deadline && !annullato && !stampaSubito){
     for(const p of missing){
       if(!stillMissing.has(p.code)) continue;
       if(await originalReady(p)){
@@ -2376,6 +2369,8 @@ async function printPhotos(set){
     await new Promise(r=>setTimeout(r,1500));
   }
   $("printDlg").close();
+  if(annullato) return;
+  if(stampaSubito){ doPrint(set); return; }
   if(stillMissing.size){
     toast(`${stillMissing.size} originali non arrivati: stampo il resto in alta qualità`);
     doPrint(set.filter(p=>!stillMissing.has(p.code)));
