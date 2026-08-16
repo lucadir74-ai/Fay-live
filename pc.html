@@ -3617,6 +3617,39 @@ function updateThumbCloud(){
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
   el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
+  el.title = spiegaAnteprimeMancanti(onCloud, tot);
+}
+
+/* Testo del suggerimento: quando l'indicatore è rosso dice QUALI rulli sono indietro e
+   perché sono fermi, invece di lasciare l'operatore a indovinare. */
+function spiegaAnteprimeMancanti(onCloud, tot){
+  if(onCloud>=tot) return "Tutte le anteprime sono sul cloud. Clicca per rimettere in coda quelle in memoria.";
+
+  const mancanti = state.photos.filter(p=>!p.miniUrl && !p.anteprimaUrl);
+  // raggruppa per rullo, così si sa dove intervenire
+  const perRullo = {};
+  mancanti.forEach(p=>{ perRullo[p.letter] = (perRullo[p.letter]||0)+1; });
+  const elenco = Object.keys(perRullo).sort()
+    .map(L=>`${L}: ${perRullo[L]}`).join(" · ");
+
+  // perché sono ferme: si guarda cosa manca a queste foto per poter salire
+  const senzaImmagine = mancanti.filter(p=>!p.preview && !p.file && !p.arch).length;
+  const daAltraPostazione = mancanti.filter(p=>p.remote && !p.preview).length;
+  const inCoda = thumbQueue.length + thumbActive;
+
+  let motivo;
+  if(inCoda){
+    motivo = `Sono ancora in coda (${inCoda} in lavorazione): sta caricando, aspetta.`;
+  } else if(daAltraPostazione){
+    motivo = `${daAltraPostazione} foto appartengono a un'altra postazione: deve caricarle quella, non questa.`;
+  } else if(senzaImmagine){
+    motivo = `${senzaImmagine} foto non hanno più l'immagine in memoria (pagina ricaricata). ` +
+             `Servono gli originali: Altro → Ripristina anteprime, con l'archivio collegato.`;
+  } else {
+    motivo = `La coda è ferma ma le immagini ci sono: clicca qui per rimetterle in caricamento.`;
+  }
+
+  return `Mancano ${tot-onCloud} anteprime su ${tot}.\nRulli indietro → ${elenco}\n\n${motivo}`;
 }
 $("stThumbCloud").onclick = ()=>{
   const missing = state.photos.filter(p=>!p.anteprimaUrl && p.preview && !p.remote);
