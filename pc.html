@@ -1401,10 +1401,30 @@ async function getImportDir(letter){
 async function freshFile(p){
   if(p.arch){ try{ return await p.arch.getFile(); }catch(_){} }
   if(p.file) return p.file;
-  // foto remota senza originale locale: usa l'anteprima (ripiego)
+
+  /* Con il caricamento automatico spento l'originale vive solo sulla postazione che ha
+     importato la scheda. Prima qui si rinunciava subito e si ripiegava sull'anteprima:
+     ora si CHIEDE alla postazione che ce l'ha e si aspetta fino a 25 secondi. */
+  if(sb && p.dbId && !p.origUploaded){
+    askOriginal(p);
+    const scadenza = Date.now() + 25000;
+    while(Date.now() < scadenza){
+      await new Promise(r=>setTimeout(r, 1200));
+      try{
+        const {data} = await sb.from("foto").select("originale_url").eq("id", p.dbId).single();
+        if(data && data.originale_url){
+          p.origUploaded = true;
+          const dl = await sb.storage.from("originali").download(data.originale_url);
+          if(!dl.error && dl.data) return new File([dl.data], p.code+".jpg", {type:"image/jpeg"});
+        }
+      }catch(_){}
+      if(p.file || p.arch) return p.arch ? await p.arch.getFile() : p.file;
+    }
+  }
+  // l'originale non è arrivato: si ripiega sull'anteprima solo per usi interni
   if(p.preview) return new File([p.preview], p.code+"_anteprima.jpg", {type:"image/jpeg"});
   { const g = await ensurePreview(p); if(g) return new File([g], p.code+"_anteprima.jpg", {type:"image/jpeg"}); }
-  throw new Error("originale non disponibile su questa postazione");
+  throw new Error("originale non disponibile: la postazione che ha importato questo rullo non risponde");
 }
 
 function toBlobAsync(c, q){ return new Promise(res=>c.toBlob(res,"image/jpeg",q)); }
@@ -1568,6 +1588,11 @@ addEventListener("online", ()=>{ if(cloud.sede){ pumpThumbQueue(); } });
 setInterval(()=>{
   if(!sb || !cloud.servizio) return;
   if(thumbQueue.length || thumbActive) return;          // prima le miniature, sempre
+  /* Se l'anteprima non è più in memoria (pagina ricaricata) ma l'originale è su disco,
+     la si rigenera da sola: prima bisognava accorgersene e lanciare a mano "Ripristina
+     anteprime", e nel frattempo quelle foto si aprivano sgranate su tablet e PC. */
+  rigeneraDaDisco();
+
   let rimesse = 0;
   for(const p of state.photos){
     // prima le MINIATURE: senza quelle la foto non compare proprio sui tablet
@@ -4225,6 +4250,40 @@ async function loadMailRequests(){
 /* Il canale in tempo reale cade sull'hotspot: senza un controllo periodico il tasto
    "Da inviare" restava spento anche con richieste in attesa. Ora si ricontrolla da solo. */
 setInterval(()=>{ if(sb && cloud.servizio) refreshMailBadge(); }, 15000);
+
+/* Rigenera anteprima e miniatura dagli originali su disco, poche per volta per non
+   rubare banda e processore durante la vendita. */
+let rigenerando = false;
+async function rigeneraDaDisco(){
+  if(rigenerando || !sb || !cloud.servizio) return;
+  const da = state.photos.filter(p=>!p.preview && !p.anteprimaUrl && (p.file || p.arch)).slice(0, 6);
+  if(!da.length) return;
+  rigenerando = true;
+  try{
+    for(const p of da){
+      try{
+        const f = p.arch ? await p.arch.getFile() : p.file;
+        if(!f) continue;
+        const bmp = await decodeScaled(f, PV, (p.h||0) > (p.w||0));
+        const c = document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+        c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+        p.preview = await toBlobAsync(c, 0.85);
+        thumbCache.set(ckey(p.code), p.preview);
+        if(!p.mini){
+          const km = Math.min(1, MINI/Math.max(c.width, c.height));
+          const m = document.createElement("canvas");
+          m.width = Math.max(1, Math.round(c.width*km));
+          m.height = Math.max(1, Math.round(c.height*km));
+          m.getContext("2d").drawImage(c, 0, 0, m.width, m.height);
+          p.mini = await toBlobAsync(m, 0.72);
+        }
+        if(!p.thumb){ try{ p.thumb = await blobToThumb(p.preview); }catch(_){} }
+        queueThumbSync(p);
+      }catch(err){ console.warn("rigenera", p.code, err && err.message); }
+    }
+    paintVisible(); updateThumbCloud();
+  } finally { rigenerando = false; }
+}
 
 async function refreshMailBadge(){
   await loadMailRequests();
