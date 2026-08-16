@@ -4101,6 +4101,7 @@ function venditaAttiva(){
    toglieva il controllo a chi sta al desk. */
 /* stato della sessione QR corrente: codici venduti, se è stato mandato, se il cliente ha risposto */
 let qrSessione = null;
+let qrVisto = null;      // ultima email già vista, per non reagire due volte alla stessa
 function mostraQrVendita(codici){
   if(!mailQrEnabled() || !cloud.servizio || !codici.length) return;
   qrSessione = { codici, inviato:false, ricevuta:false };
@@ -4117,12 +4118,35 @@ function mostraQrVendita(codici){
 /* La finestra resta aperta finché la chiudi tu: serve a poter rimandare il QR se il
    cliente sbaglia, esce dalla pagina o passa il telefono a un altro. */
 function inviaQrVendita(codici){
-  mail.vendita = { codici, fino: Date.now() + QR_VENDITA_MIN*60*1000 };
+  mail.vendita = { codici, fino: Date.now() + QR_VENDITA_MIN*60*1000, inviatoIl: Date.now() };
+  qrVisto = null;
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
   toast(`QR delle ${codici.length} foto sul monitor per ${QR_VENDITA_MIN} minuti`);
 }
-$("qrNo").onclick = ()=>{ $("qrDlg").close(); qrSessione = null; };
+$("qrNo").onclick = ()=>{ $("qrDlg").close(); };
+
+/* Il canale in tempo reale sull'hotspot cade spesso: senza questo controllo il QR restava
+   sul monitor anche dopo che il cliente aveva già scritto la sua email. Qui si guarda da
+   soli, ogni 4 secondi, se è arrivata una richiesta mentre il QR è esposto. */
+setInterval(async ()=>{
+  if(!sb || !cloud.servizio || !mail.vendita) return;
+  try{
+    const dopo = mail.vendita.inviatoIl || 0;
+    const {data} = await sb.from("richieste_email")
+      .select("email,creato_il")
+      .eq("servizio_id", String(cloud.servizio.id))
+      .order("creato_il", {ascending:false}).limit(3);
+    for(const r of (data||[])){
+      if(new Date(r.creato_il).getTime() >= dopo && r.email !== qrVisto){
+        qrVisto = r.email;
+        qrClienteHaInviato(r.email);
+        refreshMailBadge();
+        return;
+      }
+    }
+  }catch(_){}
+}, 4000);
 $("qrYes").onclick = ()=>{
   if(!qrSessione) return;
   inviaQrVendita(qrSessione.codici);
@@ -4135,8 +4159,8 @@ $("qrYes").onclick = ()=>{
 /* Quando la richiesta del cliente arriva, il QR sparisce dal monitor esterno (ha finito
    il suo lavoro) ma questa finestra resta: se serve si rimanda con un clic. */
 function qrClienteHaInviato(email){
-  if(!qrSessione || !qrSessione.inviato) return;
-  qrSessione.ricevuta = true;
+  if(!mail.vendita) return;                 // nessun QR sul monitor: niente da togliere
+  if(qrSessione) qrSessione.ricevuta = true;
   mail.vendita = null;
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();
