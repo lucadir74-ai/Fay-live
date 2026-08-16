@@ -337,6 +337,8 @@
             <select id="evCodePos">
               <option value="latoDx">Verticale sul lato destro</option>
               <option value="latoSx">Verticale sul lato sinistro</option>
+              <option value="altoDx">In alto a destra</option>
+              <option value="altoSx">In alto a sinistra</option>
               <option value="bassoDx">In basso a destra</option>
               <option value="bassoSx">In basso a sinistra</option>
               <option value="centro">In basso al centro</option>
@@ -673,7 +675,9 @@ function drawCodeBadge(ctx, w, h, code, status){
     ctx.translate(destro ? w-m : m+bh, h/2);
     ctx.rotate(-Math.PI/2);
     rettangolo(-bw/2, -bh);
-  } else if(pos==="bassoSx"){ rettangolo(m, h-m-bh); }
+  } else if(pos==="altoSx"){ rettangolo(m, m); }
+  else if(pos==="altoDx"){ rettangolo(w-m-bw, m); }
+  else if(pos==="bassoSx"){ rettangolo(m, h-m-bh); }
   else if(pos==="bassoDx"){ rettangolo(w-m-bw, h-m-bh); }
   else { rettangolo(w/2-bw/2, h-m-bh); }
   ctx.restore();
