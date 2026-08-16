@@ -1587,6 +1587,17 @@ const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle u
 function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") === "1"; }
 function setAutoOrig(on){
   localStorage.setItem("faylive_autoorig", on ? "1" : "0");
+  /* Spegnendo l'automatico si svuota anche la coda di sottofondo già accumulata:
+     altrimenti resta lì in attesa e sembra che stia ancora caricando. Le foto che
+     servono davvero (selezionate, stampate, inviate, richieste da un'altra postazione)
+     entrano nella corsia urgente e vengono caricate lo stesso. */
+  if(!on && origBg.length){
+    const fermate = origBg.length;
+    origBg.forEach(p=>origSet.delete(p.code));
+    origBg.length = 0;
+    updateOrigCount();
+    toast(`${fermate} originali tolti dalla coda di sottofondo`);
+  }
   const b = $("btnAutoOrig");
   if(b) b.textContent = "Caricamento automatico: " + (on ? "acceso" : "spento");
   if(on) pumpOrigQueue();
@@ -1675,11 +1686,12 @@ function updateOrigCount(){
   const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
   let txt = base;
   if(urg) txt += " · carico originali: "+urg;
-  if(bg)  txt += " · in sottofondo: "+bg + ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : "");
+  if(bg)  txt += " · in sottofondo: "+bg + (!autoOrigOn() ? " (fermo)"
+                 : ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : ""));
   if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
   $("stArch").textContent = txt;
   if(urg) setSync("syncing","Carico originali ("+urg+")");
-  else if(bg) setSync("syncing","Sottofondo ("+bg+")");
+  else if(bg) setSync(autoOrigOn()?"syncing":null, autoOrigOn()? "Sottofondo ("+bg+")" : "Sincronizzato");
   else if(cloud.online) setSync("online");
 }
 // al rientro online riprova la coda
