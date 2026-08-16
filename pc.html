@@ -112,6 +112,8 @@
   #lbMenu button{text-align:left;width:100%}
   #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
+  #btnMail.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)}
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
@@ -383,6 +385,7 @@
       <button id="selShow">Mostra sul monitor</button>
       <button id="selPrint">Stampa</button>
       <button id="selExport">Esporta file</button>
+      <button id="selSend">✈ Invia per email</button>
       <button id="selSend">✈ Invia per email</button>
       <button id="selClear">Svuota</button>
     </div>
@@ -2112,6 +2115,47 @@ function fineVendita(set){
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
+
+/* Invio diretto: l'email la scrivi tu al momento, senza passare dal QR.
+   Le foto NON transitano da qui: al server vanno solo gli indirizzi firmati. */
+async function inviaDiretto(set){
+  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
+  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
+  const email = (prompt(`Email del cliente — ${set.length} foto da inviare:`, "") || "").trim();
+  if(!email) return;
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){ alert("Indirizzo email non valido."); return; }
+
+  toast("Preparo gli originali…");
+  for(const p of set){ if(!p.origUploaded){ if(p.file||p.arch){ try{ await uploadOneOriginal(p); }catch(_){} } else askOriginal(p); } }
+
+  const files=[], mancanti=[];
+  for(const p of set){
+    try{
+      const {data,error} = await sb.storage.from("originali").createSignedUrl(origPath(p), 900);
+      if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
+      files.push({nome:p.code+".jpg", url:data.signedUrl});
+    }catch(_){ mancanti.push(p.code); }
+  }
+  if(!files.length){ alert("Gli originali di queste foto non sono ancora sul cloud. Riprova tra poco."); return; }
+  if(mancanti.length && !confirm(`${mancanti.length} foto non sono pronte e NON verranno inviate (${mancanti.join(", ")}).\n\nProcedo con le altre ${files.length}?`)) return;
+
+  const b=$("selSend"); if(b) b.disabled=true;
+  toast(`Invio ${files.length} foto a ${email}…`);
+  try{
+    const r = await fetch("/api/invia",{ method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ email, files, oggetto:"Le tue foto — Frame About You",
+                             messaggio:"Grazie per la serata! Ecco le tue foto." }) });
+    const grezzo = await r.text();
+    let out={}; try{ out=JSON.parse(grezzo); }catch(_){}
+    if(!r.ok || !out.ok){ alert("Invio non riuscito ("+r.status+")\n\n"+(out.dettaglio||out.errore||grezzo.slice(0,300))); return; }
+    set.forEach(p=>{ p.exported=true; if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export"); });
+    paintVisible();
+    alert(`Inviate ${out.inviate||files.length} foto a ${email}.`);
+    fineVendita(set);
+  }catch(err){ alert("Non sono riuscito a contattare il server di invio.\n\n"+(err&&err.message||err)); }
+  finally{ if(b) b.disabled=false; }
+}
+$("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
 $("lbSend").onclick = async ()=>{ const p=lbList()[state.lightboxIdx]; if(p) await inviaDiretto([p]); };
 
 /* INVIO DIRETTO DAL PC (stesso meccanismo del tablet).
@@ -2757,7 +2801,6 @@ async function paintMonitorPhoto(p, withCode){
   drawOverlay(M.ctx,dw,dh);
   if(withCode) drawCodeBadge(M.ctx,dw,dh,p.code);
   M.ctx.restore();
-  drawMonitorQR();
   M._last=p;
 }
 const TILE_GRID = {1:[1,1],2:[2,1],3:[3,1],4:[2,2],5:[3,2],6:[3,2],7:[4,2],8:[4,2],9:[3,3],10:[4,3],11:[4,3],12:[4,3]};
@@ -2805,7 +2848,6 @@ async function drawTilePage(page, expectMode, withInfo){
     M.ctx.fillText(info, cw/2, by+bh/2, cw*0.94);
     M.ctx.textAlign = "left"; M.ctx.textBaseline = "alphabetic";
   }
-  drawMonitorQR();
 }
 async function paintMonitorMosaic(start){
   const M=state.monitor; if(!M.ctx) return;
@@ -2838,6 +2880,7 @@ function paintMonitorMessage(msg){
 }
 function repaintMonitor(){
   const M=state.monitor;
+  if(venditaAttiva() && drawMonitorQR()) return;   // QR grande: prende tutto lo schermo
   if(M.mode==="slideshow" && typeof M._page==="number") paintMonitorMosaic(M._page);
   else if(M.mode==="mosaic" && M._staticSet) drawTilePage(M._staticSet, "mosaic", false);
   else if(M._last) paintMonitorPhoto(M._last, M.mode!=="off"); // in presentazione il codice resta visibile
@@ -3995,31 +4038,46 @@ function ensureQR(){
   return c;
 }
 
-// riquadro fisso in basso a destra del monitor cliente
+/* QR A TUTTO SCHERMO sul monitor cliente. Il riquadrino d'angolo è stato tolto: era
+   piccolo, restava acceso dopo la vendita con i codici di chi se n'era già andato, e
+   nessuno lo inquadrava. Ora il QR compare grande solo quando lo mandi tu, e sparisce
+   appena il cliente ha scritto la sua email. */
 function drawMonitorQR(){
-  if(!mailQrEnabled()) return;
-  const M = state.monitor; if(!M.ctx || !M.canvas) return;
-  const q = ensureQR(); if(!q) return;
-  const cw = M.canvas.width, ch = M.canvas.height;
-  const side = Math.round(Math.min(cw,ch) * 0.115);
-  const pad  = Math.round(Math.min(cw,ch) * 0.022);
-  const lh   = Math.round(side * 0.30);
-  const bw = side + pad, bh = side + lh + pad;
-  const bx = cw - bw - pad, by = ch - bh - pad;
-  const g = M.ctx;
+  const v = venditaAttiva();
+  if(!v) return false;                    // fuori dalla vendita il monitor non mostra QR
+  const M = state.monitor; if(!M.ctx || !M.canvas) return false;
+  const q = ensureQR(); if(!q) return false;
+
+  const g = M.ctx, cw = M.canvas.width, ch = M.canvas.height;
+
+  /* Riquadro di misura media, centrato: abbastanza grande da inquadrarlo da un paio di
+     metri, ma senza spegnere del tutto il monitor come faceva la versione a tutto schermo. */
+  const side = Math.round(Math.min(cw,ch) * 0.30);
+  const pad  = Math.round(side * 0.10);
+  const testo = Math.round(side * 0.42);
+  const bw = side + pad*2;
+  const bh = side + pad*2 + testo;
+  const bx = Math.round((cw - bw)/2);
+  const by = Math.round((ch - bh)/2);
+
   g.save();
-  g.fillStyle = "rgba(255,255,255,.94)";
+  // velo scuro sulla scena: il QR resta leggibile qualunque foto ci sia sotto
+  g.fillStyle = "rgba(8,10,16,.72)"; g.fillRect(0,0,cw,ch);
+
+  g.fillStyle = "#fff";
   g.fillRect(bx, by, bw, bh);
-  g.drawImage(q, bx + pad/2, by + pad/2, side, side);
+  g.drawImage(q, bx + pad, by + pad, side, side);
+
   g.fillStyle = "#0A0F1A";
-  g.font = `600 ${Math.round(lh*0.36)}px "Segoe UI", sans-serif`;
-  g.textAlign = "center"; g.textBaseline = "middle";
-  g.fillText(venditaAttiva() ? "Le tue foto" : "Vuoi le foto?", bx + bw/2, by + pad/2 + side + lh*0.34, bw*0.92);
-  g.font = `${Math.round(lh*0.30)}px "Segoe UI", sans-serif`;
+  g.textAlign = "center";
+  g.font = `700 ${Math.round(testo*0.34)}px "Segoe UI", sans-serif`;
+  g.fillText("Inquadra per ricevere le tue foto", bx + bw/2, by + pad + side + testo*0.42, bw*0.92);
+  g.font = `${Math.round(testo*0.28)}px "Segoe UI", sans-serif`;
   g.fillStyle = "#4A5262";
-  g.fillText("Inquadra · Scan me", bx + bw/2, by + pad/2 + side + lh*0.72, bw*0.92);
-  g.textAlign = "left"; g.textBaseline = "alphabetic";
+  g.fillText(`${v.codici.length} foto · scrivi la tua email`, bx + bw/2, by + pad + side + testo*0.78, bw*0.92);
+  g.textAlign = "left";
   g.restore();
+  return true;
 }
 
 /* ---------- QR della vendita chiusa ----------
@@ -4096,6 +4154,13 @@ async function refreshMailBadge(){
   const b = $("mailBadge"); if(!b) return;
   b.textContent = n;
   b.style.visibility = n ? "visible" : "hidden";
+  /* Il tasto si accende quando ci sono richieste da evadere e si spegne quando la lista
+     è vuota: durante la serata il contatore piccolo passava inosservato. */
+  const t = $("btnMail");
+  if(t){
+    t.classList.toggle("attesa", n>0);
+    t.title = n ? `${n} richieste email da inviare` : "Nessuna richiesta in attesa";
+  }
 }
 function renderMailList(){
   const box = $("mailList");
