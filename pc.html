@@ -211,6 +211,7 @@
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <hr>
       <button id="btnClearDay">Svuota giornata</button>
+      <button id="btnClearAll" title="Svuota dal cloud tutte le giornate di questa sede, in un colpo solo">Svuota tutte le giornate</button>
       <button id="btnDelSede" title="Cancella la sede selezionata">Cancella sede</button>
     </div>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
@@ -450,6 +451,15 @@
   <div id="reportList" style="max-height:60vh;overflow:auto;margin-bottom:14px"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="reportClose">Chiudi</button>
+  </div>
+</dialog>
+
+<dialog id="clearAllDlg">
+  <h3 style="margin-bottom:10px">Svuota TUTTE le giornate</h3>
+  <p id="clearAllText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="clearAllNo">Annulla</button>
+    <button id="clearAllYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Svuota tutto dal cloud</button>
   </div>
 </dialog>
 
@@ -2905,6 +2915,7 @@ $("btnDelSede").onclick = async ()=>{
   const dlg=$("delSedeDlg"); dlg.showModal();
   $("delSedeNo").onclick=()=>dlg.close();
   $("delSedeYes").onclick=async ()=>{
+    if(!seiSicuro(`Sei sicuro?\n\nStai cancellando la sede "${s.nome}" con ${nServizi} giornate e ${nFoto} foto dal cloud.\n\nL'operazione non è reversibile.`)) return;
     dlg.close();
     await deleteSede(s);
   };
@@ -3146,6 +3157,71 @@ $("statsCsv").onclick = ()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
 };
 
+/* Secondo passaggio di sicurezza: dopo il riepilogo, una domanda secca prima di procedere.
+   Nessuna parola da digitare: due conferme consapevoli bastano. */
+function seiSicuro(testo){ return confirm(testo); }
+
+$("btnClearAll").onclick = async ()=>{
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  const s = cloud.sede;
+  if(!s){ toast("Seleziona prima una sede"); return; }
+  let nGiorni=0, nFoto=0;
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id", s.id);
+    nGiorni=(servizi||[]).length;
+    if(nGiorni){
+      const {data:rulli} = await sb.from("rulli").select("id").in("servizio_id",(servizi||[]).map(x=>x.id));
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length){ const {count}=await sb.from("foto").select("id",{count:"exact",head:true}).in("rullo_id",rids); nFoto=count||0; }
+    }
+  }catch(_){}
+  if(!nFoto && !nGiorni){ toast("Non c'è niente da svuotare in questa sede"); return; }
+  $("clearAllText").innerHTML =
+    `Stai per cancellare <b>TUTTE le foto dal cloud</b> della sede <b>${s.nome}</b>:<br>`+
+    `<b>${nGiorni}</b> giornate e <b>${nFoto}</b> foto, con anteprime e originali caricati.<br><br>`+
+    `La sede resta, le giornate vengono svuotate. Gli originali sui PC in locale <b>non</b> vengono toccati.<br>`+
+    `<b>L'azione non è reversibile.</b>`;
+  const dlg=$("clearAllDlg"); dlg.showModal();
+  $("clearAllNo").onclick=()=>dlg.close();
+  $("clearAllYes").onclick=async ()=>{
+    if(!seiSicuro(`Sei sicuro?\n\nStai cancellando dal cloud TUTTE le foto della sede "${s.nome}": ${nGiorni} giornate, ${nFoto} foto.\n\nL'operazione non è reversibile.`)) return;
+    dlg.close(); await svuotaTutteLeGiornate(s);
+  };
+};
+
+async function svuotaTutteLeGiornate(s){
+  setSync("syncing","Svuoto tutte le giornate…");
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id", s.id);
+    let fatti=0;
+    for(const sv of (servizi||[])){
+      for(const bucket of ["anteprime","originali"]){
+        try{
+          const {data:files} = await sb.storage.from(bucket).list(sv.id);
+          if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>sv.id+"/"+f.name));
+        }catch(_){}
+      }
+      const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", sv.id);
+      const rids=(rulli||[]).map(r=>r.id);
+      if(rids.length) await sb.from("foto").delete().in("rullo_id", rids);
+      await sb.from("rulli").delete().eq("servizio_id", sv.id);
+      fatti++;
+      setSync("syncing",`Svuoto… ${fatti}/${(servizi||[]).length}`);
+    }
+    // le giornate restano come contenitori vuoti; svuoto anche lo stato locale
+    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+    state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+    cloud.rulli={};
+    cellPool.forEach(el=>el.remove()); cellPool.clear();
+    $("stTotal").textContent="0";
+    renderTabs(); layoutGrid(); updateThumbCloud();
+    setSync(null,"Sincronizzato");
+    toast(`Svuotate ${fatti} giornate della sede "${s.nome}"`);
+  }catch(err){
+    setSync("offline"); toast("Errore svuotando: "+(err.message||err)); console.warn("svuotaTutte",err);
+  }
+}
+
 $("btnClearDay").onclick = ()=>{
   if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
   const L = state.activeLetter;
@@ -3165,6 +3241,9 @@ $("btnClearDay").onclick = ()=>{
   $("clearNo").onclick=()=>dlg.close();
   $("clearYes").onclick=async ()=>{
     const tutta = $("clearAllDay") && $("clearAllDay").checked;
+    const quante = tutta ? tot : n;
+    const cosa = tutta ? "tutta la giornata (tutti i rulli)" : (L ? "il rullo "+L : "tutta la giornata");
+    if(!seiSicuro(`Sei sicuro?\n\nStai cancellando dal cloud ${cosa}: ${quante} foto.\n\nL'operazione non è reversibile.`)) return;
     dlg.close();
     await clearCurrentDay(tutta ? null : L);
   };
