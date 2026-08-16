@@ -681,10 +681,22 @@ $("btnFavClear").onclick = async ()=>{
 };
 
 // recupera il blob di una foto: originale dal cloud se c'è, altrimenti anteprima
-async function photoBlob(p){
+/* Quello che finisce in mano al cliente dev'essere SEMPRE l'originale.
+   Il ripiego sull'anteprima resta solo per usi interni (mai per condividi/esporta/invia):
+   un file da 1280 px consegnato come foto acquistata è un danno che non si recupera. */
+async function photoBlob(p, soloOriginale=true){
   if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) return dl.data; }catch(_){} }
+  if(soloOriginale) return null;
   try{ const r=await fetch(p.bigUrl || p.url); if(r.ok) return await r.blob(); }catch(_){}
   return null;
+}
+
+// avvisa quando alcune foto non hanno l'originale pronto: si salta, non si ripiega
+function avvisaSenzaOriginale(mancanti){
+  if(!mancanti.length) return;
+  const codici = mancanti.slice(0,8).map(p=>p.code).join(", ") + (mancanti.length>8 ? "…" : "");
+  alert(`${mancanti.length} foto NON hanno ancora l'originale sul cloud e sono state saltate:\n\n${codici}\n\n` +
+        `Non vengono mai consegnate in bassa risoluzione. Aspetta che il PC le carichi e riprova.`);
 }
 
 // chiede a PC1 di caricare gli originali mancanti e aspetta che siano pronti
@@ -715,9 +727,14 @@ async function sharePhotos(list, ctx){
   if(!navigator.canShare){ toast("Condivisione non supportata — usa Esporta"); return; }
   await ensureOriginals(list);
   toast(`Preparo ${list.length} foto…`);
-  const files=[];
-  for(const p of list){ const b=await photoBlob(p); if(b) files.push(new File([b], p.code+".jpg", {type:"image/jpeg"})); }
-  if(!files.length){ toast("Impossibile preparare le foto"); return; }
+  const files=[], mancanti=[];
+  for(const p of list){
+    const b = await photoBlob(p, true);          // solo originale, mai l'anteprima
+    if(b) files.push(new File([b], p.code+".jpg", {type:"image/jpeg"}));
+    else mancanti.push(p);
+  }
+  avvisaSenzaOriginale(mancanti);
+  if(!files.length){ toast("Nessun originale disponibile: niente da condividere"); return; }
   try{
     if(navigator.canShare({files})){ await navigator.share({files, title:"Foto Fay Live"}); return; }
   }catch(err){ if(err && err.name==="AbortError") return; }
@@ -729,15 +746,17 @@ async function exportPhotos(list, ctx){
   if(!list.length){ toast("Nessuna foto da esportare"+(ctx||"")); return; }
   await ensureOriginals(list);
   toast(`Esporto ${list.length} foto…`);
-  let ok=0;
+  let ok=0; const mancanti=[];
   for(const p of list){
-    const blob=await photoBlob(p); if(!blob) continue;
+    const blob = await photoBlob(p, true);       // solo originale, mai l'anteprima
+    if(!blob){ mancanti.push(p); continue; }
     const a=document.createElement("a"); const obj=URL.createObjectURL(blob);
     a.href=obj; a.download=p.code+".jpg";
     document.body.append(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(obj), 8000);
     ok++; await new Promise(r=>setTimeout(r,300));
   }
+  avvisaSenzaOriginale(mancanti);
   toast(`Esportate ${ok} foto nei Download`);
 }
 
