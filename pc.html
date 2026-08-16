@@ -1297,7 +1297,7 @@ async function ricollegaArchivio(silent){
       const p = state.byCode.get(code);
       if(!p || p.arch || p.file) continue;
       p.arch = h; p.remote = false; n++;                   // da ora questa postazione è la proprietaria del file
-      if(!p.origUploaded) queueOriginalUpload(p, false);   // così tornano sul cloud da sole
+      if(!p.origUploaded && autoOrigOn()) queueOriginalUpload(p, false);   // solo se l'automatico è acceso
     }
     if(n){
       richiesteAperte = 0; updateOrigCount();
@@ -1579,7 +1579,12 @@ const ORIG_PARALLEL = 6;     // urgenti
 const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle urgenti
 
 // interruttore: caricamento automatico degli originali (soluzione A). Acceso di serie.
-function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") !== "0"; }
+/* Gli originali NON salgono più tutti sul cloud: su 5000 scatti a sera se ne vendono
+   qualche centinaio, e caricare tutto il resto ruba banda alle anteprime — che sono
+   l'unica cosa che serve per vendere. Ora salgono solo su richiesta: quando selezioni,
+   stampi, esporti o invii una foto, e quando un'altra postazione la chiede.
+   Chi vuole il vecchio comportamento lo riaccende da Altro. */
+function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") === "1"; }
 function setAutoOrig(on){
   localStorage.setItem("faylive_autoorig", on ? "1" : "0");
   const b = $("btnAutoOrig");
@@ -3361,7 +3366,7 @@ async function ripartiDopoRicarica(){
   // rimette in coda anche gli originali che erano a metà quando la pagina è stata ricaricata
   let ri = 0;
   for(const p of state.photos){
-    if((p.file || p.arch) && !p.origUploaded){ queueOriginalUpload(p, false); ri++; }
+    if((p.file || p.arch) && !p.origUploaded && autoOrigOn()){ queueOriginalUpload(p, false); ri++; }
   }
   if(ri) updateOrigCount();
 }
@@ -3913,8 +3918,8 @@ $("btnPushAll").onclick = ()=>{
 $("btnAutoOrig").onclick = ()=>{
   const on = !autoOrigOn();
   setAutoOrig(on);
-  toast(on ? "Caricamento automatico acceso: gli originali salgono sul cloud da soli"
-           : "Caricamento automatico spento: le altre postazioni dipendono da questo PC per stampare");
+  toast(on ? "Caricamento automatico acceso: TUTTI gli originali salgono sul cloud (tanto traffico)"
+           : "Caricamento automatico spento: salgono solo gli originali che servono davvero");
 };
 setAutoOrig(autoOrigOn());
 $("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
