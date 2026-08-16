@@ -112,6 +112,7 @@
   #lbMenu button{text-align:left;width:100%}
   #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
+  #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
   #lbAdjBar input[type=range]{flex:1}
@@ -266,6 +267,7 @@
         <span id="lbCode" hidden></span>
         <span id="lbStatus" class="hint"></span>
         <div class="spacer"></div>
+        <button id="lbFav">♡ Segna <kbd>spazio</kbd></button>
         <button id="lbPrint" class="primary">Stampa</button>
         <button id="lbShow">Monitor <kbd>-</kbd></button>
         <button id="lbMore" title="Altre azioni">Altro ▾</button>
@@ -2519,6 +2521,12 @@ async function paintLightbox(){
   setLbStatus(p);
   if(!$("lbAdjBar").hidden) syncAdjBar();   // cursori sempre allineati alla foto aperta
   $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
+  const segnata = state.selection.has(p.id);
+  const bf = $("lbFav");
+  if(bf){
+    bf.classList.toggle("on", segnata);
+    bf.innerHTML = (segnata ? "♥ Segnata" : "♡ Segna") + ' <kbd>spazio</kbd>';
+  }
   const c=$("lbCanvas"), ctx=c.getContext("2d");
 
   // 1) subito la miniatura ingrandita (sfocata ma istantanea)
@@ -2582,6 +2590,9 @@ function monitorFollow(){
 $("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); monitorFollow(); } };
 $("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); monitorFollow(); } };
 $("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
+/* Segnare una foto mentre il cliente la guarda è il gesto più frequente della serata:
+   deve stare in barra, non dentro il menu Altro. Spazio fa la stessa cosa. */
+$("lbFav").onclick=()=>{ $("lbSelect").click(); };
 $("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
 $("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
 $("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPhotos([p]); };
