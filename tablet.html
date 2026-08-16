@@ -228,6 +228,46 @@ function setDot(on,txt){ $("dot").classList.toggle("off",!on); if(txt)$("statusT
 
 /* Indicatore anteprime: dice quante foto del rullo aperto sono già guardabili.
    Serve a capire se il PC sta ancora caricando o se quello che vedi è tutto. */
+/* Diagnosi rullo: si tocca l'indicatore delle anteprime e dice PERCHÉ un rullo è lento —
+   quante foto hanno la miniatura vera, quante caricano l'anteprima grande al posto suo
+   (10-20 volte più pesante) e quanto pesano davvero i file di questo rullo. */
+async function diagnosiRullo(){
+  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  if(!scope.length){ toast("Nessuna foto in questo rullo"); return; }
+  const conMini = scope.filter(p=>p.miniUrl).length;
+  const senzaMini = scope.filter(p=>!p.miniUrl && p.bigUrl).length;
+  const senzaNulla = scope.filter(p=>!p.miniUrl && !p.bigUrl).length;
+
+  toast("Misuro il peso delle immagini…");
+  // campione: 5 foto sparse nel rullo
+  const passo = Math.max(1, Math.floor(scope.length/5));
+  const campione = []; for(let i=0;i<scope.length && campione.length<5;i+=passo) campione.push(scope[i]);
+  let byte=0, letti=0, errori=0;
+  for(const p of campione){
+    const u = p.url; if(!u) continue;
+    try{
+      const r = await fetch(u, {cache:"no-store"});
+      if(!r.ok){ errori++; continue; }
+      const b = await r.blob(); byte += b.size; letti++;
+    }catch(_){ errori++; }
+  }
+  const medioKB = letti ? Math.round(byte/letti/1024) : 0;
+  const stimaMB = letti ? ((byte/letti)*scope.length/1048576).toFixed(1) : "?";
+
+  alert(
+    `DIAGNOSI RULLO ${S.letter || "(tutti)"}\n\n` +
+    `Foto: ${scope.length}\n` +
+    `Con miniatura vera: ${conMini}\n` +
+    `Che usano l'anteprima grande al posto della miniatura: ${senzaMini}\n` +
+    `Senza nessuna immagine: ${senzaNulla}\n\n` +
+    `Peso medio misurato: ${medioKB} KB a foto\n` +
+    `Totale da scaricare per questo rullo: circa ${stimaMB} MB\n` +
+    (errori? `Immagini non raggiungibili nel campione: ${errori}\n` : "") +
+    `\nSe il peso medio supera i 100 KB, le miniature non sono state generate e il tablet ` +
+    `sta scaricando le anteprime grandi: è quello che rallenta.`
+  );
+}
+
 function aggiornaIndicatoreAnteprime(){
   const el=$("prevCount"); if(!el) return;
   const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
@@ -390,6 +430,7 @@ function render(){
   $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
   $("favOnly").classList.toggle("on", S.favOnly);
   aggiornaIndicatoreAnteprime();
+  const pc=$("prevCount"); if(pc && !pc._diag){ pc._diag=true; pc.style.cursor="pointer"; pc.onclick=diagnosiRullo; }
 
   // griglia
   const list=visible(); const g=$("grid");
