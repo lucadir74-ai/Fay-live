@@ -454,12 +454,13 @@
   </div>
 </dialog>
 
-<dialog id="qrDlg">
-  <h3 style="margin-bottom:10px">Mandare il QR sul monitor?</h3>
-  <p id="qrText" style="margin-bottom:16px"></p>
+<dialog id="qrDlg" style="position:fixed;right:24px;bottom:24px;left:auto;top:auto;margin:0;max-width:420px">
+  <h3 style="margin-bottom:10px">QR di fine vendita</h3>
+  <p id="qrText" style="margin-bottom:12px"></p>
+  <p id="qrEsito" class="hint" style="margin-bottom:14px"></p>
   <div style="display:flex;gap:10px;justify-content:flex-end">
-    <button id="qrNo">Non ora</button>
-    <button id="qrYes" class="primary">Manda il QR</button>
+    <button id="qrNo">Chiudi</button>
+    <button id="qrYes" class="primary">Manda il QR sul monitor</button>
   </div>
 </dialog>
 
@@ -2096,6 +2097,7 @@ function updateSelBar(){
   $("selBar").classList.toggle("show", state.selection.size>0);
 }
 $("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
+// unico punto che manda le selezionate TUTTE INSIEME sul monitor: lo decidi tu, qui
 $("selShow").onclick = ()=> presentSelection();
 /* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
    effettivamente comprate, così l'email del cliente arriva già abbinata alle SUE foto.
@@ -2913,8 +2915,10 @@ addEventListener("keydown", e=>{
   }else if(e.key==="Enter"){
     if(state.focusIdx>=0) openLightbox(state.focusIdx);
   }else if(e.key==="-"){
-    if(state.selection.size) presentSelection();
-    else{ const p=list[state.focusIdx]; if(p) presentSet([p]); }
+    /* Il tasto - mostra SEMPRE la foto su cui sei, anche se hai già selezionato qualcosa:
+       mentre il cliente guarda una alla volta, le foto segnate non devono comparire sul
+       monitor. Per mandarle tutte insieme c'è "Mostra sul monitor" nella barra selezione. */
+    const p=list[state.focusIdx]; if(p) presentSet([p]);
   }
 });
 /* =====================================================================
@@ -3825,6 +3829,7 @@ function subscribeRealtime(){
       const r = payload.new;
       if(!cloud.servizio || String(r.servizio_id)!==String(cloud.servizio.id)) return;
       toast("Nuova email dal cliente: "+r.email);
+      qrClienteHaInviato(r.email);
       refreshMailBadge();
       if($("mailDlg").open) loadMailRequests().then(renderMailList);
     })
@@ -4017,26 +4022,51 @@ function venditaAttiva(){
 /* Il QR non parte più da solo a fine vendita: prima si chiede all'operatore.
    Ci sono clienti che non lo vogliono, e mandarlo sul monitor senza deciderlo
    toglieva il controllo a chi sta al desk. */
+/* stato della sessione QR corrente: codici venduti, se è stato mandato, se il cliente ha risposto */
+let qrSessione = null;
 function mostraQrVendita(codici){
   if(!mailQrEnabled() || !cloud.servizio || !codici.length) return;
+  qrSessione = { codici, inviato:false, ricevuta:false };
   const dlg = $("qrDlg");
   $("qrText").innerHTML =
     `Vendita chiusa: <b>${codici.length}</b> foto (${codici.slice(0,6).join(", ")}${codici.length>6?"…":""}).<br><br>` +
     `Mandando il QR sul monitor, il cliente lo inquadra e scrive la sua email: la richiesta ti arriva ` +
-    `già abbinata a queste foto. Resta visibile <b>${QR_VENDITA_MIN} minuti</b>.`;
-  dlg.showModal();
-  $("qrNo").onclick = ()=>dlg.close();
-  $("qrYes").onclick = ()=>{
-    dlg.close();
-    inviaQrVendita(codici);
-  };
+    `già abbinata a queste foto.`;
+  $("qrEsito").textContent = "";
+  $("qrYes").textContent = "Manda il QR sul monitor";
+  if(!dlg.open) dlg.show();          // NON modale: puoi continuare a lavorare mentre resta lì
 }
 
+/* La finestra resta aperta finché la chiudi tu: serve a poter rimandare il QR se il
+   cliente sbaglia, esce dalla pagina o passa il telefono a un altro. */
 function inviaQrVendita(codici){
   mail.vendita = { codici, fino: Date.now() + QR_VENDITA_MIN*60*1000 };
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
   toast(`QR delle ${codici.length} foto sul monitor per ${QR_VENDITA_MIN} minuti`);
+}
+$("qrNo").onclick = ()=>{ $("qrDlg").close(); qrSessione = null; };
+$("qrYes").onclick = ()=>{
+  if(!qrSessione) return;
+  inviaQrVendita(qrSessione.codici);
+  qrSessione.inviato = true; qrSessione.ricevuta = false;
+  $("qrYes").textContent = "Manda di nuovo";
+  const ora = new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+  $("qrEsito").textContent = `QR sul monitor dalle ${ora} — in attesa che il cliente scriva la sua email.`;
+};
+
+/* Quando la richiesta del cliente arriva, il QR sparisce dal monitor esterno (ha finito
+   il suo lavoro) ma questa finestra resta: se serve si rimanda con un clic. */
+function qrClienteHaInviato(email){
+  if(!qrSessione || !qrSessione.inviato) return;
+  qrSessione.ricevuta = true;
+  mail.vendita = null;
+  const M = state.monitor;
+  if(M.win && !M.win.closed) repaintMonitor();
+  if($("qrDlg").open){
+    $("qrEsito").innerHTML = `✓ Email ricevuta dal cliente${email?` (<b>${email}</b>)`:""}. QR tolto dal monitor.`;
+    $("qrYes").textContent = "Manda di nuovo";
+  }
 }
 
 async function loadMailRequests(){
