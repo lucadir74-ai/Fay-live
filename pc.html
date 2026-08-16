@@ -1458,7 +1458,11 @@ async function processBatch(batch){
 /* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
 const thumbQueue = [];
 let thumbActive = 0;
-const THUMB_PARALLEL = 8;
+/* Su una linea da telefono aprire tanti caricamenti insieme NON è più veloce: si dividono
+   la stessa banda, ognuno va a rilento e i tempi di attesa scadono. Meglio pochi flussi
+   pieni. Le miniature sono piccole e restano più numerose; gli originali da 2 MB scendono
+   a due per volta. */
+const THUMB_PARALLEL = 4;
 function queueThumbSync(p){
   if(!sb || !cloud.servizio || p.remote) return;
   p._thumbTries = 0;
@@ -1553,7 +1557,7 @@ async function syncPhotoUp(p){
    Parte solo quando la coda delle miniature è vuota: prima si deve VEDERE, poi si rifinisce. */
 const bigQueue = [];
 let bigActive = 0;
-const BIG_PARALLEL = 4;
+const BIG_PARALLEL = 2;
 function queueBigPreview(p){
   if(!sb || !cloud.servizio || p.remote || p.anteprimaUrl || !p.preview) return;
   if(p._inBig) return;
@@ -1592,7 +1596,7 @@ const origQueue = [];        // corsia URGENTE: foto vendute, in stampa o richie
 const origBg    = [];        // corsia SOTTOFONDO: tutte le foto importate (le più recenti per prime)
 const origSet = new Set();
 let origActive = 0, origBgActive = 0;
-const ORIG_PARALLEL = 6;     // urgenti
+const ORIG_PARALLEL = 2;     // urgenti
 const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle urgenti
 
 // interruttore: caricamento automatico degli originali (soluzione A). Acceso di serie.
@@ -1673,13 +1677,28 @@ function pumpOrigQueue(){
   }
   updateOrigCount();
 }
+/* Un caricamento che resta appeso occupa il suo posto in coda per sempre e sembra che
+   tutto sia lentissimo: qui si taglia dopo un tempo proporzionato al peso del file
+   (30 secondi ogni MB, minimo 45) e si riprova, invece di aspettare all'infinito. */
+function conScadenzaUpload(promessa, ms, cosa){
+  return Promise.race([
+    promessa,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error("tempo scaduto caricando "+cosa)), ms))
+  ]);
+}
+
 async function uploadOneOriginal(p){
+  const t0 = Date.now();
   try{
     const f = p.arch ? await p.arch.getFile() : p.file;
     if(!f) return;
     const buf = await f.arrayBuffer();
     const blob = new Blob([buf], {type:f.type||"image/jpeg"});
-    const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+    const limite = Math.max(45000, Math.round(blob.size/1048576*30000));
+    const up = await conScadenzaUpload(
+      sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true}),
+      limite, p.code);
+    registraVelocita(blob.size, Date.now()-t0);
     if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
     p.origUploaded = true;
     if(p.dbId) await sb.from("foto").update({originale_url: origPath(p), richiesta_originale:false}).eq("id",p.dbId);
@@ -1697,12 +1716,28 @@ async function uploadOneOriginal(p){
   }
 }
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
+/* Velocità reale di caricamento, media degli ultimi 20 file. Serve a distinguere
+   "la linea è lenta stasera" da "l'app si è impiantata": due diagnosi opposte. */
+const velCampioni = [];
+function registraVelocita(byte, ms){
+  if(!ms || byte<20000) return;
+  velCampioni.push(byte/ms);          // byte al millisecondo
+  if(velCampioni.length>20) velCampioni.shift();
+}
+function velocitaKBs(){
+  if(!velCampioni.length) return null;
+  const media = velCampioni.reduce((a,b)=>a+b,0)/velCampioni.length;
+  return Math.round(media*1000/1024);
+}
+
 function updateOrigCount(){
   const urg = origQueue.length + origActive;
   const bg  = origBg.length;
   const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
   let txt = base;
   if(urg) txt += " · carico originali: "+urg;
+  const v = velocitaKBs();
+  if(v && (urg||origBg.length)) txt += " · "+v+" KB/s";
   if(bg)  txt += " · in sottofondo: "+bg + (!autoOrigOn() ? " (fermo)"
                  : ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : ""));
   if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
