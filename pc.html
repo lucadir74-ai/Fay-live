@@ -277,7 +277,7 @@
           <button id="lbAdj">Luce e colore</button>
         </div>
       </div>
-      <div id="lbAdjBar" hidden>
+      <div id="lbAdjBar">
         <div class="row"><span>Luce</span><input type="range" id="adjB" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Colore</span><input type="range" id="adjS" min="0" max="200" step="1" value="100"></div>
@@ -451,6 +451,15 @@
   <div id="reportList" style="max-height:60vh;overflow:auto;margin-bottom:14px"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="reportClose">Chiudi</button>
+  </div>
+</dialog>
+
+<dialog id="qrDlg">
+  <h3 style="margin-bottom:10px">Mandare il QR sul monitor?</h3>
+  <p id="qrText" style="margin-bottom:16px"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="qrNo">Non ora</button>
+    <button id="qrYes" class="primary">Manda il QR</button>
   </div>
 </dialog>
 
@@ -2477,10 +2486,18 @@ function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
 
 /* ---------- lightbox operatore ---------- */
 function lbList(){ return state.lbCustom || filteredPhotos(); }
+/* Il pannello luce e colore è sempre presente all'apertura: serve quasi a ogni foto
+   prima di stamparla, e riaprirlo ogni volta era un clic in più col cliente davanti.
+   Resta richiudibile col tasto "Luce e colore" per la singola foto. */
+function mostraPannelloRegolazioni(){
+  const bar=$("lbAdjBar");
+  if(bar && bar.hidden) bar.hidden = false;
+}
 function openLightboxList(set, i){
   state.lbCustom = set;
   state.lightboxIdx = i;
   $("lightbox").classList.add("open");
+  mostraPannelloRegolazioni();
   paintLightbox();
 }
 async function openLightbox(i){
@@ -2488,6 +2505,7 @@ async function openLightbox(i){
   const list=filteredPhotos(); if(!list[i]) return;
   state.lightboxIdx=i; state.focusIdx=i;
   $("lightbox").classList.add("open");
+  mostraPannelloRegolazioni();
   await paintLightbox();
 }
 let lbSeq=0, lbBmp=null, lbBmpFor=null;
@@ -2497,7 +2515,7 @@ async function paintLightbox(){
   askOriginal(p);                  // se la foto è di un'altra postazione, la chiedo subito
   $("lbCode").textContent=p.code;
   setLbStatus(p);
-  if(!$("lbAdjBar").hidden) syncAdjBar();
+  if(!$("lbAdjBar").hidden) syncAdjBar();   // cursori sempre allineati alla foto aperta
   $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
   const c=$("lbCanvas"), ctx=c.getContext("2d");
 
@@ -3996,8 +4014,25 @@ function venditaAttiva(){
   if(mail.vendita && Date.now() > mail.vendita.fino){ mail.vendita = null; }
   return mail.vendita;
 }
+/* Il QR non parte più da solo a fine vendita: prima si chiede all'operatore.
+   Ci sono clienti che non lo vogliono, e mandarlo sul monitor senza deciderlo
+   toglieva il controllo a chi sta al desk. */
 function mostraQrVendita(codici){
   if(!mailQrEnabled() || !cloud.servizio || !codici.length) return;
+  const dlg = $("qrDlg");
+  $("qrText").innerHTML =
+    `Vendita chiusa: <b>${codici.length}</b> foto (${codici.slice(0,6).join(", ")}${codici.length>6?"…":""}).<br><br>` +
+    `Mandando il QR sul monitor, il cliente lo inquadra e scrive la sua email: la richiesta ti arriva ` +
+    `già abbinata a queste foto. Resta visibile <b>${QR_VENDITA_MIN} minuti</b>.`;
+  dlg.showModal();
+  $("qrNo").onclick = ()=>dlg.close();
+  $("qrYes").onclick = ()=>{
+    dlg.close();
+    inviaQrVendita(codici);
+  };
+}
+
+function inviaQrVendita(codici){
   mail.vendita = { codici, fino: Date.now() + QR_VENDITA_MIN*60*1000 };
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
