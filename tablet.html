@@ -392,7 +392,16 @@ function subscribe(){
     })
     .on("postgres_changes",{event:"UPDATE",schema:"public",table:"foto"}, payload=>{
       const f=payload.new; const p=S.byId.get(f.id);
-      if(p){ p.fav = favLocali.has(p.id) ? favLocali.get(p.id) : !!f.preferito; p.url=f.mini_url||f.anteprima_url||p.url; p.bigUrl=f.anteprima_url||p.bigUrl; p.gruppo=f.gruppo||null; render(); }
+      if(p){
+        p.fav = favLocali.has(p.id) ? favLocali.get(p.id) : !!f.preferito;
+        p.url=f.mini_url||f.anteprima_url||p.url; p.bigUrl=f.anteprima_url||p.bigUrl; p.gruppo=f.gruppo||null;
+        /* MANCAVA: quando PC1 finisce di caricare l'originale scrive originale_url e la
+           notifica arriva qui — ma non veniva copiata, quindi il tablet continuava a
+           credere che la foto non fosse sul cloud. E' la via piu' rapida per saperlo. */
+        if(f.originale_url) p.origPath = f.originale_url;
+        aggiornaSpiaBadge();
+        render();
+      }
     })
     .on("postgres_changes",{event:"DELETE",schema:"public",table:"foto"}, payload=>{
       const id=payload.old.id; if(S.byId.has(id)){ S.byId.delete(id); S.photos=S.photos.filter(x=>x.id!==id); render(); }
@@ -750,7 +759,7 @@ let spiaOrig = null;
 function avviaSpiaOriginali(){
   if(spiaOrig || !sb) return;
   spiaOrig = setInterval(async ()=>{
-    const attesa = S.photos.filter(p=>p.fav && !p.origPath);
+    const attesa = S.photos.filter(p=>p.fav && !haOriginale(p));
     if(!attesa.length){ clearInterval(spiaOrig); spiaOrig=null; aggiornaSpiaBadge(); return; }
     try{
       const {data} = await sb.from("foto").select("id,originale_url").in("id", attesa.map(p=>p.id));
@@ -768,7 +777,7 @@ function aggiornaSpiaBadge(){
   const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
   const favs = scope.filter(x=>x.fav);
   if(!favs.length){ el.textContent=""; return; }
-  const pronte = favs.filter(p=>p.origPath).length;
+  const pronte = favs.filter(p=>haOriginale(p)).length;
   const base = `♥ ${favs.length} preferiti${S.letter? " ("+S.letter+")":""}`;
   el.textContent = pronte>=favs.length ? base+" · pronte ✓" : base+` · pronte ${pronte}/${favs.length}`;
 }
@@ -798,6 +807,7 @@ $("btnFavClear").onclick = async ()=>{
    Il ripiego sull'anteprima resta solo per usi interni (mai per condividi/esporta/invia):
    un file da 1280 px consegnato come foto acquistata è un danno che non si recupera. */
 async function photoBlob(p, soloOriginale=true){
+  p = vivo(p);
   if(p.origPath && sb){ try{ const dl=await sb.storage.from("originali").download(p.origPath); if(!dl.error) return dl.data; }catch(_){} }
   if(soloOriginale) return null;
   try{ const r=await fetch(p.bigUrl || p.url); if(r.ok) return await r.blob(); }catch(_){}
@@ -812,13 +822,45 @@ function avvisaSenzaOriginale(mancanti){
         `Non vengono mai consegnate in bassa risoluzione. Aspetta che il PC le carichi e riprova.`);
 }
 
+/* SCHERMO SEMPRE ACCESO DURANTE L'ATTESA.
+   Quando lo schermo del tablet si spegne, Android sospende la pagina: i controlli si
+   fermano, il download degli originali resta congelato a meta' e al risveglio l'invio
+   risulta fallito anche se PC1 aveva caricato tutto. Finche' si aspettano originali o
+   si sta inviando, si tiene lo schermo acceso a forza. */
+let bloccoSchermo = null;
+async function tieniSchermoAcceso(){
+  try{
+    if(!("wakeLock" in navigator) || bloccoSchermo) return;
+    bloccoSchermo = await navigator.wakeLock.request("screen");
+    bloccoSchermo.addEventListener("release", ()=>{ bloccoSchermo=null; });
+  }catch(_){ bloccoSchermo=null; }
+}
+function rilasciaSchermo(){
+  try{ if(bloccoSchermo) bloccoSchermo.release(); }catch(_){}
+  bloccoSchermo = null;
+}
+/* Android rilascia il blocco da solo quando si cambia app: se torniamo qui mentre
+   c'e' ancora un'attesa in corso, lo si riprende. */
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState==="visible" && attesaInCorso) tieniSchermoAcceso();
+});
+let attesaInCorso = false;
+
 // chiede a PC1 di caricare gli originali mancanti e aspetta che siano pronti
+/* Le foto vanno SEMPRE ricercate per id nella mappa viva: la ricarica periodica
+   sostituisce tutti gli oggetti con altri nuovi, e chi teneva in mano i vecchi vedeva
+   arrivare l'indirizzo dell'originale su copie ormai buttate via. Era questo a inchiodare
+   il contatore a 0: il file c'era, ma lo si cercava nell'oggetto sbagliato. */
+function vivo(p){ return S.byId.get(p && p.id) || p; }
+function haOriginale(p){ const v = vivo(p); return !!(v && v.origPath); }
+
 async function ensureOriginals(list){
-  const missing = list.filter(p=>!p.origPath);
+  const missing = list.filter(p=>!haOriginale(p));
   if(!missing.length || !sb) return;
   // segna la richiesta sul cloud → PC1 la vede e carica
   for(const p of missing){ try{ await sb.from("foto").update({richiesta_originale:true}).eq("id",p.id); }catch(_){} }
   toast("Preparo gli originali…");
+  attesaInCorso = true; await tieniSchermoAcceso();
   /* La scadenza NON puo' essere fissa: 30 secondi bastavano per 4 foto e facevano
      fallire un invio da 5 che stava solo andando piano. Ogni originale e' ~2 MB e su
      hotspot viaggia a poche centinaia di KB/s, quindi il tempo cresce col numero di
@@ -830,9 +872,12 @@ async function ensureOriginals(list){
   while(Date.now()<deadline){
     const {data} = await sb.from("foto").select("id,originale_url").in("id",ids);
     (data||[]).forEach(row=>{
-      if(row.originale_url){ const p=S.byId.get(row.id); if(p) p.origPath=row.originale_url; }
+      if(!row.originale_url) return;
+      const p = S.byId.get(row.id); if(p) p.origPath = row.originale_url;   // oggetto vivo
+      const q = list.find(x=>x.id===row.id); if(q) q.origPath = row.originale_url;  // e la copia in mano
     });
-    const restanti = missing.filter(p=>!p.origPath).length;
+    aggiornaSpiaBadge();
+    const restanti = missing.filter(p=>!haOriginale(p)).length;
     if(!restanti) break;
     const pronte = missing.length-restanti;
     if(missing.length>1) toast(`Preparo gli originali… ${pronte}/${missing.length}`);
@@ -840,9 +885,11 @@ async function ensureOriginals(list){
        Ci si arrende solo se per 40 secondi di fila non arriva piu' niente — quello si'
        che significa che dall'altra parte non sta caricando nessuno. */
     if(pronte > prontePrima){ prontePrima = pronte; ultimoProgresso = Date.now(); deadline = Date.now()+attesaMs; }
+    else if(document.visibilityState !== "visible"){ ultimoProgresso = Date.now(); deadline = Date.now()+attesaMs; }
     else if(Date.now()-ultimoProgresso > 40000){ break; }
     await new Promise(r=>setTimeout(r,500));
   }
+  attesaInCorso = false; rilasciaSchermo();
 }
 
 // condividi una lista di foto tramite il menu Android (Gmail, FileMail, WhatsApp…)
@@ -950,7 +997,8 @@ async function inviaConFilemail(list, ctx){
   await ensureOriginals(list);
 
   const files=[], mancanti=[];
-  for(const p of list){
+  for(const pRaw of list){
+    const p = vivo(pRaw);
     if(!p.origPath){ mancanti.push(p.code); continue; }
     try{
       const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 900);
@@ -965,6 +1013,7 @@ async function inviaConFilemail(list, ctx){
   if(mancanti.length) toast(`${mancanti.length} foto non pronte, invio le altre (${mancanti.join(", ")})`);
 
   const b=$("btnSend"); b.disabled=true;
+  attesaInCorso = true; await tieniSchermoAcceso();
   toast(`Invio ${files.length} foto a ${email}…`);
   try{
     const r=await fetch("/api/invia",{
@@ -986,7 +1035,7 @@ async function inviaConFilemail(list, ctx){
   }catch(err){
     console.warn("filemail", err);
     mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
-  }finally{ b.disabled=false; }
+  }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
 $("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
 
@@ -1128,6 +1177,7 @@ async function refresh(manuale){
                     origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
         const vecchia = S.byId.get(f.id);
         if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile
+        if(vecchia && vecchia.origPath && !p.origPath) p.origPath = vecchia.origPath;
         nuove.push(p); map.set(p.id, p);
       });
     }
