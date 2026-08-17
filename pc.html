@@ -219,6 +219,7 @@
       <hr>
       <button id="btnClearDay">Svuota giornata</button>
       <button id="btnClearAll" title="Svuota dal cloud tutte le giornate di questa sede, in un colpo solo">Svuota tutte le giornate</button>
+      <button id="btnGcStorage" title="Controlla tutto il cloud e toglie i file rimasti indietro dalle cancellazioni precedenti">Ripulisci storage residuo</button>
       <button id="btnDelSede" title="Cancella la sede selezionata">Cancella sede</button>
     </div>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
@@ -3187,14 +3188,98 @@ $("btnDelSede").onclick = async ()=>{
   };
 };
 
+/* ---------- pulizia storage ----------
+   ATTENZIONE: storage.list() torna al massimo 100 file per chiamata. Cancellando
+   "a colpo solo" restavano indietro migliaia di anteprime e originali: da qui in poi
+   ogni cancellazione pagina la lista finché la cartella non è davvero vuota. */
+const PREFISSI_PROTETTI = ["mascherine","loghi","impostazioni"];
+
+async function listaTuttiIFile(bucket, prefisso){
+  const out=[], passo=1000;
+  for(let off=0; off<200000; off+=passo){
+    let r;
+    try{ r = await sb.storage.from(bucket).list(prefisso, {limit:passo, offset:off}); }catch(_){ break; }
+    const data = r && r.data;
+    if(!data || !data.length) break;
+    out.push(...data.filter(f=>f.name && f.name!==".emptyFolderPlaceholder"));
+    if(data.length < passo) break;
+  }
+  return out;
+}
+// svuota completamente la cartella di una giornata dentro un bucket; torna quanti file ha tolto
+async function svuotaPrefisso(bucket, prefisso){
+  let tolti=0;
+  const files = await listaTuttiIFile(bucket, prefisso);
+  for(let i=0;i<files.length;i+=500){
+    const lotto = files.slice(i,i+500).map(f=>prefisso+"/"+f.name);
+    try{
+      const {error} = await sb.storage.from(bucket).remove(lotto);
+      if(!error) tolti += lotto.length;
+    }catch(_){}
+  }
+  return tolti;
+}
+
+/* Ripasso di sicurezza: gira tutto il cloud e toglie i file rimasti orfani, cioè le foto
+   di giornate ormai cancellate o senza più la loro riga nel database. Mascherine, loghi e
+   impostazioni non si toccano. */
+async function ripulisciStorageResiduo(){
+  if(!sb){ toast("Cloud non disponibile"); return; }
+  if(!seiSicuro("Controllo tutto il cloud e cancello i file rimasti indietro: foto di giornate cancellate o senza più la loro riga nel database.\n\nMascherine, loghi e impostazioni NON vengono toccati.\nGli originali sui PC in locale NON vengono toccati.\n\nProcedere?")) return;
+  setSync("syncing","Controllo lo storage…");
+  let tolti=0, cartelle=0;
+  try{
+    const {data:servizi} = await sb.from("servizi").select("id");
+    const vivi = new Set((servizi||[]).map(s=>String(s.id)));
+    for(const bucket of ["anteprime","originali"]){
+      const radice = await listaTuttiIFile(bucket, "");
+      for(const c of radice){
+        if(c.id) continue;                                  // file sciolto alla radice, non una giornata
+        const nome = String(c.name);
+        if(PREFISSI_PROTETTI.includes(nome)) continue;
+        cartelle++;
+        let codici = null;                                  // null = giornata sparita: via tutto
+        if(vivi.has(nome)){
+          codici = new Set();
+          const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", nome);
+          const rids = (rulli||[]).map(r=>r.id);
+          if(rids.length){
+            const {data:foto} = await sb.from("foto").select("codice").in("rullo_id", rids);
+            (foto||[]).forEach(f=>codici.add(String(f.codice)));
+          }
+        }
+        const files = await listaTuttiIFile(bucket, nome);
+        const daTogliere = files.filter(f=>{
+          if(!codici) return true;
+          const base = String(f.name).replace(/_m\.jpg$/i,"").replace(/\.[a-z0-9]+$/i,"");
+          return !codici.has(base);                         // nessuna riga per questo codice: è residuo
+        }).map(f=>nome+"/"+f.name);
+        for(let i=0;i<daTogliere.length;i+=500){
+          const lotto = daTogliere.slice(i,i+500);
+          try{
+            const {error} = await sb.storage.from(bucket).remove(lotto);
+            if(!error) tolti += lotto.length;
+          }catch(_){}
+        }
+        setSync("syncing",`Ripulisco… ${tolti} file`);
+      }
+    }
+    setSync(null,"Sincronizzato");
+    toast(tolti ? `Ripulito: ${tolti} file tolti dal cloud (${cartelle} giornate controllate)`
+                : `Storage a posto: niente da togliere (${cartelle} giornate controllate)`);
+  }catch(err){
+    setSync("offline"); toast("Errore ripulendo: "+(err.message||err)); console.warn("gcStorage",err);
+  }
+}
+$("btnGcStorage").onclick = ripulisciStorageResiduo;
+
 async function deleteSede(s){
   setSync("syncing","Cancello la sede…");
   try{
     const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id",s.id);
     for(const sv of (servizi||[])){
       for(const bucket of ["anteprime","originali"]){
-        try{ const {data:files}=await sb.storage.from(bucket).list(sv.id);
-          if(files&&files.length) await sb.storage.from(bucket).remove(files.map(f=>sv.id+"/"+f.name)); }catch(_){}
+        try{ await svuotaPrefisso(bucket, String(sv.id)); }catch(_){}
       }
       const {data:rulli}=await sb.from("rulli").select("id").eq("servizio_id",sv.id);
       const rids=(rulli||[]).map(r=>r.id);
@@ -3462,10 +3547,7 @@ async function svuotaTutteLeGiornate(s){
     let fatti=0;
     for(const sv of (servizi||[])){
       for(const bucket of ["anteprime","originali"]){
-        try{
-          const {data:files} = await sb.storage.from(bucket).list(sv.id);
-          if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>sv.id+"/"+f.name));
-        }catch(_){}
+        try{ await svuotaPrefisso(bucket, String(sv.id)); }catch(_){}
       }
       const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", sv.id);
       const rids=(rulli||[]).map(r=>r.id);
@@ -3531,6 +3613,9 @@ async function clearCurrentDay(onlyLetter){
         const paths = codici.map(c=>sid+"/"+c+".jpg");
         if(bucket==="anteprime") paths.push(...codici.map(c=>sid+"/"+c+"_m.jpg"));   // anche le miniature
         if(paths.length) await sb.storage.from(bucket).remove(paths);
+        // se sto svuotando tutta la giornata, ripasso la cartella: i path espliciti coprono
+        // solo le foto caricate in questa postazione, il resto restava sul cloud
+        if(!onlyLetter) await svuotaPrefisso(bucket, String(sid));
       }catch(_){}
     }
     // cancella righe foto e rulli interessati
@@ -4481,9 +4566,8 @@ async function cleanupOld(){
   try{
     const {data:vecchi} = await sb.from("servizi").select("id").lt("data_servizio", giornoLimite(GIORNI_ORIGINALI));
     for(const s of (vecchi||[])){
-      const {data:files} = await sb.storage.from("originali").list(s.id);
-      if(files && files.length){
-        await sb.storage.from("originali").remove(files.map(f=>s.id+"/"+f.name));
+      const tolti = await svuotaPrefisso("originali", String(s.id));
+      if(tolti){
         await sb.from("foto").update({originale_url:null}).in("rullo_id",
           ((await sb.from("rulli").select("id").eq("servizio_id", s.id)).data||[]).map(r=>r.id));
       }
@@ -4495,10 +4579,7 @@ async function cleanupOld(){
   try{
     const {data:antichi} = await sb.from("servizi").select("id").lt("data_servizio", giornoLimite(GIORNI_ANTEPRIME));
     for(const s of (antichi||[])){
-      for(const bucket of ["anteprime","originali"]){
-        const {data:files} = await sb.storage.from(bucket).list(s.id);
-        if(files && files.length) await sb.storage.from(bucket).remove(files.map(f=>s.id+"/"+f.name));
-      }
+      for(const bucket of ["anteprime","originali"]) await svuotaPrefisso(bucket, String(s.id));
       const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", s.id);
       const ids = (rulli||[]).map(r=>r.id);
       if(ids.length) await sb.from("foto").delete().in("rullo_id", ids);
