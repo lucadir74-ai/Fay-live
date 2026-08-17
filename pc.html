@@ -223,6 +223,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnStats">Report giornata</button>
       <button id="btnReport">Report attività</button>
+      <button id="btnInvii" title="Giorno per giorno: a chi sono state inviate le foto, quali codici e se l'invio è riuscito">Registro invii</button>
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnArchive">Archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
@@ -467,6 +468,29 @@
       <button id="mailClear">Svuota inviate</button>
       <button id="mailClose" class="primary">Chiudi</button>
     </span>
+  </div>
+</dialog>
+
+<dialog id="invioDlg">
+  <h3 style="margin-bottom:4px">Registro invii</h3>
+  <p class="hint" style="margin-bottom:10px">Ogni invio via Filemail, giorno per giorno: indirizzo, foto e se è andato a buon fine.</p>
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+    <label style="font-size:13px;color:var(--muted)">Ultimi
+      <select id="invioGiorni">
+        <option value="7">7 giorni</option>
+        <option value="30" selected>30 giorni</option>
+        <option value="90">90 giorni</option>
+      </select>
+    </label>
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input type="checkbox" id="invioSoloErrori"> Solo quelli non riusciti
+    </label>
+    <div class="spacer"></div>
+    <span id="invioRiepilogo" style="font-size:13px;color:var(--muted)"></span>
+  </div>
+  <div id="invioList" style="max-height:56vh;overflow:auto;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="invioClose" class="primary">Chiudi</button>
   </div>
 </dialog>
 
@@ -2399,9 +2423,13 @@ async function inviaDiretto(set){
     let out={}; try{ out=JSON.parse(grezzo); }catch(_){}
     if(!r.ok || !out.ok){
       console.warn("filemail", r.status, grezzo);
+      logEvento("invio", {codici:set.map(p=>p.code).join(", "), quante:files.length,
+        esito:"errore", dettaglio:email+" — "+(out.dettaglio||out.errore||("HTTP "+r.status))});
       alert("Invio non riuscito ("+r.status+")\n\n"+(out.dettaglio||out.errore||grezzo.slice(0,300)));
       return;
     }
+    logEvento("invio", {codici:files.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+      quante:out.inviate||files.length, dettaglio:email});
     set.forEach(p=>{ p.exported=true; if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export"); });
     paintVisible();
     /* Prima qui c'era un alert: bloccava la postazione finché non premevi OK.
@@ -2410,6 +2438,8 @@ async function inviaDiretto(set){
     fineVendita(set);
   }catch(err){
     console.warn("filemail", err);
+    logEvento("invio", {codici:set.map(p=>p.code).join(", "), quante:files.length,
+      esito:"errore", dettaglio:email+" — server irraggiungibile"});
     alert("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err));
   }finally{ if(b) b.disabled=false; }
 }
@@ -4346,6 +4376,101 @@ $("btnReport").onclick = async ()=>{
 };
 $("reportClose").onclick=()=>$("reportDlg").close();
 
+/* --- Registro invii: chi ha ricevuto cosa, giorno per giorno ---
+   Legge le righe "~invio" della tabella attivita, che vengono scritte a ogni tentativo
+   di invio Filemail (riuscito o no). Non è limitato alla giornata aperta: guarda tutte
+   le giornate della sede, perché la domanda tipica arriva dopo ("ma a quel cliente di
+   sabato le foto sono partite davvero?"). */
+const invii = { righe: [], giorni: {} };
+
+async function caricaInvii(){
+  const box = $("invioList"), riep = $("invioRiepilogo");
+  invii.righe = []; invii.giorni = {};
+  if(!sb || !cloud.sede){ box.innerHTML = '<p style="color:var(--muted)">Serve una sede aperta.</p>'; riep.textContent=""; return; }
+  const gg = parseInt($("invioGiorni").value, 10) || 30;
+  const limite = new Date(Date.now() - gg*24*3600*1000).toISOString().slice(0,10);
+  try{
+    // le giornate della SEDE: senza questo filtro comparirebbero gli invii degli altri locali
+    const {data:servizi} = await sb.from("servizi").select("id,data_servizio")
+      .eq("sede_id", cloud.sede.id).gte("data_servizio", limite);
+    if(!servizi || !servizi.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna giornata in questo periodo.</p>'; riep.textContent=""; return; }
+    servizi.forEach(s=>{ invii.giorni[s.id] = s.data_servizio; });
+    const {data} = await sb.from("attivita").select("*")
+      .in("servizio_id", servizi.map(s=>s.id))
+      .eq("azione", "~invio")
+      .order("creato_il", {ascending:false}).limit(1000);
+    invii.righe = data || [];
+  }catch(err){
+    console.warn("registro invii", err);
+    box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il registro.</p>'; riep.textContent="";
+    return;
+  }
+  renderInvii();
+}
+
+function renderInvii(){
+  const box = $("invioList"), riep = $("invioRiepilogo");
+  const soloErrori = $("invioSoloErrori").checked;
+  const tutte = invii.righe;
+  const righe = soloErrori ? tutte.filter(a=>a.esito==="errore") : tutte;
+
+  const ko = tutte.filter(a=>a.esito==="errore").length;
+  const foto = tutte.filter(a=>a.esito!=="errore").reduce((n,a)=>n+(a.quante||0),0);
+  riep.textContent = tutte.length
+    ? `${tutte.length-ko} invii riusciti · ${foto} foto` + (ko? ` · ${ko} non riusciti` : "")
+    : "";
+
+  if(!righe.length){
+    box.innerHTML = `<p style="color:var(--muted)">${soloErrori? "Nessun invio fallito: tutti andati a buon fine." : "Nessun invio registrato in questo periodo."}</p>`;
+    return;
+  }
+
+  // raggruppo per giornata di servizio, dalla più recente
+  const perGiorno = {};
+  righe.forEach(a=>{
+    const g = invii.giorni[a.servizio_id] || String(a.creato_il).slice(0,10);
+    (perGiorno[g] = perGiorno[g] || []).push(a);
+  });
+
+  box.innerHTML = Object.keys(perGiorno).sort().reverse().map(g=>{
+    const lista = perGiorno[g];
+    const kog = lista.filter(a=>a.esito==="errore").length;
+    const d = new Date(g+"T12:00:00");
+    const titolo = isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long", day:"numeric", month:"long"});
+    const voci = lista.map(a=>{
+      const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+      const err = a.esito==="errore";
+      // dettaglio = "email" oppure "email — motivo dell'errore"
+      const pezzi = String(a.dettaglio||"").split(" — ");
+      const email = (pezzi.shift()||"—").replace(/[<>&"]/g,"");
+      const motivo = pezzi.join(" — ").replace(/[<>&"]/g,"");
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
+        <b style="color:${err?"var(--danger)":"var(--ok)"}"> ${err?"✕ non riuscito":"✔ inviato"}</b>
+        <span style="color:var(--muted)"> · ${a.quante||0} foto · ${(a.postazione||"?").replace(/[<>&"]/g,"")}</span>
+        <div style="word-break:break-all"><b>${email}</b></div>
+        ${motivo? `<div style="color:var(--danger);font-size:12px">${motivo}</div>` : ""}
+        <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${(a.codici||"").replace(/[<>&"]/g,"")}</div>
+      </div>`;
+    }).join("");
+    return `<div style="margin-bottom:16px">
+      <div style="position:sticky;top:0;background:var(--surface);padding:6px 0;border-bottom:1px solid var(--accent);margin-bottom:4px">
+        <b style="text-transform:capitalize">${titolo}</b>
+        <span style="color:var(--muted);font-size:12.5px"> — ${lista.length} invii${kog?`, <span style="color:var(--danger)">${kog} falliti</span>`:""}</span>
+      </div>${voci}</div>`;
+  }).join("");
+}
+
+$("btnInvii").onclick = async ()=>{
+  $("invioList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
+  $("invioRiepilogo").textContent = "";
+  $("invioDlg").showModal();
+  await caricaInvii();
+};
+$("invioGiorni").onchange = ()=>caricaInvii();
+$("invioSoloErrori").onchange = ()=>renderInvii();
+$("invioClose").onclick = ()=>$("invioDlg").close();
+
 /* Registro tecnico: riusa la stessa finestra, mostrando solo le righe "~" e in cima
    le catene rimaste incomplete — richieste senza il caricamento corrispondente. */
 $("btnRegistro").onclick = async ()=>{
@@ -4748,9 +4873,14 @@ async function inviaConFilemail(row, btn){
     const out = await r.json();
     if(!r.ok || !out.ok){
       console.warn("filemail", out);
+      logEvento("invio", {codici:trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+        quante:trovate.length, esito:"errore",
+        dettaglio:row.email+" — "+(out.dettaglio||out.errore||"errore sconosciuto")});
       toast("Invio non riuscito: " + (out.dettaglio || out.errore || "errore sconosciuto"));
       return;
     }
+    logEvento("invio", {codici:trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+      quante:out.inviate||trovate.length, dettaglio:row.email});
     row.stato = "inviata";
     /* Una richiesta evasa non deve restare in coda: si segna inviata e si toglie subito
        dalla lista, così il numero sul tasto è sempre "quante ne devo ancora fare". */
@@ -4767,6 +4897,9 @@ async function inviaConFilemail(row, btn){
       + (restano? ` — restano ${restano} richieste` : ""), 6000);
   }catch(err){
     console.warn("filemail", err);
+    logEvento("invio", {codici:trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+      quante:trovate.length, esito:"errore",
+      dettaglio:row.email+" — server irraggiungibile"});
     toast("Invio non riuscito: controlla la connessione");
   }finally{
     btn.disabled = false; btn.textContent = testo;
