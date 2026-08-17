@@ -398,7 +398,6 @@
       <button id="selPrint">Stampa</button>
       <button id="selExport">Esporta file</button>
       <button id="selSend">✈ Invia per email</button>
-      <button id="selSend">✈ Invia per email</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -1970,7 +1969,7 @@ async function getBig(p, maxSide=1920){
 /* ---------- griglia virtualizzata ---------- */
 const wrap=$("gridWrap"), spacer=$("gridSpacer");
 const CELL=196, GAP=10, PADX=16;
-let cols=1, visible=[], cellPool=new Map(); // idx foto filtrata -> div
+let cols=1, cellPool=new Map(); // idx foto filtrata -> div
 
 function parseQuery(q){
   const clean=q.replace(/[^A-Z0-9]/g,"");
@@ -2067,6 +2066,17 @@ function layoutGrid(){
   const rows = Math.ceil(list.length/cols);
   spacer.style.height = (rows*(CELL+GAP)+PADX*2)+"px";
   paintVisible();
+}
+/* Frecce sulla griglia: la cella che prende il fuoco deve entrare nella parte visibile.
+   Questa funzione veniva richiamata ma non era mai stata scritta: la riga andava in errore
+   e la griglia restava ferma (niente scorrimento, niente ridisegno del fuoco). */
+function ensureVisible(i){
+  const list=filteredPhotos();
+  if(i<0 || i>=list.length || !cols) return;
+  const y0 = PADX + Math.floor(i/cols)*(CELL+GAP);
+  const y1 = y0 + CELL;
+  if(y0 < wrap.scrollTop) wrap.scrollTop = Math.max(0, y0 - GAP);
+  else if(y1 > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = y1 - wrap.clientHeight + GAP;
 }
 function paintVisible(){
   const list=filteredPhotos();
@@ -2165,47 +2175,6 @@ function fineVendita(set){
 }
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
-$("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
-
-/* Invio diretto: l'email la scrivi tu al momento, senza passare dal QR.
-   Le foto NON transitano da qui: al server vanno solo gli indirizzi firmati. */
-async function inviaDiretto(set){
-  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
-  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
-  const email = (prompt(`Email del cliente — ${set.length} foto da inviare:`, "") || "").trim();
-  if(!email) return;
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){ alert("Indirizzo email non valido."); return; }
-
-  toast("Preparo gli originali…");
-  for(const p of set){ if(!p.origUploaded){ if(p.file||p.arch){ try{ await uploadOneOriginal(p); }catch(_){} } else askOriginal(p); } }
-
-  const files=[], mancanti=[];
-  for(const p of set){
-    try{
-      const {data,error} = await sb.storage.from("originali").createSignedUrl(origPath(p), 900);
-      if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
-      files.push({nome:p.code+".jpg", url:data.signedUrl});
-    }catch(_){ mancanti.push(p.code); }
-  }
-  if(!files.length){ alert("Gli originali di queste foto non sono ancora sul cloud. Riprova tra poco."); return; }
-  if(mancanti.length && !confirm(`${mancanti.length} foto non sono pronte e NON verranno inviate (${mancanti.join(", ")}).\n\nProcedo con le altre ${files.length}?`)) return;
-
-  const b=$("selSend"); if(b) b.disabled=true;
-  toast(`Invio ${files.length} foto a ${email}…`);
-  try{
-    const r = await fetch("/api/invia",{ method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ email, files, oggetto:"Le tue foto — Frame About You",
-                             messaggio:"Grazie per la serata! Ecco le tue foto." }) });
-    const grezzo = await r.text();
-    let out={}; try{ out=JSON.parse(grezzo); }catch(_){}
-    if(!r.ok || !out.ok){ alert("Invio non riuscito ("+r.status+")\n\n"+(out.dettaglio||out.errore||grezzo.slice(0,300))); return; }
-    set.forEach(p=>{ p.exported=true; if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export"); });
-    paintVisible();
-    alert(`Inviate ${out.inviate||files.length} foto a ${email}.`);
-    fineVendita(set);
-  }catch(err){ alert("Non sono riuscito a contattare il server di invio.\n\n"+(err&&err.message||err)); }
-  finally{ if(b) b.disabled=false; }
-}
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
 $("lbSend").onclick = async ()=>{ const p=lbList()[state.lightboxIdx]; if(p) await inviaDiretto([p]); };
 
@@ -2575,12 +2544,6 @@ async function ensureExportDir(){
   }catch(_){ return null; }
 }
 function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
-function statusText(p){
-  const parts=[];
-  if(p.prints>0) parts.push("Stampata"+(p.prints>1?" ×"+p.prints:""));
-  if(p.exported) parts.push("Esportata");
-  return parts.join(" · ");
-}
 function setLbStatus(p){
   let h="";
   if(p.prints>0) h+=`<span class="chip pr">Stampata${p.prints>1?" ×"+p.prints:""}</span>`;
@@ -4236,7 +4199,6 @@ function venditaAttiva(){
    toglieva il controllo a chi sta al desk. */
 /* stato della sessione QR corrente: codici venduti, se è stato mandato, se il cliente ha risposto */
 let qrSessione = null;
-let qrVisto = null;      // ultima email già vista, per non reagire due volte alla stessa
 function mostraQrVendita(codici){
   if(!mailQrEnabled() || !cloud.servizio || !codici.length) return;
   qrSessione = { codici, inviato:false, ricevuta:false };
@@ -4254,7 +4216,6 @@ function mostraQrVendita(codici){
    cliente sbaglia, esce dalla pagina o passa il telefono a un altro. */
 function inviaQrVendita(codici){
   mail.vendita = { codici, inviatoIl: Date.now() };
-  qrVisto = null;
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
   toast(`QR delle ${codici.length} foto sul monitor — resta finché non lo togli`);
