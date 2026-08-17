@@ -32,7 +32,11 @@
   header h1{font-size:16px;font-weight:700;letter-spacing:.3px}
   header h1 span{color:var(--accent)}
   #eventInfo{color:var(--muted);font-size:13px}
-  #searchBox{width:180px;font-family:var(--mono);text-transform:uppercase}
+  #searchBox{width:180px;font-family:var(--mono);text-transform:uppercase;transition:width .18s}
+  /* con più codici insieme 180px non bastano a rileggere quello che si è scritto */
+  #searchBox.multi{width:420px;border-color:var(--accent)}
+  #searchHint{font-size:12px;color:var(--accent);white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+  #searchHint[hidden]{display:none}
   .spacer{flex:1}
   #statusBar{display:flex;gap:18px;align-items:center;padding:6px 16px;background:var(--surface);border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
   #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
@@ -237,7 +241,8 @@
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
-    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )">
+    <input type="text" id="searchBox" placeholder="Cerca codice  ( / )" title="Un codice apre la foto. Più codici insieme (anche separati da spazio o virgola) si selezionano: invio apre la vista insieme.">
+    <span id="searchHint" hidden></span>
     <button id="btnMonitor">Avvia slideshow</button>
     <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
@@ -2084,6 +2089,32 @@ function parseQuery(q){
   }
   return null;
 }
+/* Più codici nella stessa casella. Il venditore li detta di fila leggendoli dal tablet o
+   dal foglio, quindi si accetta qualunque separatore (spazio, virgola, punto e virgola,
+   trattino di elenco) e anche la scrittura attaccata tipo "B16B17".
+   La lettera si trascina: "B16 17 18" vale B-016, B-017, B-018 — così non deve
+   ripeterla trenta volte. Nessun limite al numero di codici. */
+function parseCodes(raw){
+  const testo = String(raw||"").toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")      // ogni separatore diventa spazio
+    .replace(/(\d)(?=[A-Z])/g, "$1 ") // "B16B17" → "B16 B17"
+    .trim();
+  const tokens = testo ? testo.split(/\s+/) : [];
+  const found = [], missing = [];
+  let ultimaLettera = null;
+  for(const tk of tokens){
+    const m = tk.match(/^([A-Z]{1,3})(\d{1,4})$/) || tk.match(/^()(\d{1,4})$/);
+    if(!m){ missing.push(tk); continue; }
+    const L = m[1] || ultimaLettera || state.activeLetter
+      || ((new Set(state.photos.map(p=>p.letter)).size===1) ? state.photos[0] && state.photos[0].letter : null);
+    if(!L){ missing.push(tk); continue; }
+    ultimaLettera = L;
+    const code = fmtCode(L, parseInt(m[2],10));
+    const p = state.byCode.get(code) || state.photos.find(x=>x.letter===L && x.num===parseInt(m[2],10));
+    if(p){ if(!found.includes(p)) found.push(p); } else missing.push(code);
+  }
+  return { tokens, found, missing };
+}
 function filteredPhotos(){
   let list = state.activeLetter? state.photos.filter(p=>p.letter===state.activeLetter) : state.photos;
   if(!state.filter) return list;
@@ -2211,9 +2242,35 @@ wrap.addEventListener("scroll", paintVisible, {passive:true});
 addEventListener("resize", layoutGrid);
 
 /* ---------- ricerca ---------- */
+/* Due modi nella stessa casella:
+   - UN codice  → apre subito la foto (come prima);
+   - PIÙ codici → mentre scrivi non apre niente e conta quelli riconosciuti; con invio
+     li seleziona tutti e apre la vista insieme.
+   Prima i codici multipli venivano appiccicati in un'unica stringa: dal terzo in poi
+   non veniva riconosciuto più nulla e la foto aperta si chiudeva, sembrando un reset. */
 $("searchBox").oninput = e=>{
   const raw = e.target.value.trim().toUpperCase();
-  if(!raw){ if($("lightbox").classList.contains("open")) closeLightbox(); return; }
+  const box = e.target, hint = $("searchHint");
+  if(!raw){
+    box.classList.remove("multi"); hint.hidden = true;
+    if($("lightbox").classList.contains("open")) closeLightbox();
+    return;
+  }
+  const q = parseCodes(raw);
+  if(q.tokens.length > 1){
+    // modalità elenco: la griglia resta visibile, niente foto a tutto schermo
+    box.classList.add("multi");
+    if($("lightbox").classList.contains("open")) closeLightbox();
+    hint.hidden = false;
+    if(q.found.length){
+      const parti = [q.found.length===1 ? "1 codice" : q.found.length+" codici"];
+      if(q.missing.length) parti.push(q.missing.length+" non trovati");
+      hint.textContent = parti.join(" · ") + " — invio per vederli insieme";
+    } else hint.textContent = "nessun codice riconosciuto";
+    hint.title = q.missing.length ? "Non trovati: "+q.missing.join(", ") : "";
+    return;
+  }
+  box.classList.remove("multi"); hint.hidden = true;
   const ex = parseQuery(raw);
   if(ex){
     const code = fmtCode(ex.letter, ex.num);
@@ -2230,11 +2287,24 @@ $("searchBox").oninput = e=>{
 };
 function resetSearch(){
   $("searchBox").value="";
+  $("searchBox").classList.remove("multi");
+  $("searchHint").hidden = true;
   state.filter="";
   $("searchBox").focus();   // il cursore resta pronto per il codice successivo
 }
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
+    const q = parseCodes(e.target.value);
+    // elenco di codici: li seleziono tutti e li apro affiancati
+    if(q.tokens.length > 1 && q.found.length){
+      e.preventDefault();
+      q.found.forEach(p=>{ if(!state.selection.has(p.id)){ state.selection.add(p.id); queueOriginalUpload(p); } });
+      updateSelBar(); paintVisible();
+      resetSearch();
+      openCompare();
+      if(q.missing.length) toast(`Selezionate ${q.found.length} foto — non trovate: ${q.missing.join(", ")}`, 5000);
+      return;
+    }
     if($("lightbox").classList.contains("open")) closeLightbox();
     resetSearch();
     return;
