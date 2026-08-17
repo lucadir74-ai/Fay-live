@@ -4169,9 +4169,9 @@ function drawMonitorQR(){
 /* ---------- QR della vendita chiusa ----------
    Non interrompe niente: lo slideshow continua e cambia solo il QR nell'angolo,
    che per qualche minuto porta con sé i codici delle foto appena vendute. */
-const QR_VENDITA_MIN = 3;                 // per quanti minuti resta il QR del cliente servito
+/* Il QR NON si toglie da solo: né a tempo, né quando arriva l'email del cliente.
+   Va via solo col tasto "Chiudi QR" della postazione. */
 function venditaAttiva(){
-  if(mail.vendita && Date.now() > mail.vendita.fino){ mail.vendita = null; }
   return mail.vendita;
 }
 /* Il QR non parte più da solo a fine vendita: prima si chiede all'operatore.
@@ -4196,35 +4196,14 @@ function mostraQrVendita(codici){
 /* La finestra resta aperta finché la chiudi tu: serve a poter rimandare il QR se il
    cliente sbaglia, esce dalla pagina o passa il telefono a un altro. */
 function inviaQrVendita(codici){
-  mail.vendita = { codici, fino: Date.now() + QR_VENDITA_MIN*60*1000, inviatoIl: Date.now() };
+  mail.vendita = { codici, inviatoIl: Date.now() };
   qrVisto = null;
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
-  toast(`QR delle ${codici.length} foto sul monitor per ${QR_VENDITA_MIN} minuti`);
+  toast(`QR delle ${codici.length} foto sul monitor — resta finché non lo togli`);
 }
 $("qrNo").onclick = ()=>{ $("qrDlg").close(); };
 
-/* Il canale in tempo reale sull'hotspot cade spesso: senza questo controllo il QR restava
-   sul monitor anche dopo che il cliente aveva già scritto la sua email. Qui si guarda da
-   soli, ogni 4 secondi, se è arrivata una richiesta mentre il QR è esposto. */
-setInterval(async ()=>{
-  if(!sb || !cloud.servizio || !mail.vendita) return;
-  try{
-    const dopo = mail.vendita.inviatoIl || 0;
-    const {data} = await sb.from("richieste_email")
-      .select("email,creato_il")
-      .eq("servizio_id", String(cloud.servizio.id))
-      .order("creato_il", {ascending:false}).limit(3);
-    for(const r of (data||[])){
-      if(new Date(r.creato_il).getTime() >= dopo && r.email !== qrVisto){
-        qrVisto = r.email;
-        qrClienteHaInviato(r.email);
-        refreshMailBadge();
-        return;
-      }
-    }
-  }catch(_){}
-}, 4000);
 $("qrYes").onclick = ()=>{
   if(!qrSessione) return;
   inviaQrVendita(qrSessione.codici);
@@ -4234,17 +4213,12 @@ $("qrYes").onclick = ()=>{
   $("qrEsito").textContent = `QR sul monitor dalle ${ora} — in attesa che il cliente scriva la sua email.`;
 };
 
-/* Quando la richiesta del cliente arriva, il QR sparisce dal monitor esterno (ha finito
-   il suo lavoro) ma questa finestra resta: se serve si rimanda con un clic. */
+/* Quando arriva la richiesta del cliente il QR RESTA sul monitor: si toglie solo col
+   tasto "Chiudi QR". Qui si aggiorna soltanto il messaggio nella finestra, come conferma. */
 function qrClienteHaInviato(email){
-  if(!mail.vendita) return;                 // nessun QR sul monitor: niente da togliere
   if(qrSessione) qrSessione.ricevuta = true;
-  mail.vendita = null;
-  const M = state.monitor;
-  if(M.win && !M.win.closed) repaintMonitor();
-  aggiornaTastiQr();
   if($("qrDlg").open){
-    $("qrEsito").innerHTML = `✓ Email ricevuta dal cliente${email?` (<b>${email}</b>)`:""}. QR tolto dal monitor.`;
+    $("qrEsito").innerHTML = `✓ Email ricevuta dal cliente${email?` (<b>${email}</b>)`:""}. Il QR resta sul monitor finché non lo togli.`;
     $("qrYes").textContent = "Manda di nuovo";
   }
 }
