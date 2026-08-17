@@ -118,6 +118,15 @@
   .cmp:hover .cmpDel{background:var(--danger);border-color:var(--danger)}
   #btnMail.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
     box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)}
+  /* Il cliente ha appena inquadrato il QR e scritto la sua email: il tasto lampeggia
+     per mezzo minuto, poi resta acceso finché la lista non è stata evasa. */
+  #btnMail.nuova{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+    animation:mailNuova 1s ease-in-out infinite}
+  @keyframes mailNuova{
+    0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent)}
+    50%{box-shadow:0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent)}
+  }
+  @media (prefers-reduced-motion:reduce){ #btnMail.nuova{animation:none} }
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
@@ -4031,6 +4040,7 @@ function subscribeRealtime(){
       const r = payload.new;
       if(!cloud.servizio || String(r.servizio_id)!==String(cloud.servizio.id)) return;
       toast("Nuova email dal cliente: "+r.email);
+      accendiMailNuova();
       qrClienteHaInviato(r.email);
       refreshMailBadge();
       if($("mailDlg").open) loadMailRequests().then(renderMailList);
@@ -4142,7 +4152,7 @@ $("reportClose").onclick=()=>$("reportDlg").close();
    DA INVIARE — il cliente inquadra il QR sul monitor e scrive la sua email.
    La richiesta arriva qui; l'invio delle foto lo fa l'operatore da Gmail.
    ===================================================================== */
-const mail = { qrCanvas:null, qrFor:null, rows:[], vendita:null };
+const mail = { qrCanvas:null, qrFor:null, rows:[], vendita:null, _ultimoN:null, _lampeggio:null };
 
 function mailQrEnabled(){ return localStorage.getItem("faylive_qr") !== "0"; }
 /* QR d'angolo: generico, per chi vuole le foto ma non ha ancora comprato.
@@ -4337,13 +4347,29 @@ async function refreshMailBadge(){
   const b = $("mailBadge"); if(!b) return;
   b.textContent = n;
   b.style.visibility = n ? "visible" : "hidden";
+  b.classList.toggle("alert", n>0);
   /* Il tasto si accende quando ci sono richieste da evadere e si spegne quando la lista
      è vuota: durante la serata il contatore piccolo passava inosservato. */
   const t = $("btnMail");
   if(t){
     t.classList.toggle("attesa", n>0);
     t.title = n ? `${n} richieste email da inviare` : "Nessuna richiesta in attesa";
+    // richiesta appena arrivata dal QR: il tasto lampeggia per 30 secondi
+    if(mail._ultimoN != null && n > mail._ultimoN) accendiMailNuova();
+    mail._ultimoN = n;
   }
+}
+/* Lampeggio del tasto "Da inviare": si spegne da solo dopo mezzo minuto, o subito se
+   apri la lista. Sotto resta comunque il tasto acceso finché ci sono richieste. */
+function accendiMailNuova(){
+  const t = $("btnMail"); if(!t) return;
+  t.classList.add("nuova");
+  clearTimeout(mail._lampeggio);
+  mail._lampeggio = setTimeout(()=>t.classList.remove("nuova"), 30000);
+}
+function spegniMailNuova(){
+  clearTimeout(mail._lampeggio);
+  const t = $("btnMail"); if(t) t.classList.remove("nuova");
 }
 function renderMailList(){
   const box = $("mailList");
@@ -4394,6 +4420,7 @@ document.addEventListener("click", e=>{
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") $("toolsMenu").hidden = true; });
 
 $("btnMail").onclick = async ()=>{
+  spegniMailNuova();
   $("mailQrOn").checked = mailQrEnabled();
   $("mailList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
   $("mailDlg").showModal();
