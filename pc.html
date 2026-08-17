@@ -1536,6 +1536,7 @@ async function processBatch(batch){
       m.height = Math.max(1, Math.round(c.height*km));
       m.getContext("2d").drawImage(c, 0, 0, m.width, m.height);
       p.mini = await toBlobAsync(m, 0.72);
+      thumbCache.set(mkey(p.code), p.mini);   // così anche il PC che importa ricarica da disco
     }catch(err){ console.warn("anteprima", p.code, err); }
     // sincronizzazione cloud NON bloccante: va in coda parallela, l'import prosegue
     queueThumbSync(p);
@@ -3200,6 +3201,12 @@ addEventListener("keydown", e=>{
    I codici ripartono da A-001 a ogni svuotamento, quindi con la sola sigla una postazione
    ripescava dal proprio disco la vecchia foto A-001 al posto di quella nuova. */
 function ckey(code){ return (cloud.servizio? cloud.servizio.id : "nosrv") + "|" + code; }
+/* Slot separato per la MINIATURA della griglia (~25 KB). Prima non veniva mai messa in
+   cache — solo la grande da 1280 — quindi a ogni aggiornamento della pagina la griglia
+   si riscaricava tutta dal cloud: con 1300 foto sono una trentina di MB di hotspot
+   buttati. Chiave distinta perché p.preview deve restare la GRANDE: usare la miniatura
+   al suo posto farebbe stampare ed esportare in bassa qualità. */
+function mkey(code){ return ckey(code) + "|mini"; }
 
 const thumbCache = {
   db:null,
@@ -3218,9 +3225,44 @@ const thumbCache = {
   async clear(){ try{ const db=await this.open(); return await new Promise((res,rej)=>{
     const t=db.transaction("t","readwrite").objectStore("t").clear(); t.onsuccess=()=>res(); t.onerror=()=>rej(t.error);
   }); }catch(_){ } },
+  /* Ora che teniamo anche le miniature, la cache cresce di ~30 MB a serata: senza una
+     ripulitura in qualche settimana il disco del PC si riempirebbe di giornate morte.
+     Si tengono solo le giornate passate in "tieni" (l'attuale e le ultime aperte). */
+  async prune(tieni){
+    try{
+      const db=await this.open();
+      const keys = await new Promise((res,rej)=>{
+        const t=db.transaction("t").objectStore("t").getAllKeys();
+        t.onsuccess=()=>res(t.result||[]); t.onerror=()=>rej(t.error);
+      });
+      const vecchie = keys.filter(k=>{
+        const srv = String(k).split("|")[0];
+        return srv && srv!=="nosrv" && !tieni.includes(srv);
+      });
+      if(!vecchie.length) return 0;
+      await new Promise((res)=>{
+        const st=db.transaction("t","readwrite").objectStore("t");
+        vecchie.forEach(k=>st.delete(k));
+        st.transaction.oncomplete=()=>res(); st.transaction.onerror=()=>res();
+      });
+      console.log("cache anteprime: rimosse", vecchie.length, "voci di giornate vecchie");
+      return vecchie.length;
+    }catch(_){ return 0; }
+  },
 };
 
 const NEW_SEDE = "__new__";
+
+/* Giornate di cui vale la pena tenere le anteprime sul disco: l'attuale e le due prima.
+   Serve per le ristampe del giorno dopo, senza riscaricare mezza settimana di foto. */
+const CACHE_GIORNATE = 3;
+function ricordaGiornataCache(id){
+  let lista = [];
+  try{ lista = JSON.parse(localStorage.getItem("faylive_cache_giornate")||"[]"); }catch(_){}
+  lista = [String(id)].concat(lista.filter(x=>x!==String(id))).slice(0, CACHE_GIORNATE);
+  try{ localStorage.setItem("faylive_cache_giornate", JSON.stringify(lista)); }catch(_){}
+  thumbCache.prune(lista);
+}
 
 /* Ricorda sede e giornata aperti, così un aggiornamento della pagina (o una chiusura per sbaglio)
    riparte da dove si era. La giornata si ripristina solo se la scelta è recente: il giorno dopo
@@ -3471,6 +3513,7 @@ async function openServizio(sv){
   if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
   cloud.servizio = sv;
   ricordaScelta();
+  ricordaGiornataCache(sv.id);
   cloud.rulli = {};
   state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
   state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
@@ -4012,10 +4055,15 @@ async function riparaAnteprime(){
   for(let i=0;i<da.length;i+=6){
     await Promise.all(da.slice(i,i+6).map(async p=>{
       try{
-        const url = p.miniUrl || p.anteprimaUrl;
-        const r=await fetchConScadenza(url); if(!r.ok) return;
-        const blob=await r.blob();
-        if(!p.miniUrl){ thumbCache.set(ckey(p.code), blob); p.preview=blob; }   // era la grande
+        // prima il disco: se la miniatura è già stata scaricata una volta non si ripaga il cloud
+        let blob = await thumbCache.get(p.miniUrl ? mkey(p.code) : ckey(p.code));
+        if(!blob){
+          const url = p.miniUrl || p.anteprimaUrl;
+          const r=await fetchConScadenza(url); if(!r.ok) return;
+          blob=await r.blob();
+          if(p.miniUrl) thumbCache.set(mkey(p.code), blob);
+          else { thumbCache.set(ckey(p.code), blob); p.preview=blob; }   // era la grande
+        } else if(!p.miniUrl) p.preview=blob;
         try{ p.thumb=await blobToThumb(blob); }catch(_){}
         ok++;
       }catch(_){}
@@ -4133,12 +4181,15 @@ async function addRemotePhoto(f, letter){
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
-  if(blob){ p.preview=blob; }
+  if(blob){ p.preview=blob; }                                  // la grande era già in cache
+  if(!blob) blob = await thumbCache.get(mkey(f.codice));       // altrimenti la miniatura
   if(!blob){
     const url = f.mini_url || f.anteprima_url;
     if(url){
       try{ const r=await fetch(url); if(r.ok){ blob=await r.blob();
-        if(!f.mini_url){ thumbCache.set(ckey(f.codice), blob); p.preview=blob; } } }catch(_){}
+        if(f.mini_url) thumbCache.set(mkey(f.codice), blob);              // miniatura: solo griglia
+        else { thumbCache.set(ckey(f.codice), blob); p.preview=blob; }    // era la grande
+      } }catch(_){}
     }
   }
   if(blob){ try{ p.thumb=await blobToThumb(blob); }catch(_){}}
@@ -4534,6 +4585,7 @@ async function rigeneraDaDisco(){
           m.height = Math.max(1, Math.round(c.height*km));
           m.getContext("2d").drawImage(c, 0, 0, m.width, m.height);
           p.mini = await toBlobAsync(m, 0.72);
+          thumbCache.set(mkey(p.code), p.mini);
         }
         if(!p.thumb){ try{ p.thumb = await blobToThumb(p.preview); }catch(_){} }
         queueThumbSync(p);
