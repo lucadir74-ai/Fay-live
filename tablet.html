@@ -634,10 +634,38 @@ function resetLazy(){
       const cv = cell.querySelector("canvas");
       if(p && cv) queueDraw(cv, p);
     }
-  }, { root: $("grid"), rootMargin: "600px 0px" });   // un po' di anticipo sullo scorrimento
+    /* 2000px invece di 600: alla velocita' con cui si scorre col dito, 600px sono meno
+       di quattro righe e la griglia arriva sempre dopo il pollice. Le miniature pesano
+       ~25 KB, quindi anticipare costa poco e toglie il nero. */
+  }, { root: $("grid"), rootMargin: "2000px 0px" });
 }
 function observeCell(cell){ if(lazyObs) lazyObs.observe(cell); }
-function queueDraw(cv, p){ drawQueue.push([cv, p]); pumpDraw(); }
+function queueDraw(cv, p){
+  /* Se la miniatura e' GIA' decodificata in memoria non deve rifare la fila dietro ai
+     download: si disegna subito. Prima, dopo ogni ridisegno della griglia, anche le foto
+     gia' scaricate ripartivano nere finche' non arrivava il loro turno. */
+  if(p && p.url && thumbBmpCache.has(p.url)){ disegnaSubito(cv, p, thumbBmpCache.get(p.url)); return; }
+  drawQueue.push([cv, p]); pumpDraw();
+}
+function disegnaSubito(cv, p, bmp){
+  try{
+    if(!cv.isConnected || cv.dataset.code !== p.code) return;
+    if(bmp.width > bmp.height*1.15){
+      p.wide = true;
+      const cell=cv.closest(".cell"); if(cell && !cell.classList.contains("wide")) cell.classList.add("wide");
+    }
+    const rect=cv.getBoundingClientRect();
+    if(rect.width<2 || rect.height<2){ drawQueue.push([cv,p]); pumpDraw(); return; }
+    const dpr=Math.min(devicePixelRatio||1, 2);
+    cv.width=Math.round(rect.width*dpr); cv.height=Math.round(rect.height*dpr);
+    const ctx=cv.getContext("2d");
+    ctx.fillStyle="#1a1a1a"; ctx.fillRect(0,0,cv.width,cv.height);
+    const k=Math.min(cv.width/bmp.width, cv.height/bmp.height);
+    const w=bmp.width*k, h=bmp.height*k;
+    ctx.drawImage(bmp,(cv.width-w)/2,(cv.height-h)/2,w,h);
+    cv.dataset.drawn="1";
+  }catch(_){ drawQueue.push([cv,p]); pumpDraw(); }
+}
 function pumpDraw(){
   while(drawActive < DRAW_PARALLEL && drawQueue.length){
     const [cv, p] = drawQueue.shift();
@@ -688,7 +716,7 @@ async function drawThumb(cv, p){
       try{ bmp = await createImageBitmap(blob, {resizeWidth:BMP_W, resizeQuality:"medium"}); }
       catch(_){ bmp = await createImageBitmap(blob); }
       thumbBmpCache.set(p.url, bmp);
-      if(thumbBmpCache.size>150){
+      if(thumbBmpCache.size>400){
         const k = thumbBmpCache.keys().next().value;
         const vecchia = thumbBmpCache.get(k);
         thumbBmpCache.delete(k);
@@ -708,7 +736,7 @@ async function drawThumb(cv, p){
     cv.width=Math.round(rect.width*dpr);
     cv.height=Math.round(rect.height*dpr);
     const ctx=cv.getContext("2d");
-    ctx.fillStyle="#000"; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.fillStyle="#1a1a1a"; ctx.fillRect(0,0,cv.width,cv.height);
     const k=Math.min(cv.width/bmp.width, cv.height/bmp.height);
     const w=bmp.width*k, h=bmp.height*k;
     ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
@@ -1119,23 +1147,60 @@ function sizeCanvas(){
   const c=V.canvas, r=c.getBoundingClientRect();
   c.width=r.width*devicePixelRatio; c.height=r.height*devicePixelRatio;
 }
+/* Anteprime grandi tenute in memoria: quelle gia' viste e quelle che stanno per servire. */
+const bigCache = new Map();          // url -> Image decodificata
+function ricordaBig(url, im){
+  bigCache.set(url, im);
+  if(bigCache.size>14){ bigCache.delete(bigCache.keys().next().value); }
+}
+function caricaBig(url){
+  if(!url) return Promise.resolve(null);
+  const gia = bigCache.get(url);
+  if(gia) return Promise.resolve(gia);
+  return new Promise(res=>{
+    const im=new Image(); im.crossOrigin="anonymous"; im.src=url;
+    im.decode().then(()=>{ ricordaBig(url, im); res(im); }).catch(()=>res(null));
+  });
+}
+/* Precarica in silenzio le due foto avanti e una indietro: scorrendo col dito la
+   successiva e' gia' pronta invece di comparire nera per qualche secondo. */
+function precaricaVicine(){
+  [1,2,-1].forEach(d=>{
+    const q = V.list[V.idx+d];
+    if(q) caricaBig(q.bigUrl || q.url);
+  });
+}
+
 async function showCurrent(){
   const p=V.list[V.idx]; if(!p) return;
   $("vCode").textContent=p.code;
   $("vFav").classList.toggle("on",p.fav); $("vFav").textContent=p.fav?'♥':'♡';
   V.scale=1; V.tx=0; V.ty=0;
-  V.img=null; draw();
-  try{
-    const im=new Image(); im.crossOrigin="anonymous"; im.src=p.bigUrl || p.url;
-    await im.decode(); V.img=im; draw();
-  }catch(_){}
+  const url = p.bigUrl || p.url;
+
+  /* 1) se l'anteprima grande e' gia' in memoria si mostra all'istante */
+  const pronta = bigCache.get(url);
+  if(pronta){ V.img=pronta; draw(); precaricaVicine(); return; }
+
+  /* 2) altrimenti si mostra SUBITO la miniatura gia' decodificata, ingrandita.
+     Per un attimo e' meno nitida, ma il cliente vede la sua foto invece del nero:
+     un vuoto nero davanti al cliente sembra un guasto, una foto morbida no. */
+  V.img = (p.url && thumbBmpCache.get(p.url)) || null;
+  draw();
+
+  /* 3) e appena arriva la versione grande si sostituisce, se siamo ancora su questa foto */
+  const atteso = p.code;
+  const im = await caricaBig(url);
+  if(im && V.list[V.idx] && V.list[V.idx].code === atteso){ V.img=im; draw(); }
+  precaricaVicine();
 }
 function draw(){
   const c=V.canvas, ctx=V.ctx; if(!ctx) return;
   ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,c.width,c.height);
   ctx.fillStyle="#000"; ctx.fillRect(0,0,c.width,c.height);
   if(!V.img) return;
-  const cw=c.width, ch=c.height, iw=V.img.naturalWidth, ih=V.img.naturalHeight;
+  const cw=c.width, ch=c.height;
+  const iw=V.img.naturalWidth || V.img.width, ih=V.img.naturalHeight || V.img.height;
   const base=Math.min(cw/iw, ch/ih);
   const k=base*V.scale;
   const w=iw*k, h=ih*k;
