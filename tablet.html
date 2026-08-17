@@ -134,6 +134,7 @@
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
     <button class="favtoggle" id="btnSend"><span>✈</span><span>Invia</span></button>
+    <button class="favtoggle" id="btnPrint"><span>🖨</span><span>Manda in stampa</span></button>
     <button class="favtoggle" id="btnFavClear"><span>✕</span><span>Pulisci preferiti</span></button>
   </header>
 
@@ -434,7 +435,6 @@ function render(){
   const ls=letters(); const nav=$("tabs"); nav.hidden=ls.length===0;
   if(ls.length && (!S.letter || !ls.includes(S.letter))){ S.letter = ls[0]; S.gruppo = null; }
   const scope = S.photos.filter(p=>p.letter===S.letter);
-  const favN=scope.filter(p=>p.fav).length;   // preferiti del rullo attivo
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
@@ -445,8 +445,9 @@ function render(){
     render(); $("grid").scrollTop=0;
   });
 
-  // conteggio preferiti (del rullo attivo)
-  $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
+  // conteggio preferiti (del rullo attivo) — lo scrive aggiornaSpiaBadge, che ci aggiunge
+  // anche lo stato "pronte X/Y": scriverlo qui a mano cancellava la spia a ogni ridisegno
+  aggiornaSpiaBadge();
   $("favOnly").classList.toggle("on", S.favOnly);
   aggiornaIndicatoreAnteprime();
 
@@ -1111,6 +1112,28 @@ async function inviaConFilemail(list, ctx){
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
 $("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
+
+/* Manda in stampa TUTTI i preferiti del rullo attivo: finiscono nella lista "Da stampare"
+   del PC, dove il venditore li ritrova al rientro in postazione. Non tocca gli originali
+   ne' i preferiti: e' solo un segnale. */
+$("btnPrint").onclick = async ()=>{
+  const ps = activeFavs();
+  if(!ps.length){ toast("Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const b=$("btnPrint"); b.disabled=true; b.classList.add("busy");
+  let ok=0, ko=[];
+  for(const p of ps){
+    try{
+      const {error} = await sb.from("foto").update({da_stampare:true}).eq("id",p.id);
+      if(error) throw error;
+      ok++;
+    }catch(_){ ko.push(p.code); }
+  }
+  b.disabled=false; b.classList.remove("busy");
+  if(ok) logActivity(ps.filter(p=>!ko.includes(p.code)),"in stampa");
+  toast(ko.length ? `${ok} mandate in stampa, ${ko.length} non riuscite (${ko.join(", ")})`
+                  : `${ok} foto mandate in stampa`);
+};
 
 // tasti nel visore: agiscono sulla FOTO aperta
 $("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logActivity([p],"condivise"); } };
