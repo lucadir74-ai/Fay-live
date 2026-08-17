@@ -1883,7 +1883,18 @@ async function serviRichieste(){
     if(nonServite && state.archive && Date.now()-ultimoRelink > 60000) ricollegaArchivio(true);
   }catch(err){ console.warn("serviRichieste", err); }
 }
-setInterval(serviRichieste, 5000);
+/* Ogni 2 secondi, non 5: quando un tablet chiede un originale il cliente è già davanti
+   al venditore, e cinque secondi persi prima ancora di iniziare a caricare pesano. */
+setInterval(serviRichieste, 2000);
+/* Il controllo a intervalli viene rallentato da Chrome quando la scheda non è in primo
+   piano (l'operatore passa su Gmail, su Esplora file…): lì gli intervalli scendono a uno
+   al minuto e le richieste dei tablet restano appese. Questo timer vive in un thread
+   separato, che il rallentamento non tocca. */
+try{
+  const codice = "setInterval(()=>postMessage(0), 2000)";
+  const w = new Worker(URL.createObjectURL(new Blob([codice], {type:"text/javascript"})));
+  w.onmessage = ()=> serviRichieste();
+}catch(err){ console.warn("worker richieste non disponibile", err); }
 
 /* ---------- originali on-demand (usato per le foto vecchie, fuori dalla finestra cloud) ----------
    Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.

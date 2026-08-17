@@ -723,18 +723,54 @@ async function toggleFav(p){
   }
   // aggiorna il contatore preferiti in alto
   const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
-  const favN=scope.filter(x=>x.fav).length;
-  $("favCount").textContent = favN? `♥ ${favN} preferiti${S.letter? " ("+S.letter+")":""}` : "";
+  aggiornaSpiaBadge();
   // se sto guardando solo i preferiti e ne tolgo uno, aggiorno la vista
   if(S.favOnly && !p.fav){ lastGrid=""; render(); }
   else lastGrid="";   // la cella è già aggiornata a mano, ma la firma non deve restare vecchia
   if(sb){
     try{
-      const {error} = await sb.from("foto").update({preferito:p.fav}).eq("id",p.id);
+      /* PREFETCH: mettendo il cuore chiedo GIA' ORA l'originale a PC1, nella stessa
+         scrittura (nessuna richiesta di rete in piu'). Cosi' il caricamento avviene
+         mentre il cliente continua a sfogliare, invece che davanti a lui alla pressione
+         di Invia. Stessa banda di prima: si chiedono solo le foto scelte, non tutte. */
+      const campi = {preferito:p.fav};
+      if(p.fav && !p.origPath) campi.richiesta_originale = true;
+      const {error} = await sb.from("foto").update(campi).eq("id",p.id);
       if(error) throw error;
       favLocali.delete(p.id);        // il cloud è allineato: basta lui
+      if(campi.richiesta_originale) avviaSpiaOriginali();
     }catch(_){ toast("Preferito salvato qui, lo sincronizzo appena torna la linea"); }
   }
+}
+
+/* Spia leggera: finche' ci sono preferiti senza originale pronto, ogni 8 secondi
+   controllo se PC1 li ha caricati e me lo segno. Una sola query, pochi byte.
+   Quando sono tutti pronti si spegne da sola. */
+let spiaOrig = null;
+function avviaSpiaOriginali(){
+  if(spiaOrig || !sb) return;
+  spiaOrig = setInterval(async ()=>{
+    const attesa = S.photos.filter(p=>p.fav && !p.origPath);
+    if(!attesa.length){ clearInterval(spiaOrig); spiaOrig=null; aggiornaSpiaBadge(); return; }
+    try{
+      const {data} = await sb.from("foto").select("id,originale_url").in("id", attesa.map(p=>p.id));
+      (data||[]).forEach(row=>{
+        if(row.originale_url){ const p=S.byId.get(row.id); if(p) p.origPath=row.originale_url; }
+      });
+    }catch(_){}
+    aggiornaSpiaBadge();
+  }, 8000);
+}
+/* Indicatore sempre visibile accanto al contatore preferiti: il venditore sa PRIMA di
+   alzarsi se le foto scelte sono pronte da inviare, invece di scoprirlo al tavolo. */
+function aggiornaSpiaBadge(){
+  const el = $("favCount"); if(!el) return;
+  const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
+  const favs = scope.filter(x=>x.fav);
+  if(!favs.length){ el.textContent=""; return; }
+  const pronte = favs.filter(p=>p.origPath).length;
+  const base = `♥ ${favs.length} preferiti${S.letter? " ("+S.letter+")":""}`;
+  el.textContent = pronte>=favs.length ? base+" · pronte ✓" : base+` · pronte ${pronte}/${favs.length}`;
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
 
@@ -783,9 +819,14 @@ async function ensureOriginals(list){
   // segna la richiesta sul cloud → PC1 la vede e carica
   for(const p of missing){ try{ await sb.from("foto").update({richiesta_originale:true}).eq("id",p.id); }catch(_){} }
   toast("Preparo gli originali…");
-  // aspetta che compaia originale_url (max ~30s), controllando spesso
+  /* La scadenza NON puo' essere fissa: 30 secondi bastavano per 4 foto e facevano
+     fallire un invio da 5 che stava solo andando piano. Ogni originale e' ~2 MB e su
+     hotspot viaggia a poche centinaia di KB/s, quindi il tempo cresce col numero di
+     foto. Qui si concede il tempo che serve davvero, con un tetto di 5 minuti. */
   const ids = missing.map(p=>p.id);
-  const deadline = Date.now()+30000;
+  const attesaMs = Math.min(300000, Math.max(45000, 15000 + missing.length*15000));
+  let deadline = Date.now()+attesaMs;
+  let ultimoProgresso = Date.now(), prontePrima = 0;
   while(Date.now()<deadline){
     const {data} = await sb.from("foto").select("id,originale_url").in("id",ids);
     (data||[]).forEach(row=>{
@@ -793,7 +834,13 @@ async function ensureOriginals(list){
     });
     const restanti = missing.filter(p=>!p.origPath).length;
     if(!restanti) break;
-    if(missing.length>1) toast(`Preparo gli originali… ${missing.length-restanti}/${missing.length}`);
+    const pronte = missing.length-restanti;
+    if(missing.length>1) toast(`Preparo gli originali… ${pronte}/${missing.length}`);
+    /* Finche' PC1 fa progressi non lo si interrompe: la scadenza si sposta in avanti.
+       Ci si arrende solo se per 40 secondi di fila non arriva piu' niente — quello si'
+       che significa che dall'altra parte non sta caricando nessuno. */
+    if(pronte > prontePrima){ prontePrima = pronte; ultimoProgresso = Date.now(); deadline = Date.now()+attesaMs; }
+    else if(Date.now()-ultimoProgresso > 40000){ break; }
     await new Promise(r=>setTimeout(r,500));
   }
 }
