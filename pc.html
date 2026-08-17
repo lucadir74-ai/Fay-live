@@ -1705,7 +1705,8 @@ const origQueue = [];        // corsia URGENTE: foto vendute, in stampa o richie
 const origBg    = [];        // corsia SOTTOFONDO: tutte le foto importate (le più recenti per prime)
 const origSet = new Set();
 let origActive = 0, origBgActive = 0;
-const ORIG_PARALLEL = 2;     // urgenti
+let origUrgActive = 0;   // urgenti in corso (richieste dei tablet): corsia riservata
+const ORIG_PARALLEL = 3;     // urgenti: posti riservati, non condivisi col sottofondo
 const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle urgenti
 
 // interruttore: caricamento automatico degli originali (soluzione A). Acceso di serie.
@@ -1765,21 +1766,26 @@ function queueOriginalUpload(p, urgent=true){
     return;
   }
   origSet.add(p.code);
+  if(urgent) p._urgente = true;      // serve al ritentativo: deve tornare fra le urgenti
   (urgent ? origQueue : origBg).push(p);
   pumpOrigQueue();
 }
 function pumpOrigQueue(){
-  // 1) prima le urgenti, sempre
-  while(origActive < ORIG_PARALLEL && origQueue.length){
+  /* 1) le urgenti hanno posti RISERVATI. Prima condividevano i due posti col sottofondo:
+     se quando arrivava la richiesta di un tablet c'erano gia' due originali in caricamento
+     di sottofondo, l'urgente restava in fila dietro, e ogni caricamento puo' occupare il
+     suo posto fino a 60 secondi prima di scadere. Risultato: il cliente aspettava che
+     finissero foto che a nessuno servivano in quel momento. */
+  while(origUrgActive < ORIG_PARALLEL && origQueue.length){
     const p = origQueue.shift();
-    origActive++;
-    uploadOneOriginal(p).finally(()=>{ origActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
+    origActive++; origUrgActive++;
+    uploadOneOriginal(p).finally(()=>{ origActive--; origUrgActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
   }
   // 2) poi il sottofondo, MA solo quando miniature e anteprime grandi hanno finito: sull'hotspot
   //    due originali da 2 MB affamano le immagini piccole, e il tablet resta indietro.
-  while(autoOrigOn() && !origQueue.length && !thumbQueue.length && !thumbActive &&
+  while(autoOrigOn() && !origQueue.length && !origUrgActive && !thumbQueue.length && !thumbActive &&
         !bigQueue.length && !bigActive && origBg.length &&
-        origBgActive < ORIG_BG_PARALLEL && origActive < ORIG_PARALLEL){
+        origBgActive < ORIG_BG_PARALLEL){
     const p = origBg.pop();
     origActive++; origBgActive++;
     uploadOneOriginal(p).finally(()=>{ origActive--; origBgActive--; origSet.delete(p.code); updateOrigCount(); pumpOrigQueue(); });
@@ -1803,28 +1809,46 @@ async function uploadOneOriginal(p){
     if(!f) return;
     const buf = await f.arrayBuffer();
     const blob = new Blob([buf], {type:f.type||"image/jpeg"});
-    const limite = Math.max(45000, Math.round(blob.size/1048576*30000));
+    /* Su hotspot un originale da 2 MB puo' richiedere oltre un minuto: la vecchia
+       scadenza (30 s per MB, minimo 45) lo tagliava a meta' e generava proprio gli
+       errori che poi non venivano ritentati. */
+    const limite = Math.min(240000, Math.max(90000, Math.round(blob.size/1048576*60000)));
     const up = await conScadenzaUpload(
       sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true}),
       limite, p.code);
     registraVelocita(blob.size, Date.now()-t0);
     if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
     p.origUploaded = true;
+    origFalliti.delete(p.code);
     if(p.dbId) await sb.from("foto").update({originale_url: origPath(p), richiesta_originale:false}).eq("id",p.dbId);
+    else console.warn("originale caricato ma senza riga sul database:", p.code);
     cloud.online=true;
   }catch(err){
     console.warn("upload originale", p.code, err);
     // nuovo tentativo più tardi, senza occupare la coda a vuoto
     p._origTries = (p._origTries||0) + 1;
+    /* DIFETTO CORRETTO: prima il ritentativo finiva SEMPRE in origBg, la coda di
+       sottofondo, che gira solo se il caricamento automatico è acceso. Con l'automatico
+       spento (impostazione normale) un originale urgente che falliva non veniva più
+       ritentato da nessuno: restava lì fermo, il contatore tornava a zero come se avesse
+       finito, e il tablet aspettava all'infinito un file che non sarebbe mai arrivato.
+       Una richiesta urgente ora resta urgente anche dopo un errore. */
     if(p._origTries <= 8){
       setTimeout(()=>{
-        if(!origSet.has(p.code)){ origSet.add(p.code); origBg.push(p); pumpOrigQueue(); }
-      }, Math.min(30000, 3000 * p._origTries));
+        if(!origSet.has(p.code)){
+          origSet.add(p.code);
+          if(p._urgente) origQueue.push(p); else origBg.push(p);
+          pumpOrigQueue();
+        }
+      }, Math.min(15000, 2000 * p._origTries));
+    } else if(p._urgente){
+      origFalliti.add(p.code);          // esaurito: lo dico, invece di far aspettare a vuoto
     }
     cloud.online=false; setSync("offline");
   }
 }
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
+const origFalliti = new Set();   // originali urgenti arresi dopo 8 tentativi
 /* Velocità reale di caricamento, media degli ultimi 20 file. Serve a distinguere
    "la linea è lenta stasera" da "l'app si è impiantata": due diagnosi opposte. */
 const velCampioni = [];
@@ -1850,6 +1874,7 @@ function updateOrigCount(){
   if(bg)  txt += " · in sottofondo: "+bg + (!autoOrigOn() ? " (fermo)"
                  : ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : ""));
   if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
+  if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
   if(urg) setSync("syncing","Carico originali ("+urg+")");
   else if(bg) setSync(autoOrigOn()?"syncing":null, autoOrigOn()? "Sottofondo ("+bg+")" : "Sincronizzato");
