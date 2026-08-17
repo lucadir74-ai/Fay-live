@@ -886,7 +886,11 @@ async function ensureOriginals(list){
        che significa che dall'altra parte non sta caricando nessuno. */
     if(pronte > prontePrima){ prontePrima = pronte; ultimoProgresso = Date.now(); deadline = Date.now()+attesaMs; }
     else if(document.visibilityState !== "visible"){ ultimoProgresso = Date.now(); deadline = Date.now()+attesaMs; }
-    else if(Date.now()-ultimoProgresso > 40000){ break; }
+    /* PC1 concede fino a ~4 minuti per un singolo file su hotspot lento: se qui ci si
+       arrende dopo 40 secondi si molla mentre l'altro sta ancora caricando, e le foto
+       arrivano sul cloud subito DOPO l'invio parziale. I due tempi devono essere
+       coerenti, altrimenti il tablet spedisce meta' selezione senza motivo. */
+    else if(Date.now()-ultimoProgresso > 180000){ break; }
     await new Promise(r=>setTimeout(r,500));
   }
   attesaInCorso = false; rilasciaSchermo();
@@ -996,6 +1000,20 @@ async function inviaConFilemail(list, ctx){
   toast("Preparo gli originali…");
   await ensureOriginals(list);
 
+  /* Controllo finale: tra la fine dell'attesa e l'invio possono essere arrivati altri
+     originali. Meglio una query in piu' che spedire al cliente meta' delle sue foto. */
+  try{
+    const senza = list.filter(p=>!haOriginale(p));
+    if(senza.length && sb){
+      const {data} = await sb.from("foto").select("id,originale_url").in("id", senza.map(p=>p.id));
+      (data||[]).forEach(row=>{
+        if(!row.originale_url) return;
+        const v = S.byId.get(row.id); if(v) v.origPath = row.originale_url;
+        const q = list.find(x=>x.id===row.id); if(q) q.origPath = row.originale_url;
+      });
+    }
+  }catch(_){}
+
   const files=[], mancanti=[];
   for(const pRaw of list){
     const p = vivo(pRaw);
@@ -1010,7 +1028,13 @@ async function inviaConFilemail(list, ctx){
     mostraEsito("Gli originali di queste foto non sono ancora sul cloud.\nAspetta che PC1 finisca di caricarli e riprova.","Invio non riuscito");
     return;
   }
-  if(mancanti.length) toast(`${mancanti.length} foto non pronte, invio le altre (${mancanti.join(", ")})`);
+  /* Un invio parziale non si fa di nascosto: il cliente riceverebbe meno foto di quelle
+     scelte senza che nessuno se ne accorga. Si decide sul momento. */
+  if(mancanti.length){
+    const ok = confirm(`${mancanti.length} foto su ${list.length} non sono ancora pronte:\n${mancanti.join(", ")}\n\n` +
+                       `OK = invio subito le ${files.length} pronte\nAnnulla = aspetto e riprovo fra poco`);
+    if(!ok){ toast("Invio rimandato: riprova fra qualche secondo"); return; }
+  }
 
   const b=$("btnSend"); b.disabled=true;
   attesaInCorso = true; await tieniSchermoAcceso();
