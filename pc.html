@@ -1642,13 +1642,23 @@ async function syncPhotoUp(p){
 const bigQueue = [];
 let bigActive = 0;
 const BIG_PARALLEL = 2;
+let bigDaQuando = 0;      // da quando la corsia delle grandi è in attesa
 function queueBigPreview(p){
   if(!sb || !cloud.servizio || p.remote || p.anteprimaUrl || !p.preview) return;
   if(p._inBig) return;
   p._inBig = true; bigQueue.push(p); pumpBigQueue();
 }
 function pumpBigQueue(){
-  while(bigActive < BIG_PARALLEL && bigQueue.length && !thumbQueue.length && !thumbActive){
+  /* Prima le grandi partivano solo a coda miniature COMPLETAMENTE vuota: importando per
+     tutta la serata quel momento non arrivava quasi mai e le anteprime grandi restavano
+     ferme all'infinito. Sul PC che le ha importate le foto si vedevano comunque bene
+     (usa la copia locale), quindi il problema era invisibile da lì. Ora basta che le
+     miniature siano poche, e dopo un minuto di attesa passa comunque una grande. */
+  const miniaturePoche = (thumbQueue.length + thumbActive) <= 8;
+  const attesaTroppa = bigDaQuando && (Date.now() - bigDaQuando > 60000);
+  if(bigQueue.length && !bigDaQuando) bigDaQuando = Date.now();
+  if(!bigQueue.length) bigDaQuando = 0;
+  while(bigActive < BIG_PARALLEL && bigQueue.length && (miniaturePoche || attesaTroppa)){
     const p = bigQueue.shift();
     bigActive++;
     (async ()=>{
@@ -3826,9 +3836,11 @@ function updateThumbCloud(){
   // conta sempre su TUTTA la giornata, e conta le MINIATURE: sono quelle che fanno
   // comparire le foto su tablet e altre postazioni
   const tot=state.photos.length;
+  const grandiMancanti = state.photos.filter(p=>!p.anteprimaUrl).length;
   const onCloud=state.photos.filter(p=>p.miniUrl || p.anteprimaUrl).length;
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
-  el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓");
+  el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓") +
+                   (grandiMancanti ? `  ·  grandi: ${tot-grandiMancanti}/${tot}` : "");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
   el.title = spiegaAnteprimeMancanti(onCloud, tot);
 }
