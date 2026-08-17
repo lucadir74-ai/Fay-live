@@ -216,6 +216,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnStats">Report giornata</button>
       <button id="btnReport">Report attività</button>
+      <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnArchive">Archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
@@ -1820,6 +1821,8 @@ async function uploadOneOriginal(p){
     if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
     p.origUploaded = true;
     origFalliti.delete(p.code);
+    logEvento("originale caricato", {codici:p.code, rullo:p.letter,
+      dettaglio: Math.round((Date.now()-t0)/1000)+" s, "+Math.round(blob.size/1024)+" KB"});
     if(p.dbId) await sb.from("foto").update({originale_url: origPath(p), richiesta_originale:false}).eq("id",p.dbId);
     else console.warn("originale caricato ma senza riga sul database:", p.code);
     cloud.online=true;
@@ -1841,12 +1844,46 @@ async function uploadOneOriginal(p){
           pumpOrigQueue();
         }
       }, Math.min(15000, 2000 * p._origTries));
+      logEvento("caricamento fallito", {codici:p.code, rullo:p.letter, esito:"errore",
+        dettaglio:"tentativo "+p._origTries+": "+((err&&err.message)||err)});
     } else if(p._urgente){
       origFalliti.add(p.code);          // esaurito: lo dico, invece di far aspettare a vuoto
+      logEvento("caricamento abbandonato", {codici:p.code, rullo:p.letter, esito:"errore",
+        dettaglio:"arreso dopo "+p._origTries+" tentativi"});
     }
     cloud.online=false; setSync("offline");
   }
 }
+/* =====================================================================
+   REGISTRO TECNICO — traccia la catena richiesta -> caricamento -> invio.
+   Scrive sulla stessa tabella "attivita" gia' usata dal report venditori,
+   con azioni che iniziano per "~" per distinguerle. Serve a leggere un
+   guasto invece di ricostruirlo per ipotesi: senza orari e esiti, un invio
+   parziale e' indistinguibile da un caricamento fallito.
+   Registra e basta: non tocca in alcun modo il flusso di lavoro.
+   ===================================================================== */
+function nomePostazione(){
+  let n = localStorage.getItem("faylive_postazione");
+  if(!n){ n = "PC-" + Math.random().toString(36).slice(2,5).toUpperCase(); localStorage.setItem("faylive_postazione", n); }
+  return n;
+}
+function logEvento(azione, o){
+  o = o || {};
+  try{
+    if(!sb || !cloud.servizio) return;
+    sb.from("attivita").insert({
+      servizio_id: cloud.servizio.id,
+      rullo_lettera: o.rullo || "",
+      codici: o.codici || "",
+      azione: "~" + azione,
+      quante: o.quante || 1,
+      postazione: nomePostazione(),
+      esito: o.esito || "ok",
+      dettaglio: o.dettaglio || null
+    }).then(()=>{}, ()=>{});      // il registro non deve mai disturbare il lavoro
+  }catch(_){}
+}
+
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
 const origFalliti = new Set();   // originali urgenti arresi dopo 8 tentativi
 /* Velocità reale di caricamento, media degli ultimi 20 file. Serve a distinguere
@@ -1898,7 +1935,10 @@ async function serviRichieste(){
       const p = state.byCode.get(f.codice);
       if(!p) { nonServite++; continue; }
       if(p.origUploaded || f.originale_url) continue;
-      if(p.file || p.arch) queueOriginalUpload(p, true);   // ce l'ho: lo carico subito
+      if(p.file || p.arch){
+        if(!origSet.has(p.code)) logEvento("richiesta ricevuta", {codici:f.codice, rullo:p.letter});
+        queueOriginalUpload(p, true);   // ce l'ho: lo carico subito
+      }
       else nonServite++;                                   // non è roba mia, la servirà un altro PC
     }
     richiesteAperte = nonServite;
@@ -4168,8 +4208,9 @@ $("btnReport").onclick = async ()=>{
   $("reportDlg").showModal();
   if(!sb || !cloud.servizio){ box.innerHTML='<p style="color:var(--muted)">Nessun dato.</p>'; return; }
   try{
-    const {data} = await sb.from("attivita").select("*").eq("servizio_id",cloud.servizio.id).order("creato_il",{ascending:false});
-    if(!data || !data.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna attività registrata per questa giornata.</p>'; return; }
+    const {data:grezzi} = await sb.from("attivita").select("*").eq("servizio_id",cloud.servizio.id).order("creato_il",{ascending:false});
+    const data = (grezzi||[]).filter(a=>!(a.azione||"").startsWith("~"));   // le righe tecniche stanno nel Registro
+    if(!data.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna attività registrata per questa giornata.</p>'; return; }
     box.innerHTML = data.map(a=>{
       const t=new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
       const col = a.azione==="condivise"?"var(--accent)":a.azione==="in stampa"?"var(--danger)":"var(--muted)";
@@ -4183,6 +4224,54 @@ $("btnReport").onclick = async ()=>{
   }catch(err){ box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il report.</p>'; }
 };
 $("reportClose").onclick=()=>$("reportDlg").close();
+
+/* Registro tecnico: riusa la stessa finestra, mostrando solo le righe "~" e in cima
+   le catene rimaste incomplete — richieste senza il caricamento corrispondente. */
+$("btnRegistro").onclick = async ()=>{
+  const box=$("reportList");
+  box.innerHTML='<p style="color:var(--muted)">Carico…</p>';
+  $("reportDlg").showModal();
+  if(!sb || !cloud.servizio){ box.innerHTML='<p style="color:var(--muted)">Nessun dato.</p>'; return; }
+  try{
+    const {data:grezzi} = await sb.from("attivita").select("*").eq("servizio_id",cloud.servizio.id)
+      .order("creato_il",{ascending:false}).limit(500);
+    const righe = (grezzi||[]).filter(a=>(a.azione||"").startsWith("~"));
+    if(!righe.length){ box.innerHTML='<p style="color:var(--muted)">Registro vuoto per questa giornata.</p>'; return; }
+
+    // catene incomplete: chiesto ma mai caricato
+    const chiesti = new Set(), caricati = new Set();
+    righe.forEach(a=>{
+      const az=(a.azione||"").slice(1);
+      (a.codici||"").split(",").map(s=>s.trim()).filter(Boolean).forEach(c=>{
+        if(az==="richiesta ricevuta"||az==="originale richiesto") chiesti.add(c);
+        if(az==="originale caricato") caricati.add(c);
+      });
+    });
+    const sospesi = [...chiesti].filter(c=>!caricati.has(c));
+    const errori = righe.filter(a=>a.esito==="errore").length;
+
+    const testa = `<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px">
+      <b>Riepilogo giornata</b><br>
+      <span style="color:var(--muted)">Eventi: ${righe.length} · errori: ${errori}</span><br>
+      ${sospesi.length
+        ? `<span style="color:var(--danger)">Chiesti ma mai caricati: ${sospesi.length}</span>
+           <div style="font-family:var(--mono);font-size:12px;color:var(--muted)">${sospesi.slice(0,30).join(", ")}${sospesi.length>30?"…":""}</div>`
+        : `<span style="color:var(--accent)">Nessuna catena incompleta ✓</span>`}
+    </div>`;
+
+    box.innerHTML = testa + righe.map(a=>{
+      const t=new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      const col = a.esito==="errore" ? "var(--danger)" : "var(--muted)";
+      const az = (a.azione||"").slice(1);
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--line);font-size:13px">
+        <span style="color:var(--muted)">${t}</span>
+        <b style="color:${col}"> ${az}</b>
+        <span style="color:var(--muted)"> · ${a.postazione||"?"}</span>
+        <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${(a.codici||"").replace(/[<>&]/g,"")}${a.dettaglio?" — "+String(a.dettaglio).replace(/[<>&]/g,""):""}</div>
+      </div>`;
+    }).join("");
+  }catch(err){ box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il registro.</p>'; }
+};
 
 /* =====================================================================
    DA INVIARE — il cliente inquadra il QR sul monitor e scrive la sua email.

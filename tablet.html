@@ -590,17 +590,28 @@ $("selPrint").onclick=async ()=>{
 };
 
 // registra un'attività sul cloud (per il report lato PC)
-async function logActivity(list, azione){
+function nomeTablet(){
+  let n = localStorage.getItem("faylive_postazione");
+  if(!n){ n = "Tablet-" + Math.random().toString(36).slice(2,5).toUpperCase(); localStorage.setItem("faylive_postazione", n); }
+  return n;
+}
+async function logActivity(list, azione, extra){
   if(!sb || !S.servizio || !list.length) return;
   try{
     await sb.from("attivita").insert({
       servizio_id: S.servizio.id,
       rullo_lettera: S.letter || list[0].letter || "",
       codici: list.map(p=>p.code).join(", "),
-      azione, quante: list.length
+      azione, quante: list.length,
+      postazione: nomeTablet(),
+      esito: (extra&&extra.esito) || "ok",
+      dettaglio: (extra&&extra.dettaglio) || null
     });
   }catch(_){}
 }
+/* Righe tecniche: stessa tabella, azione con "~" davanti, così restano fuori dal
+   report venditori e finiscono nel Registro tecnico del PC. */
+function logTecnico(list, azione, extra){ return logActivity(list, "~"+azione, extra); }
 /* ---------- caricamento a scorrimento ----------
    Prima il tablet scaricava e decodificava TUTTE le anteprime della griglia in una volta:
    con 500 foto sono ~50 MB su hotspot e centinaia di immagini decodificate in memoria.
@@ -747,7 +758,7 @@ async function toggleFav(p){
       const {error} = await sb.from("foto").update(campi).eq("id",p.id);
       if(error) throw error;
       favLocali.delete(p.id);        // il cloud è allineato: basta lui
-      if(campi.richiesta_originale) avviaSpiaOriginali();
+      if(campi.richiesta_originale){ avviaSpiaOriginali(); logTecnico([p], "originale richiesto"); }
     }catch(_){ toast("Preferito salvato qui, lo sincronizzo appena torna la linea"); }
   }
 }
@@ -861,6 +872,7 @@ async function ensureOriginals(list){
   for(const p of missing){ try{ await sb.from("foto").update({richiesta_originale:true}).eq("id",p.id); }catch(_){} }
   toast("Preparo gli originali…");
   attesaInCorso = true; await tieniSchermoAcceso();
+  const t0Attesa = Date.now();
   /* La scadenza NON puo' essere fissa: 30 secondi bastavano per 4 foto e facevano
      fallire un invio da 5 che stava solo andando piano. Ogni originale e' ~2 MB e su
      hotspot viaggia a poche centinaia di KB/s, quindi il tempo cresce col numero di
@@ -894,6 +906,12 @@ async function ensureOriginals(list){
     await new Promise(r=>setTimeout(r,500));
   }
   attesaInCorso = false; rilasciaSchermo();
+  const restanti = missing.filter(p=>!haOriginale(p));
+  logTecnico(missing, "attesa originali", {
+    esito: restanti.length ? "errore" : "ok",
+    dettaglio: `${missing.length-restanti.length}/${missing.length} pronte in ${Math.round((Date.now()-t0Attesa)/1000)} s` +
+               (restanti.length ? " — mancano: "+restanti.map(p=>p.code).join(", ") : "")
+  });
 }
 
 // condividi una lista di foto tramite il menu Android (Gmail, FileMail, WhatsApp…)
@@ -1051,13 +1069,16 @@ async function inviaConFilemail(list, ctx){
     if(!r.ok || !out.ok){
       console.warn("filemail", r.status, testoGrezzo);
       const dettaglio = out.dettaglio || out.errore || (testoGrezzo||"").slice(0,300) || "nessuna risposta dal server";
+      logTecnico(list, "invio", {esito:"errore", dettaglio:`HTTP ${r.status}: ${String(dettaglio).slice(0,200)}`});
       mostraEsito(`Il server ha risposto ${r.status}.\n\n${dettaglio}`, "Invio non riuscito");
       return;
     }
     logActivity(list,"inviate");
+    logTecnico(list, "invio", {dettaglio:`${files.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
     mostraEsito(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl cliente riceve un link valido 7 giorni.`);
   }catch(err){
     console.warn("filemail", err);
+    logTecnico(list, "invio", {esito:"errore", dettaglio:"server irraggiungibile: "+((err&&err.message)||err)});
     mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
