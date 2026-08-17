@@ -527,6 +527,7 @@
 
 <dialog id="confirmImport">
   <h3 style="margin-bottom:10px">Conferma import</h3>
+  <div id="ciSede" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:19px;font-weight:700"></div>
   <p id="ciText" style="margin-bottom:14px"></p>
   <div class="field" id="ciLetterField" style="margin-bottom:12px">
     <label>Sigla del rullo (fotografo) — da 1 a 3 lettere, es. A, GT</label>
@@ -1151,6 +1152,12 @@ async function importaFiles(files){
   try{
 
   const suggested = detectLetter(files[0]);
+  /* Sede bene in vista: le foto di una serata finivano divise su due sedi perché la
+     postazione era partita da quella sbagliata, e in griglia non se ne vedeva traccia. */
+  const nomeSede = cloud.sede ? cloud.sede.nome : null;
+  $("ciSede").innerHTML = nomeSede
+    ? `Sede: <span style="color:var(--accent)">${nomeSede}</span>`
+    : `<span style="color:var(--danger)">Nessuna sede selezionata — import solo locale</span>`;
   $("ciText").textContent = `${files.length} foto trovate.`;
   $("ciLetter").value = suggested || "";
   $("ciDesc").value = suggested ? (state.letterDesc[suggested]||"") : "";
