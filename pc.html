@@ -3187,7 +3187,7 @@ async function svuotaPrefisso(bucket, prefisso){
    non esistono più (sedi cancellate, svuotamenti vecchi rimasti a metà). Le giornate ancora
    esistenti — anche di altre sedi — non si toccano, come non si toccano mascherine, loghi
    e impostazioni. */
-async function togliCartelleOrfane(){
+async function ripassoCloud(){
   let tolti = 0;
   const {data:servizi} = await sb.from("servizi").select("id");
   const vivi = new Set((servizi||[]).map(x=>String(x.id)));
@@ -3196,8 +3196,34 @@ async function togliCartelleOrfane(){
     for(const c of radice){
       if(c.id) continue;                                    // file sciolto alla radice, non una giornata
       const nome = String(c.name);
-      if(PREFISSI_PROTETTI.includes(nome) || vivi.has(nome)) continue;
-      tolti += await svuotaPrefisso(bucket, nome);
+      if(PREFISSI_PROTETTI.includes(nome)) continue;
+      if(!vivi.has(nome)){                                  // giornata sparita dal database: via tutto
+        tolti += await svuotaPrefisso(bucket, nome);
+        setSync("syncing",`Ripasso cloud… ${tolti} file`);
+        continue;
+      }
+      /* Giornata ancora esistente: si tolgono solo i file che non hanno più la loro riga.
+         È il caso delle giornate svuotate quando l'app cancellava appena 100 file per volta:
+         le righe sparivano, i file restavano, e il contenitore vuoto li teneva al riparo. */
+      const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", nome);
+      const rids = (rulli||[]).map(r=>r.id);
+      const codici = new Set();
+      if(rids.length){
+        const {data:foto} = await sb.from("foto").select("codice").in("rullo_id", rids);
+        (foto||[]).forEach(f=>codici.add(String(f.codice)));
+      }
+      const files = await listaTuttiIFile(bucket, nome);
+      const daTogliere = files.filter(f=>{
+        const base = String(f.name).replace(/_m\.jpg$/i,"").replace(/\.[a-z0-9]+$/i,"");
+        return !codici.has(base);
+      }).map(f=>nome+"/"+f.name);
+      for(let i=0;i<daTogliere.length;i+=500){
+        const lotto = daTogliere.slice(i,i+500);
+        try{
+          const {error} = await sb.storage.from(bucket).remove(lotto);
+          if(!error) tolti += lotto.length;
+        }catch(_){}
+      }
       setSync("syncing",`Ripasso cloud… ${tolti} file`);
     }
   }
@@ -3457,7 +3483,16 @@ $("btnClearAll").onclick = async ()=>{
       if(rids.length){ const {count}=await sb.from("foto").select("id",{count:"exact",head:true}).in("rullo_id",rids); nFoto=count||0; }
     }
   }catch(_){}
-  if(!nFoto && !nGiorni){ toast("Non c'è niente da svuotare in questa sede"); return; }
+  if(!nFoto && !nGiorni){
+    /* Sede già vuota: prima si usciva qui e il ripasso del cloud non partiva mai, così i file
+       rimasti dalle cancellazioni vecchie restavano sul cloud per sempre. */
+    if(!seiSicuro("In questa sede non c'è più niente da svuotare.\n\nFaccio comunque un ripasso del cloud, per togliere i file rimasti da cancellazioni precedenti?")) return;
+    setSync("syncing","Ripasso cloud…");
+    let n=0; try{ n = await ripassoCloud(); }catch(err){ setSync("offline"); toast("Errore nel ripasso: "+(err.message||err)); return; }
+    setSync(null,"Sincronizzato");
+    toast(n ? `Ripasso finito: ${n} file tolti dal cloud` : "Ripasso finito: sul cloud non c'era niente da togliere");
+    return;
+  }
   $("clearAllText").innerHTML =
     `Stai per cancellare <b>TUTTE le foto dal cloud</b> della sede <b>${s.nome}</b>:<br>`+
     `<b>${nGiorni}</b> giornate e <b>${nFoto}</b> foto, con anteprime e originali caricati.<br><br>`+
@@ -3490,7 +3525,7 @@ async function svuotaTutteLeGiornate(s){
     }
     // ripasso finale: cartelle di giornate che nel database non esistono più
     let orfani = 0;
-    try{ orfani = await togliCartelleOrfane(); }catch(_){}
+    try{ orfani = await ripassoCloud(); }catch(_){}
     // le giornate restano come contenitori vuoti; svuoto anche lo stato locale
     state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
     state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
