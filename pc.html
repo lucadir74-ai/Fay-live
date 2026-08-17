@@ -2243,48 +2243,24 @@ wrap.addEventListener("scroll", paintVisible, {passive:true});
 addEventListener("resize", layoutGrid);
 
 /* ---------- ricerca ---------- */
-/* Due modi nella stessa casella:
-   - UN codice  → apre subito la foto (come prima);
-   - PIÙ codici → mentre scrivi non apre niente e conta quelli riconosciuti; con invio
-     li seleziona tutti e apre la vista insieme.
-   Prima i codici multipli venivano appiccicati in un'unica stringa: dal terzo in poi
-   non veniva riconosciuto più nulla e la foto aperta si chiudeva, sembrando un reset. */
+/* REGOLA UNICA: mentre scrivi non succede NIENTE. Agisce solo INVIO.
+   - un codice   → invio apre la foto
+   - più codici  → invio le seleziona tutte e apre la vista insieme
+   Prima la casella reagiva a ogni tasto: a metà di un codice lungo apriva la foto
+   sbagliata e al codice successivo la richiudeva, che è l'effetto "si resetta". */
 $("searchBox").oninput = e=>{
   const raw = e.target.value.trim().toUpperCase();
   const box = e.target, hint = $("searchHint");
-  if(!raw){
-    box.classList.remove("multi"); hint.hidden = true;
-    if($("lightbox").classList.contains("open")) closeLightbox();
-    return;
-  }
+  if(!raw){ box.classList.remove("multi"); hint.hidden = true; return; }
   const q = parseCodes(raw);
-  if(q.tokens.length > 1){
-    // modalità elenco: la griglia resta visibile, niente foto a tutto schermo
-    box.classList.add("multi");
-    if($("lightbox").classList.contains("open")) closeLightbox();
-    hint.hidden = false;
-    if(q.found.length){
-      const parti = [q.found.length===1 ? "1 codice" : q.found.length+" codici"];
-      if(q.missing.length) parti.push(q.missing.length+" non trovati");
-      hint.textContent = parti.join(" · ") + " — invio per vederli insieme";
-    } else hint.textContent = "nessun codice riconosciuto";
-    hint.title = q.missing.length ? "Non trovati: "+q.missing.join(", ") : "";
-    return;
-  }
-  box.classList.remove("multi"); hint.hidden = true;
-  const ex = parseQuery(raw);
-  if(ex){
-    const code = fmtCode(ex.letter, ex.num);
-    const p = state.byCode.get(code) || state.photos.find(x=>x.letter===ex.letter && x.num===ex.num);
-    if(p){
-      // apri la foto anche se è filtrata da una scheda lettera diversa: passo alla lista completa
-      const idx = state.photos.indexOf(p);
-      openLightboxList(state.photos, idx);
-      monitorFollow();          // se il monitor mostra una foto, passa a questa
-    } else if($("lightbox").classList.contains("open")){ closeLightbox(); }
-    return;
-  }
-  if($("lightbox").classList.contains("open")) closeLightbox();
+  box.classList.toggle("multi", q.tokens.length > 1);
+  hint.hidden = false;
+  hint.title = q.missing.length ? "Non trovati: "+q.missing.join(", ") : "";
+  if(!q.found.length){ hint.textContent = "nessun codice riconosciuto"; return; }
+  const parti = [q.found.length===1 ? "1 codice" : q.found.length+" codici"];
+  if(q.missing.length) parti.push(q.missing.length+" non trovati");
+  hint.textContent = parti.join(" · ") + (q.tokens.length > 1
+    ? " — invio per selezionarle" : " — invio per aprire");
 };
 function resetSearch(){
   $("searchBox").value="";
@@ -2295,18 +2271,35 @@ function resetSearch(){
 }
 $("searchBox").addEventListener("keydown", e=>{
   if(e.key==="Enter"){
+    e.preventDefault();
     const q = parseCodes(e.target.value);
-    // elenco di codici: li seleziono tutti e li apro affiancati
-    if(q.tokens.length > 1 && q.found.length){
-      e.preventDefault();
-      q.found.forEach(p=>{ if(!state.selection.has(p.id)){ state.selection.add(p.id); queueOriginalUpload(p); } });
-      updateSelBar(); paintVisible();
-      resetSearch();
-      openCompare();
-      if(q.missing.length) toast(`Selezionate ${q.found.length} foto — non trovate: ${q.missing.join(", ")}`, 5000);
+    const aperta = $("lightbox").classList.contains("open");
+    // la casella ripete il codice della foto già aperta (ce lo scrivono le frecce):
+    // in quel caso invio vuol dire "chiudi", non "riapri la stessa"
+    const stessa = aperta && q.found.length===1 && lbList()[state.lightboxIdx] === q.found[0];
+
+    if(q.found.length && !stessa){
+      if(q.tokens.length > 1){
+        // ELENCO: seleziono tutte e le apro affiancate
+        q.found.forEach(p=>{ if(!state.selection.has(p.id)){ state.selection.add(p.id); queueOriginalUpload(p); } });
+        updateSelBar(); paintVisible();
+        resetSearch();
+        openCompare();
+        toast(q.missing.length
+          ? `Selezionate ${q.found.length} foto — non trovate: ${q.missing.join(", ")}`
+          : `Selezionate ${q.found.length} foto`, q.missing.length? 5000 : 2600);
+      } else {
+        // CODICE SINGOLO: apro la foto, anche se sta in un rullo diverso da quello attivo
+        const p = q.found[0];
+        openLightboxList(state.photos, state.photos.indexOf(p));
+        monitorFollow();          // se il monitor mostra una foto, passa a questa
+        $("searchHint").hidden = true;
+      }
       return;
     }
-    if($("lightbox").classList.contains("open")) closeLightbox();
+    if(!q.found.length && q.missing.length){ toast("Codice non trovato: "+q.missing.join(", ")); return; }
+    // niente da aprire (casella vuota, o è il codice già aperto): invio chiude e ripulisce
+    if(aperta) closeLightbox();
     resetSearch();
     return;
   }
@@ -2657,7 +2650,7 @@ async function doPrint(set){
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
   if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
   else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
-  const sb2=$("searchBox"); if(sb2){ sb2.value=""; state.filter=""; sb2.focus(); } // pronto per il codice dopo
+  if(typeof resetSearch==="function") resetSearch();   // casella e conteggio puliti per il cliente dopo
 }
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
