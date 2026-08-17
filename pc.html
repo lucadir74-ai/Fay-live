@@ -620,7 +620,9 @@ const state = {
 };
 
 /* ---------- utilità ---------- */
-function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
+/* Il secondo parametro serve alle conferme importanti (invio andato a buon fine): nel
+   locale, con musica e clienti al banco, 2,6 secondi sono troppo pochi per accorgersene. */
+function toast(msg, ms){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"), ms || 2600); }
 function pad3(n){ return String(n).padStart(3,"0"); }
 // "giorno di servizio": la giornata cambia alle 8:00, non a mezzanotte.
 // Un import all'1:30 di notte appartiene ancora alla data della sera prima.
@@ -2338,7 +2340,9 @@ async function inviaDiretto(set){
     }
     set.forEach(p=>{ p.exported=true; if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export"); });
     paintVisible();
-    alert(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl link resta valido 7 giorni.`);
+    /* Prima qui c'era un alert: bloccava la postazione finché non premevi OK.
+       La conferma resta ben visibile ma non ferma il lavoro. */
+    toast(`✔ Inviate ${out.inviate||files.length} foto a ${email} — link valido 7 giorni`, 6000);
     fineVendita(set);
   }catch(err){
     console.warn("filemail", err);
@@ -4639,7 +4643,13 @@ async function inviaConFilemail(row, btn){
     row.stato = "inviata";
     await loadMailRequests();
     renderMailList(); refreshMailBadge();
-    toast(`Inviate ${out.inviate} foto a ${row.email}` + (out.saltate? ` (${out.saltate} saltate)` : ""));
+    /* Invio riuscito: se non resta altro in coda la finestra si chiude da sola, così il
+       venditore torna subito alle foto. Se ci sono altre richieste in attesa resta aperta,
+       altrimenti dovrebbe riaprirla a mano per ognuna. */
+    const restano = mail.rows.filter(r=>r.stato!=="inviata").length;
+    if(!restano && $("mailDlg").open) $("mailDlg").close();
+    toast(`✔ Inviate ${out.inviate} foto a ${row.email}` + (out.saltate? ` (${out.saltate} saltate)` : "")
+      + (restano? ` — restano ${restano} richieste` : ""), 6000);
   }catch(err){
     console.warn("filemail", err);
     toast("Invio non riuscito: controlla la connessione");
