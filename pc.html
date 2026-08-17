@@ -219,7 +219,6 @@
       <hr>
       <button id="btnClearDay">Svuota giornata</button>
       <button id="btnClearAll" title="Svuota dal cloud tutte le giornate di questa sede, in un colpo solo">Svuota tutte le giornate</button>
-      <button id="btnGcStorage" title="Controlla tutto il cloud e toglie i file rimasti indietro dalle cancellazioni precedenti">Ripulisci storage residuo</button>
       <button id="btnDelSede" title="Cancella la sede selezionata">Cancella sede</button>
     </div>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
@@ -3220,58 +3219,27 @@ async function svuotaPrefisso(bucket, prefisso){
   return tolti;
 }
 
-/* Ripasso di sicurezza: gira tutto il cloud e toglie i file rimasti orfani, cioè le foto
-   di giornate ormai cancellate o senza più la loro riga nel database. Mascherine, loghi e
-   impostazioni non si toccano. */
-async function ripulisciStorageResiduo(){
-  if(!sb){ toast("Cloud non disponibile"); return; }
-  if(!seiSicuro("Controllo tutto il cloud e cancello i file rimasti indietro: foto di giornate cancellate o senza più la loro riga nel database.\n\nMascherine, loghi e impostazioni NON vengono toccati.\nGli originali sui PC in locale NON vengono toccati.\n\nProcedere?")) return;
-  setSync("syncing","Controllo lo storage…");
-  let tolti=0, cartelle=0;
-  try{
-    const {data:servizi} = await sb.from("servizi").select("id");
-    const vivi = new Set((servizi||[]).map(s=>String(s.id)));
-    for(const bucket of ["anteprime","originali"]){
-      const radice = await listaTuttiIFile(bucket, "");
-      for(const c of radice){
-        if(c.id) continue;                                  // file sciolto alla radice, non una giornata
-        const nome = String(c.name);
-        if(PREFISSI_PROTETTI.includes(nome)) continue;
-        cartelle++;
-        let codici = null;                                  // null = giornata sparita: via tutto
-        if(vivi.has(nome)){
-          codici = new Set();
-          const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", nome);
-          const rids = (rulli||[]).map(r=>r.id);
-          if(rids.length){
-            const {data:foto} = await sb.from("foto").select("codice").in("rullo_id", rids);
-            (foto||[]).forEach(f=>codici.add(String(f.codice)));
-          }
-        }
-        const files = await listaTuttiIFile(bucket, nome);
-        const daTogliere = files.filter(f=>{
-          if(!codici) return true;
-          const base = String(f.name).replace(/_m\.jpg$/i,"").replace(/\.[a-z0-9]+$/i,"");
-          return !codici.has(base);                         // nessuna riga per questo codice: è residuo
-        }).map(f=>nome+"/"+f.name);
-        for(let i=0;i<daTogliere.length;i+=500){
-          const lotto = daTogliere.slice(i,i+500);
-          try{
-            const {error} = await sb.storage.from(bucket).remove(lotto);
-            if(!error) tolti += lotto.length;
-          }catch(_){}
-        }
-        setSync("syncing",`Ripulisco… ${tolti} file`);
-      }
+/* Ripasso finale dello svuotamento: nessun tasto a parte, lo fa "Svuota tutte le giornate".
+   Toglie le cartelle rimaste orfane sul cloud, cioè le foto di giornate che nel database
+   non esistono più (sedi cancellate, svuotamenti vecchi rimasti a metà). Le giornate ancora
+   esistenti — anche di altre sedi — non si toccano, come non si toccano mascherine, loghi
+   e impostazioni. */
+async function togliCartelleOrfane(){
+  let tolti = 0;
+  const {data:servizi} = await sb.from("servizi").select("id");
+  const vivi = new Set((servizi||[]).map(x=>String(x.id)));
+  for(const bucket of ["anteprime","originali"]){
+    const radice = await listaTuttiIFile(bucket, "");
+    for(const c of radice){
+      if(c.id) continue;                                    // file sciolto alla radice, non una giornata
+      const nome = String(c.name);
+      if(PREFISSI_PROTETTI.includes(nome) || vivi.has(nome)) continue;
+      tolti += await svuotaPrefisso(bucket, nome);
+      setSync("syncing",`Ripasso cloud… ${tolti} file`);
     }
-    setSync(null,"Sincronizzato");
-    toast(tolti ? `Ripulito: ${tolti} file tolti dal cloud (${cartelle} giornate controllate)`
-                : `Storage a posto: niente da togliere (${cartelle} giornate controllate)`);
-  }catch(err){
-    setSync("offline"); toast("Errore ripulendo: "+(err.message||err)); console.warn("gcStorage",err);
   }
+  return tolti;
 }
-$("btnGcStorage").onclick = ripulisciStorageResiduo;
 
 async function deleteSede(s){
   setSync("syncing","Cancello la sede…");
@@ -3530,7 +3498,8 @@ $("btnClearAll").onclick = async ()=>{
   $("clearAllText").innerHTML =
     `Stai per cancellare <b>TUTTE le foto dal cloud</b> della sede <b>${s.nome}</b>:<br>`+
     `<b>${nGiorni}</b> giornate e <b>${nFoto}</b> foto, con anteprime e originali caricati.<br><br>`+
-    `La sede resta, le giornate vengono svuotate. Gli originali sui PC in locale <b>non</b> vengono toccati.<br>`+
+    `La sede resta, le giornate vengono svuotate. Alla fine viene fatto anche un ripasso del cloud, `+
+    `per togliere i file rimasti da cancellazioni vecchie. Gli originali sui PC in locale <b>non</b> vengono toccati.<br>`+
     `<b>L'azione non è reversibile.</b>`;
   const dlg=$("clearAllDlg"); dlg.showModal();
   $("clearAllNo").onclick=()=>dlg.close();
@@ -3556,6 +3525,9 @@ async function svuotaTutteLeGiornate(s){
       fatti++;
       setSync("syncing",`Svuoto… ${fatti}/${(servizi||[]).length}`);
     }
+    // ripasso finale: cartelle di giornate che nel database non esistono più
+    let orfani = 0;
+    try{ orfani = await togliCartelleOrfane(); }catch(_){}
     // le giornate restano come contenitori vuoti; svuoto anche lo stato locale
     state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
     state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
@@ -3564,7 +3536,7 @@ async function svuotaTutteLeGiornate(s){
     $("stTotal").textContent="0";
     renderTabs(); layoutGrid(); updateThumbCloud();
     setSync(null,"Sincronizzato");
-    toast(`Svuotate ${fatti} giornate della sede "${s.nome}"`);
+    toast(`Svuotate ${fatti} giornate della sede "${s.nome}"` + (orfani?` — e ${orfani} file rimasti da cancellazioni vecchie`:""));
   }catch(err){
     setSync("offline"); toast("Errore svuotando: "+(err.message||err)); console.warn("svuotaTutte",err);
   }
