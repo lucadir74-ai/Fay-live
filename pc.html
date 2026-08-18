@@ -138,7 +138,11 @@
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
-  #lbAdjBar input[type=range]{flex:1}
+  #lbAdjBar .row{gap:6px}
+  #lbAdjBar input[type=range]{flex:1;min-width:70px}
+  /* Frecce per correggere di uno alla volta: col cursore è impossibile essere precisi. */
+  .adjStep{padding:0;width:24px;height:24px;line-height:1;font-size:15px;font-weight:700;flex:none}
+  .adjVal{font-family:var(--mono);font-size:12.5px;min-width:34px;text-align:right;color:var(--ink)}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -323,10 +327,26 @@
         </div>
       </div>
       <div id="lbAdjBar">
-        <div class="row"><span>Luce</span><input type="range" id="adjB" min="50" max="150" step="1" value="100"></div>
-        <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
-        <div class="row"><span>Colore</span><input type="range" id="adjS" min="0" max="200" step="1" value="100"></div>
-        <div class="row"><span>Calore</span><input type="range" id="adjT" min="-100" max="100" step="1" value="0"></div>
+        <div class="row"><span>Luce</span>
+          <button class="adjStep" data-t="adjB" data-d="-1" title="−1">‹</button>
+          <input type="range" id="adjB" min="50" max="150" step="1" value="100">
+          <button class="adjStep" data-t="adjB" data-d="1" title="+1">›</button>
+          <b class="adjVal" id="valB">100</b></div>
+        <div class="row"><span>Contrasto</span>
+          <button class="adjStep" data-t="adjC" data-d="-1" title="−1">‹</button>
+          <input type="range" id="adjC" min="50" max="150" step="1" value="100">
+          <button class="adjStep" data-t="adjC" data-d="1" title="+1">›</button>
+          <b class="adjVal" id="valC">100</b></div>
+        <div class="row"><span>Colore</span>
+          <button class="adjStep" data-t="adjS" data-d="-1" title="−1">‹</button>
+          <input type="range" id="adjS" min="0" max="200" step="1" value="100">
+          <button class="adjStep" data-t="adjS" data-d="1" title="+1">›</button>
+          <b class="adjVal" id="valS">100</b></div>
+        <div class="row"><span>Calore</span>
+          <button class="adjStep" data-t="adjT" data-d="-1" title="−1">‹</button>
+          <input type="range" id="adjT" min="-100" max="100" step="1" value="0">
+          <button class="adjStep" data-t="adjT" data-d="1" title="+1">›</button>
+          <b class="adjVal" id="valT">0</b></div>
         <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:13px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
           <button id="adjReset">Azzera</button></div>
         <span id="adjNote" class="hint"></span>
@@ -3112,6 +3132,7 @@ function lbPhoto(){ return lbList()[state.lightboxIdx] || null; }
 function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
   $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
+  mostraValoriAdj();
   $("adjBW").checked = !!a.bw;
   $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
@@ -3120,8 +3141,20 @@ $("lbAdj").onclick = ()=>{
   const bar=$("lbAdjBar"); bar.hidden = !bar.hidden;
   if(!bar.hidden) syncAdjBar();
 };
+function mostraValoriAdj(){
+  const v = (id, el)=>{ const e=$(el); if(e) e.textContent = $(id).value; };
+  v("adjB","valB"); v("adjC","valC"); v("adjS","valS"); v("adjT","valT");
+}
+/* Un passo per volta sul valore, con i limiti del cursore rispettati. */
+function passoAdj(target, delta){
+  const el = $(target); if(!el || el.disabled) return;
+  const min = +el.min, max = +el.max;
+  el.value = Math.min(max, Math.max(min, (+el.value) + delta));
+  applyAdjFromBar();
+}
 function applyAdjFromBar(){
   const p = lbPhoto(); if(!p) return;
+  mostraValoriAdj();
   p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
             bw: $("adjBW").checked };
   $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
@@ -3138,11 +3171,15 @@ function applyAdjFromBar(){
   monitorFollow();              // il cliente vede subito la foto corretta
 }
 for(const id of ["adjB","adjC","adjS","adjT"]) $(id).oninput = applyAdjFromBar;
+document.querySelectorAll(".adjStep").forEach(b2=>{
+  b2.onclick = ev=>{ ev.preventDefault(); passoAdj(b2.dataset.t, +b2.dataset.d); b2.blur(); };
+});
 $("adjBW").onchange = applyAdjFromBar;
 $("adjReset").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   p.adj = null;
   syncAdjBar();
+  mostraValoriAdj();
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     c.width=lbBmp.width; c.height=lbBmp.height;
