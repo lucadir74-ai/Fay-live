@@ -438,6 +438,21 @@
   </div>
 </div>
 
+<dialog id="archDlg">
+  <h3 style="margin-bottom:10px">Dove salvo le foto di questa postazione</h3>
+  <div id="archBody" style="font-size:13px;line-height:1.55"></div>
+  <div style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
+    <b>Scegli una cartella sul disco di questo PC</b> (es. <code>C:\FayLive</code>).<br>
+    Non scegliere la scheda SD della macchina fotografica né una chiavetta USB: quando vengono tolte
+    gli originali spariscono e le altre postazioni non riescono più a stampare.
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+    <button id="archSkip">Continua senza archivio</button>
+    <button id="archKeep" hidden>Riattiva questa cartella</button>
+    <button id="archPick" class="primary">Scegli cartella…</button>
+  </div>
+</dialog>
+
 <dialog id="doveDlg">
   <h3 style="margin-bottom:10px">Dove sono salvate le foto</h3>
   <div id="doveBody" style="font-size:13px;line-height:1.55"></div>
@@ -1349,6 +1364,85 @@ async function riattivaArchivioSilenzioso(){
   }catch(_){ return null; }
 }
 
+/* Scelta della cartella archivio in un punto solo, con conferma esplicita:
+   una postazione aveva scelto per sbaglio la scheda SD della macchina e, tolta la scheda,
+   gli originali della serata non erano più da nessuna parte. */
+async function pickArchivio(){
+  if(!window.showDirectoryPicker){ toast("Questo browser non supporta l'archivio su cartella"); return null; }
+  let dir;
+  try{ dir = await showDirectoryPicker({mode:"readwrite", id:"fayarchivio", startIn: state.archive || undefined}); }
+  catch(_){ return null; }                                   // annullato dall'operatore
+  if(!confirm(
+      `Gli originali verranno salvati in "${dir.name}".\n\n`+
+      `Dev'essere una cartella sul disco di QUESTO PC (es. C:\\FayLive).\n`+
+      `Se è la scheda SD della macchina o una chiavetta, quando la togli le foto non ci sono più.\n\n`+
+      `Confermi la cartella?`)) return null;
+  state.archive = dir;
+  try{ await idb.set("archiveDir", dir); }catch(_){}
+  try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
+  segnaArchivio(dir.name, true);
+  return dir;
+}
+
+/* Non basta il permesso: la cartella può essere sparita fisicamente (scheda estratta,
+   disco esterno staccato). Qui si prova a leggerla davvero. */
+async function archivioRaggiungibile(){
+  if(!state.archive) return false;
+  try{
+    const perm = await state.archive.queryPermission({mode:"readwrite"});
+    if(perm !== "granted") return false;
+    for await (const _ of state.archive.values()) break;      // se il supporto non c'è, qui salta
+    return true;
+  }catch(_){ return false; }
+}
+
+/* Chiesta all'apertura della sede, PRIMA che si importi qualsiasi scheda. */
+function apriArchDlg(motivo){
+  const nome = state.archive ? state.archive.name : state.archiveName;
+  const testo = motivo === "irraggiungibile"
+    ? `La cartella <b>${(nome||"").replace(/[<>&]/g,"")}</b> non è raggiungibile: il supporto è stato tolto oppure è stata spostata o rinominata.<br>Gli originali importati adesso non verrebbero salvati su questo PC.`
+    : motivo === "riattivare"
+      ? `Questa postazione usa la cartella <b>${(nome||"").replace(/[<>&]/g,"")}</b>, ma dopo il ricaricamento della pagina Windows chiede di nuovo il permesso.`
+      : `Questa postazione non ha ancora una cartella dove salvare gli originali delle foto importate.`;
+  $("archBody").innerHTML = `<p>${testo}</p>`;
+  $("archKeep").hidden = (motivo !== "riattivare");
+  try{ $("archDlg").showModal(); }catch(_){ /* un'altra finestra è già aperta */ }
+}
+$("archPick").onclick = async ()=>{
+  const d = await pickArchivio();
+  if(d){ $("archDlg").close(); toast(`Originali salvati in "${d.name}"`); if(cloud.servizio) ricollegaArchivio(true); }
+};
+$("archKeep").onclick = async ()=>{
+  const d = await ensureArchive();
+  if(d && await archivioRaggiungibile()){ $("archDlg").close(); if(cloud.servizio) ricollegaArchivio(true); }
+  else toast("Cartella ancora non raggiungibile: scegline un'altra");
+};
+$("archSkip").onclick = ()=>{
+  $("archDlg").close();
+  toast("Nessun archivio: le foto restano solo sul cloud finché non scegli una cartella", 5000);
+};
+
+/* Controllo all'apertura della sede: la cartella si decide PRIMA di importare. */
+async function controllaArchivioSede(){
+  await riattivaArchivioSilenzioso();
+  if(await archivioRaggiungibile()){ toast(`Originali salvati in "${state.archive.name}"`); return; }
+  if(state.archive){ state.archive = null; apriArchDlg("irraggiungibile"); return; }
+  apriArchDlg(state.archiveName ? "riattivare" : "assente");
+}
+
+/* Se durante la serata il supporto viene staccato, va detto subito e non a fine serata. */
+let archivioAvvisato = false;
+setInterval(async ()=>{
+  if(!state.archive) return;
+  if(await archivioRaggiungibile()){ archivioAvvisato = false; return; }
+  const nome = state.archive.name;
+  state.archive = null; segnaArchivio(nome, false);
+  if(!archivioAvvisato){
+    archivioAvvisato = true;
+    toast(`⚠ La cartella archivio "${nome}" non è più raggiungibile: gli originali non vengono salvati`, 9000);
+  }
+}, 30000);
+
 async function ensureArchive(){
   if(state.archive) return state.archive;
   if(!window.showDirectoryPicker){
@@ -1370,12 +1464,7 @@ async function ensureArchive(){
   }catch(_){ /* si passa alla scelta manuale */ }
   // 2) prima volta: scelta della cartella fissa
   toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
-  try{
-    state.archive = await showDirectoryPicker({mode:"readwrite"});
-    segnaArchivio(state.archive.name, true);
-    idb.set("archiveDir", state.archive).catch(()=>{});
-    return state.archive;
-  }catch(_){ return null; }
+  return await pickArchivio();
 }
 /* Dopo un refresh della pagina le foto importate tornano dal cloud senza il collegamento
    ai file su disco: il PC vede la richiesta di originale ma non ha più niente da caricare.
@@ -1465,13 +1554,8 @@ async function cambiaArchivio(){
       `Gli originali importati d'ora in avanti verranno salvati nella nuova cartella.\n\n`+
       `Quelli già salvati restano in "${vecchia}" e non vengono spostati: per ristampare una `+
       `giornata vecchia dovrai tornare a puntare quella cartella.\n\nProcedo?`)) return null;
-  let dir;
-  try{ dir = await showDirectoryPicker({mode:"readwrite", startIn: state.archive || undefined}); }
-  catch(_){ return null; }                     // annullato dall'operatore
-  state.archive = dir;
-  try{ await idb.set("archiveDir", dir); }catch(_){}
-  try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
-  segnaArchivio(dir.name, true);
+  const dir = await pickArchivio();
+  if(!dir) return null;
   toast(`Archivio ora su "${dir.name}"`);
   if(cloud.servizio) ricollegaArchivio(true);   // se la nuova cartella ha già la giornata, riaggancia
   return dir;
@@ -3631,6 +3715,7 @@ async function chooseSede(s, dataVoluta){
                 || lista.find(x=>x.data_servizio===oggi) || lista[0];
     gsel.value = scelta.id;
     await openServizio(scelta);
+    controllaArchivioSede();      // la cartella si decide qui, prima di importare le schede
   }catch(err){
     cloud.online=false; setSync("offline");
     console.warn("sede", err);
