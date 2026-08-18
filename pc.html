@@ -678,7 +678,7 @@ const state = {
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
   letterDesc: {},         // lettera -> descrizione rullo
-  rulloStats: {},         // lettera -> {omaggi, scarti}  (scritti a mano nel report)
+  rulloStats: {},         // lettera -> {omaggi, scarti, file}  (scritti a mano nel report)
   selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
   activeLetter: null,     // null = tutte
   focusIdx: -1,
@@ -3795,23 +3795,25 @@ function mb(bytes){
 function datiReport(){
   const righe = {};
   for(const p of state.photos){
-    const r = righe[p.letter] || (righe[p.letter] = {foto:0, stampe:0, esportate:0});
+    const r = righe[p.letter] || (righe[p.letter] = {foto:0, stampe:0});
     r.foto++;
     r.stampe += (p.prints||0);
-    if(p.exported) r.esportate++;
   }
-  // omaggi e scarti non sono per foto: sono due numeri della serata, per rullo
+  /* Omaggi, scarti e file non si ricavano dalle foto: sono numeri della serata, per rullo.
+     I "file" sono le foto vendute come file digitale senza stamparle, quindi si SOMMANO
+     alle vendute (omaggi e scarti si sottraggono). */
   for(const L of Object.keys(righe)){
     const st = state.rulloStats[L] || {};
     righe[L].omaggi = st.omaggi || 0;
     righe[L].scarti = st.scarti || 0;
+    righe[L].file   = st.file   || 0;
   }
   return righe;
 }
 
 // salva sul cloud il valore digitato, così lo vedono anche le altre postazioni
 async function salvaStat(L, campo, valore){
-  state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0};
+  state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file:0};
   state.rulloStats[L][campo] = valore;
   if(sb && cloud.rulli[L]){
     await sbTry(()=>sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id), "report rullo");
@@ -3821,9 +3823,9 @@ async function salvaStat(L, campo, valore){
 function apriStats(){
   const righe = datiReport();
   const L = Object.keys(righe).sort();
-  const tot = {foto:0, stampe:0, omaggi:0, scarti:0, esportate:0};
-  L.forEach(k=>{ ["foto","stampe","omaggi","scarti","esportate"].forEach(c=> tot[c]+=righe[k][c]); });
-  const vendute = Math.max(0, tot.stampe - tot.omaggi - tot.scarti);
+  const tot = {foto:0, stampe:0, omaggi:0, scarti:0, file:0};
+  L.forEach(k=>{ ["foto","stampe","omaggi","scarti","file"].forEach(c=> tot[c]+=righe[k][c]); });
+  const vendute = venduteDi(tot);
 
   $("statsWhen").textContent = (cloud.sede? cloud.sede.nome : "—")+
     (cloud.servizio? " — "+cloud.servizio.data_servizio : "");
@@ -3835,25 +3837,27 @@ function apriStats(){
     <tr style="color:var(--muted)">
       <th style="text-align:left;padding:6px 10px">Rullo</th>
       <th ${th}>Foto</th><th ${th}>Stampe</th><th ${th}>Omaggi</th>
-      <th ${th}>Scarti</th><th ${th}>Vendute</th><th ${th}>Esportate</th>
+      <th ${th}>Scarti</th><th ${th}>File</th><th ${th}>Vendute</th>
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
-    const v = Math.max(0, r.stampe - r.omaggi - r.scarti);
+    const v = venduteDi(r);
     h += `<tr>
       <td style="padding:6px 10px;border-top:1px solid var(--line);font-weight:700">${k}</td>
       <td ${td}>${r.foto}</td><td ${td}>${r.stampe}</td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="omaggi" value="${r.omaggi}"></td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="scarti" value="${r.scarti}"></td>
-      <td ${td}><b data-v="${k}">${v}</b></td><td ${td}>${r.esportate||"—"}</td></tr>`;
+      <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="file" value="${r.file}"></td>
+      <td ${td}><b data-v="${k}">${v}</b></td></tr>`;
   });
   h += `<tr style="background:rgba(255,255,255,.04);font-weight:800">
       <td style="padding:8px 10px;border-top:2px solid var(--line)">TOTALE</td>
       <td ${td}>${tot.foto}</td><td ${td} id="stTotStampe">${tot.stampe}</td>
       <td ${td} id="stTotOm">${tot.omaggi}</td><td ${td} id="stTotSc">${tot.scarti}</td>
-      <td ${td} id="stTotVen">${vendute}</td><td ${td}>${tot.esportate}</td></tr></table>
+      <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
     <p style="color:var(--muted);font-size:12.5px;margin-top:8px">
-      Omaggi e scarti si scrivono a mano qui: vengono sottratti alle stampe per ottenere le vendute.
+      Omaggi, scarti e file si scrivono a mano qui. Vendute = stampe − omaggi − scarti + file
+      (i file sono le foto vendute in digitale senza stampa).
       Restano salvati sulla giornata e li vedono tutte le postazioni.</p>`;
 
   // --- spazio sul cloud: STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
@@ -3894,26 +3898,30 @@ function apriStats(){
   $("statsDlg").showModal();
 }
 
+function venduteDi(r){
+  return Math.max(0, (r.stampe||0) - (r.omaggi||0) - (r.scarti||0) + (r.file||0));
+}
 function aggiornaVendute(){
   const righe = datiReport();
-  let tS=0, tO=0, tSc=0;
+  let tS=0, tO=0, tSc=0, tF=0;
   Object.keys(righe).forEach(k=>{
     const r = righe[k];
-    tS+=r.stampe; tO+=r.omaggi; tSc+=r.scarti;
+    tS+=r.stampe; tO+=r.omaggi; tSc+=r.scarti; tF+=r.file;
     const b = $("statsBody").querySelector(`b[data-v="${k}"]`);
-    if(b) b.textContent = Math.max(0, r.stampe - r.omaggi - r.scarti);
+    if(b) b.textContent = venduteDi(r);
   });
   const set=(id,v)=>{ const e=$(id); if(e) e.textContent=v; };
-  set("stTotOm", tO); set("stTotSc", tSc); set("stTotVen", Math.max(0, tS-tO-tSc));
+  set("stTotOm", tO); set("stTotSc", tSc); set("stTotFile", tF);
+  set("stTotVen", venduteDi({stampe:tS, omaggi:tO, scarti:tSc, file:tF}));
 }
 $("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; apriStats(); };
 $("statsClose").onclick = ()=> $("statsDlg").close();
 $("statsCsv").onclick = ()=>{
   const righe = datiReport();
   const L = Object.keys(righe).sort();
-  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;Vendute;Esportate\n";
+  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;File;Vendute\n";
   L.forEach(k=>{ const r=righe[k];
-    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, Math.max(0,r.stampe-r.omaggi-r.scarti), r.esportate].join(";")+"\n";
+    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, r.file, venduteDi(r)].join(";")+"\n";
   });
   const nome = "report_"+((cloud.sede?cloud.sede.nome:"faylive").replace(/\W+/g,"_"))+
                "_"+(cloud.servizio? cloud.servizio.data_servizio : "oggi")+".csv";
@@ -4098,7 +4106,7 @@ async function loadServizioFoto(){
   const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
   (rulli||[]).forEach(r=>{ cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
     if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-    state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0};
+    state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0};
     state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
   const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
   const ids=(rulli||[]).map(r=>r.id);
@@ -4221,7 +4229,7 @@ async function pullNuoveFoto(manuale){
     for(const r of (rulli||[])){
       cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
       if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-      state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0};
+      state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0};
       state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num||0);
       /* Quante foto di questo rullo ci sono sul cloud? Solo il numero, nessuna riga scaricata.
          Si conta invece di guardare l'ultimo codice: se anche questa postazione ha importato
