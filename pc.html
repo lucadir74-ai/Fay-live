@@ -4263,7 +4263,7 @@ async function pullNuoveFoto(manuale){
   syncing=true;
   try{
     const {data:rulli, error} = await sb.from("rulli")
-      .select("id,lettera,ultimo_num,descrizione,omaggi,scarti").eq("servizio_id", cloud.servizio.id);
+      .select("id,lettera,ultimo_num,descrizione,omaggi,scarti,file").eq("servizio_id", cloud.servizio.id);
     if(error) throw error;
     /* Rulli spariti dal cloud (giornata o rullo svuotati da un'altra postazione): finora
        restavano a video qui, perché la sincronizzazione sapeva solo AGGIUNGERE. */
