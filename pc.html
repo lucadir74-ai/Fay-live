@@ -497,6 +497,7 @@
     </label>
     <span style="display:flex;gap:10px">
       <button id="mailClear">Svuota inviate</button>
+      <button id="mailClearAll" title="Toglie dalla lista TUTTE le richieste della giornata, anche quelle non ancora inviate">Svuota tutto</button>
       <button id="mailClose" class="primary">Chiudi</button>
     </span>
   </div>
@@ -5130,13 +5131,36 @@ async function inviaConFilemail(row, btn){
   }
 }
 
-$("mailClear").onclick = async ()=>{
+/* Prima si cancellava "per condizione" (servizio + stato) e l'esito non veniva mai
+   controllato: se il cloud rifiutava la cancellazione, il tasto non faceva niente in
+   silenzio. Ora si cancella per ID delle righe in elenco e si verifica che siano sparite. */
+async function svuotaMail(tutte){
   if(!sb || !cloud.servizio) return;
-  await sbTry(()=>sb.from("richieste_email").delete()
-    .eq("servizio_id", String(cloud.servizio.id)).eq("stato","inviata"), "svuota inviate");
-  await loadMailRequests(); renderMailList(); refreshMailBadge();
-  toast("Richieste già inviate rimosse");
-};
+  const bersagli = (mail.rows||[]).filter(r => tutte || r.stato === "inviata");
+  if(!bersagli.length){
+    toast(tutte ? "La lista è già vuota" : "Nessuna richiesta segnata come inviata");
+    return;
+  }
+  if(tutte && !confirm(
+      `Tolgo dalla lista tutte le ${bersagli.length} richieste della giornata, comprese quelle `+
+      `non ancora inviate.\n\nLe foto non vengono toccate.\n\nProcedo?`)) return;
+  const ids = bersagli.map(r => r.id);
+  try{
+    const {error} = await sb.from("richieste_email").delete().in("id", ids);
+    if(error) throw error;
+  }catch(err){
+    console.warn("svuota email", err);
+    toast("Il cloud ha rifiutato la cancellazione: " + (err.message || err), 9000);
+    return;
+  }
+  await loadMailRequests();
+  const rimaste = (mail.rows||[]).filter(r => ids.includes(r.id)).length;
+  renderMailList(); refreshMailBadge();
+  if(rimaste) toast(`\u26a0 ${rimaste} richieste sono ancora nella lista: sul cloud manca il permesso di cancellazione`, 9000);
+  else toast(tutte ? "Lista svuotata" : `Tolte ${ids.length} richieste già inviate`);
+}
+$("mailClear").onclick    = ()=> svuotaMail(false);
+$("mailClearAll").onclick = ()=> svuotaMail(true);
 
 // assegna il prossimo numero dal cloud (atomico) o localmente se offline
 async function nextNumber(letter, count){
