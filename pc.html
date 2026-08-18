@@ -442,7 +442,8 @@
   <h3 style="margin-bottom:10px">Dove salvo le foto di questa postazione</h3>
   <div id="archBody" style="font-size:13px;line-height:1.55"></div>
   <div style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
-    <b>Scegli una cartella sul disco di questo PC</b> (es. <code>C:\FayLive</code>).<br>
+    <b>La cartella dev'essere <code>C:\FayLive</code>, uguale su tutte le postazioni.</b><br>
+    Se non c'è, creala prima in Esplora file: Disco locale (C:) → tasto destro → Nuovo → Cartella → <b>FayLive</b>.<br>
     Non scegliere la scheda SD della macchina fotografica né una chiavetta USB: quando vengono tolte
     gli originali spariscono e le altre postazioni non riescono più a stampare.
   </div>
@@ -1316,8 +1317,12 @@ state.archiveName = null; // nome della cartella ricordata, anche quando il perm
 
 /* La voce "Archivio" della barra di stato deve dire SEMPRE in quale cartella sta
    scrivendo questa postazione: prima veniva sovrascritta con il nome della sede. */
+function archivioFuoriStandard(){
+  const n = state.archive ? state.archive.name : state.archiveName;
+  return !!n && n.trim().toLowerCase() !== "faylive";
+}
 function etichettaArchivio(){
-  if(state.archive) return state.archive.name;
+  if(state.archive) return (archivioFuoriStandard()? "⚠ " : "") + state.archive.name;
   if(state.archiveName) return state.archiveName + " (da riattivare)";
   return "non impostato";
 }
@@ -1364,6 +1369,8 @@ async function riattivaArchivioSilenzioso(){
   }catch(_){ return null; }
 }
 
+const NOME_ARCHIVIO = "FayLive";   // nome della cartella archivio uguale su tutte le postazioni
+
 /* Scelta della cartella archivio in un punto solo, con conferma esplicita:
    una postazione aveva scelto per sbaglio la scheda SD della macchina e, tolta la scheda,
    gli originali della serata non erano più da nessuna parte. */
@@ -1372,11 +1379,21 @@ async function pickArchivio(){
   let dir;
   try{ dir = await showDirectoryPicker({mode:"readwrite", id:"fayarchivio", startIn: state.archive || undefined}); }
   catch(_){ return null; }                                   // annullato dall'operatore
-  if(!confirm(
-      `Gli originali verranno salvati in "${dir.name}".\n\n`+
-      `Dev'essere una cartella sul disco di QUESTO PC (es. C:\\FayLive).\n`+
-      `Se è la scheda SD della macchina o una chiavetta, quando la togli le foto non ci sono più.\n\n`+
-      `Confermi la cartella?`)) return null;
+  /* Regola di casa: su OGNI postazione l'archivio è la cartella C:\FayLive. Se il nome non
+     torna, quasi sempre è stata presa la scheda della macchina o una chiavetta. */
+  const standard = dir.name.trim().toLowerCase() === NOME_ARCHIVIO.toLowerCase();
+  const messaggio = standard
+    ? `Gli originali verranno salvati in "${dir.name}".\n\n`+
+      `Controlla che sia la cartella sul disco di QUESTO PC (C:\\${NOME_ARCHIVIO}) e non una `+
+      `cartella con lo stesso nome dentro la scheda o una chiavetta.\n\nConfermi?`
+    : `⚠ ATTENZIONE — la cartella scelta si chiama "${dir.name}".\n\n`+
+      `Su tutte le postazioni l'archivio deve essere la cartella "${NOME_ARCHIVIO}" sul disco `+
+      `del PC (C:\\${NOME_ARCHIVIO}). Un nome diverso quasi sempre vuol dire che è stata scelta `+
+      `la scheda della macchina fotografica o una chiavetta: quando viene tolta, gli originali `+
+      `della serata non ci sono più e le altre postazioni non riescono a stampare.\n\n`+
+      `Vuoi usare "${dir.name}" lo stesso?`;
+  if(!confirm(messaggio)) return null;
+  if(!standard) toast(`⚠ Archivio fuori standard: "${dir.name}" invece di ${NOME_ARCHIVIO}`, 7000);
   state.archive = dir;
   try{ await idb.set("archiveDir", dir); }catch(_){}
   try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
@@ -1583,7 +1600,10 @@ function apriDoveDlg(){
       (perc? `<br>Percorso: <b>${q(perc)}</b>` : "")+
       `<br>Struttura: <code>${q(radice)}\\${q(dateStr)}\\${q(L)}\\${q(L)}-001.jpg</code>`+
       `<br>Giornata aperta: ${q(dateStr)}${lettere.length? " — rulli: "+q(lettere.join(", ")) : ""}.`+
-      `<br>Originali agganciati adesso su questa postazione: <b>${conFile}</b> di ${state.photos.length}.</p>`+
+      `<br>Originali agganciati adesso su questa postazione: <b>${conFile}</b> di ${state.photos.length}.` +
+      (archivioFuoriStandard()
+        ? `<br><span style="color:var(--danger)">⚠ Fuori standard: su tutte le postazioni l'archivio dev'essere la cartella <b>FayLive</b> sul disco del PC.</span>`
+        : "") + `</p>`+
     `<p style="margin-bottom:10px"><b>2 · Cloud</b><br>`+
       `Sede ${q(cloud.sede? cloud.sede.nome : "—")}: anteprime sempre, originali solo quando servono. `+
       `Su Supabase si vedono in Storage.</p>`+
