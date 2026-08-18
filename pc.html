@@ -425,7 +425,7 @@
 
   <div id="statusBar">
     <span>Foto: <b id="stTotal">0</b></span>
-    <span>Archivio: <b id="stArch">non impostato</b></span>
+    <span>Archivio: <b id="stArch" style="cursor:pointer" title="Clicca per vedere dove vengono salvate le foto">non impostato</b></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
     <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
@@ -436,6 +436,20 @@
     <span id="stMode">—</span>
   </div>
 </div>
+
+<dialog id="doveDlg">
+  <h3 style="margin-bottom:10px">Dove sono salvate le foto</h3>
+  <div id="doveBody" style="font-size:13px;line-height:1.55"></div>
+  <div style="margin-top:14px">
+    <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">Percorso completo — scrivilo una volta, resta salvato su questa postazione</label>
+    <input type="text" id="dovePath" placeholder="es. C:\FayLive" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--surface2);color:var(--ink)">
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+    <button id="doveOpen" title="Apre la finestra di Windows dentro la cartella dell'archivio: in alto si legge il percorso completo">Apri la cartella</button>
+    <button id="doveArch">Scegli archivio…</button>
+    <button id="doveClose" class="primary">Chiudi</button>
+  </div>
+</dialog>
 
 <dialog id="delSedeDlg">
   <h3 style="margin-bottom:10px">Cancella sede</h3>
@@ -1275,6 +1289,20 @@ $("progCancel").onclick = ()=>{
 };
 /* ---------- archivio su cartella dedicata ---------- */
 state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
+state.archiveName = null; // nome della cartella ricordata, anche quando il permesso è da riattivare
+
+/* La voce "Archivio" della barra di stato deve dire SEMPRE in quale cartella sta
+   scrivendo questa postazione: prima veniva sovrascritta con il nome della sede. */
+function etichettaArchivio(){
+  if(state.archive) return state.archive.name;
+  if(state.archiveName) return state.archiveName + " (da riattivare)";
+  return "non impostato";
+}
+function segnaArchivio(nome, attivo){
+  if(nome) state.archiveName = nome;
+  if(attivo) state.archiveName = nome || state.archiveName;
+  try{ updateOrigCount(); }catch(_){ $("stArch").textContent = etichettaArchivio(); }
+}
 
 // mini archivio chiave-valore per ricordare la cartella tra le sessioni (funziona su https)
 const idb = {
@@ -1304,13 +1332,11 @@ async function riattivaArchivioSilenzioso(){
     if(!saved) return null;
     const perm = await saved.queryPermission({mode:"readwrite"});   // solo query: niente finestre
     if(perm !== "granted"){
-      $("stArch").textContent = saved.name + " — DA RIATTIVARE";
-      $("stArch").style.color = "var(--danger)";
+      segnaArchivio(saved.name, false);
       return null;
     }
     state.archive = saved;
-    $("stArch").textContent = saved.name;
-    $("stArch").style.color = "";
+    segnaArchivio(saved.name, true);
     return saved;
   }catch(_){ return null; }
 }
@@ -1329,7 +1355,7 @@ async function ensureArchive(){
       if(perm!=="granted") perm = await saved.requestPermission({mode:"readwrite"});
       if(perm==="granted"){
         state.archive = saved;
-        $("stArch").textContent = saved.name;
+        segnaArchivio(saved.name, true);
         return saved;
       }
     }
@@ -1338,7 +1364,7 @@ async function ensureArchive(){
   toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
   try{
     state.archive = await showDirectoryPicker({mode:"readwrite"});
-    $("stArch").textContent = state.archive.name;
+    segnaArchivio(state.archive.name, true);
     idb.set("archiveDir", state.archive).catch(()=>{});
     return state.archive;
   }catch(_){ return null; }
@@ -1419,6 +1445,54 @@ $("btnArchive").onclick = async ()=>{
   const d = await ensureArchive();
   if(d && cloud.servizio) ricollegaArchivio(true);   // riattivare l'archivio ricollega anche i file
 };
+/* ---------- "Dove sono salvate le foto" ----------
+   Il browser non può leggere il percorso completo di una cartella: conosce solo il nome.
+   Qui si mette insieme quello che l'app sa davvero (cartella, giornata, rulli, cloud,
+   export) e si lascia annotare il percorso una volta sola, per postazione. */
+function percorsoAnnotato(){ try{ return localStorage.getItem("faylive_arch_path")||""; }catch(_){ return ""; } }
+function apriDoveDlg(){
+  const q = t => String(t==null?"":t).replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+  const nome  = state.archive ? state.archive.name : state.archiveName;
+  const stato = state.archive ? "attivo, sta scrivendo qui"
+              : (state.archiveName ? "DA RIATTIVARE — Altro → Archivio…" : "non ancora impostato");
+  const perc  = percorsoAnnotato();
+  const radice = perc || (nome || "…");
+  const dateStr = (cloud.servizio && cloud.servizio.data_servizio) || serviceDateStr();
+  const lettere = Object.keys(cloud.rulli||{}).sort();
+  const L = lettere[0] || "A";
+  const conFile = state.photos.filter(p=>p.file||p.arch).length;
+  $("doveBody").innerHTML =
+    `<p style="margin-bottom:10px"><b>1 · Originali su questo PC</b><br>`+
+      `Cartella archivio: <b>${q(nome||"nessuna")}</b> — ${q(stato)}.`+
+      (perc? `<br>Percorso: <b>${q(perc)}</b>` : "")+
+      `<br>Struttura: <code>${q(radice)}\\${q(dateStr)}\\${q(L)}\\${q(L)}-001.jpg</code>`+
+      `<br>Giornata aperta: ${q(dateStr)}${lettere.length? " — rulli: "+q(lettere.join(", ")) : ""}.`+
+      `<br>Originali agganciati adesso su questa postazione: <b>${conFile}</b> di ${state.photos.length}.</p>`+
+    `<p style="margin-bottom:10px"><b>2 · Cloud</b><br>`+
+      `Sede ${q(cloud.sede? cloud.sede.nome : "—")}: anteprime sempre, originali solo quando servono. `+
+      `Su Supabase si vedono in Storage.</p>`+
+    `<p style="margin-bottom:10px"><b>3 · File esportati</b><br>`+
+      `Cartella export: <b>${q(($("stExport").textContent||"Download"))}</b>.</p>`+
+    `<p style="color:var(--muted)">Il percorso completo il browser non lo sa: con “Apri la cartella” si apre `+
+      `la finestra di Windows dentro l'archivio e in alto si legge il percorso, da incollare qui sotto.</p>`;
+  $("dovePath").value = perc;
+  $("doveDlg").showModal();
+}
+$("stArch").onclick = apriDoveDlg;
+$("doveClose").onclick = ()=>{
+  try{ localStorage.setItem("faylive_arch_path", $("dovePath").value.trim()); }catch(_){}
+  $("doveDlg").close();
+};
+$("doveOpen").onclick = async ()=>{
+  if(!window.showDirectoryPicker){ toast("Questo browser non apre le cartelle"); return; }
+  try{ await showDirectoryPicker({mode:"read", startIn: state.archive || undefined}); }catch(_){}
+};
+$("doveArch").onclick = async ()=>{
+  $("doveDlg").close();
+  const d = await ensureArchive();
+  if(d && cloud.servizio) ricollegaArchivio(true);
+};
+
 $("btnExportDir").onclick = async ()=>{
   state.exportDir=null;                 // forza una nuova scelta
   const d=await ensureExportDir();
@@ -1426,7 +1500,7 @@ $("btnExportDir").onclick = async ()=>{
 };
 idb.get("exportDir").then(h=>{ if(h) $("stExport").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
-idb.get("archiveDir").then(h=>{ if(h && !state.archive) $("stArch").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
+idb.get("archiveDir").then(h=>{ if(h && !state.archive) segnaArchivio(h.name, false); }).catch(()=>{});
 
 /* <archivio>/<AAAA-MM-GG>/<Lettera>/ — una sola cartella per rullo e per giornata.
    Prima ogni import creava una sottocartella a parte ("001 ore 21.15"): con quattro
@@ -1938,7 +2012,7 @@ function velocitaKBs(){
 function updateOrigCount(){
   const urg = origQueue.length + origActive;
   const bg  = origBg.length;
-  const base = (cloud.sede? cloud.sede.nome : (state.archive?state.archive.name:"—"));
+  const base = etichettaArchivio();
   let txt = base;
   if(urg) txt += " · carico originali: "+urg;
   const v = velocitaKBs();
@@ -1948,6 +2022,7 @@ function updateOrigCount(){
   if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
+  $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
   if(urg) setSync("syncing","Carico originali ("+urg+")");
   else if(bg) setSync(autoOrigOn()?"syncing":null, autoOrigOn()? "Sottofondo ("+bg+")" : "Sincronizzato");
   else if(cloud.online) setSync("online");
