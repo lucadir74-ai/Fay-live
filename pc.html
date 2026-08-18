@@ -168,8 +168,9 @@
   #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
   dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
-  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
-  #statsDlg #statsBody{max-height:76vh}
+  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw);max-height:92vh;
+    display:flex;flex-direction:column;overflow:hidden}
+  #statsDlg #statsBody{flex:1;min-height:0;max-height:none;overflow:auto}
   #statsDlg table{width:100%}
   dialog::backdrop{background:rgba(6,8,12,.7)}
   /* pointer-events:none è ESSENZIALE: il toast resta nel DOM anche da invisibile (opacity 0)
@@ -537,7 +538,7 @@
 <dialog id="statsDlg">
   <h3 style="margin-bottom:4px">Report giornata</h3>
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
-  <div id="statsBody" style="max-height:76vh;overflow:auto"></div>
+  <div id="statsBody" style="overflow:auto"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
@@ -3824,9 +3825,22 @@ async function salvaStat(L, campo, valore){
   try{
     const {error} = await sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id);
     if(error) throw error;
+    // rilettura: un update può "riuscire" senza toccare niente (permessi), e il valore
+    // tornava a zero solo al ricaricamento, quando ormai nessuno collegava le due cose
+    const {data, error:e2} = await sb.from("rulli").select(campo).eq("id", cloud.rulli[L].id).single();
+    if(e2) throw e2;
+    if(!data || Number(data[campo]) !== Number(valore)){
+      alert(`Il valore "${campo}" del rullo ${L} NON è stato salvato sul cloud.\n\n`+
+            `Scritto: ${valore} — riletto: ${data ? data[campo] : "niente"}.\n\n`+
+            `Di solito vuol dire che manca il permesso di modifica sulla tabella rulli.`);
+    }
   }catch(err){
+    const m = String(err && err.message ? err.message : err);
     console.warn("report rullo", campo, err);
-    toast(`Non salvato sul cloud (${campo}): ` + (err.message || err), 9000);
+    alert(m.includes(campo) || m.toLowerCase().includes("column")
+      ? `La colonna "${campo}" non esiste ancora sul database.\n\nSu Supabase → SQL Editor esegui:\n\n`+
+        `alter table rulli add column if not exists ${campo} integer default 0;\n\nDettaglio: ${m}`
+      : `Non salvato sul cloud (${campo}): ${m}`);
   }
 }
 
