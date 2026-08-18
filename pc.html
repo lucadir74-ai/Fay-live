@@ -167,6 +167,10 @@
   kbd{font-family:var(--mono);background:var(--surface2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px}
   #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
   dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
+  /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
+  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
+  #statsDlg #statsBody{max-height:76vh}
+  #statsDlg table{width:100%}
   dialog::backdrop{background:rgba(6,8,12,.7)}
   /* pointer-events:none è ESSENZIALE: il toast resta nel DOM anche da invisibile (opacity 0)
      e, stando a z-index 50 sopra la barra "vista insieme", si prendeva i click al posto dei
@@ -533,7 +537,7 @@
 <dialog id="statsDlg">
   <h3 style="margin-bottom:4px">Report giornata</h3>
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
-  <div id="statsBody" style="max-height:62vh;overflow:auto"></div>
+  <div id="statsBody" style="max-height:76vh;overflow:auto"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
