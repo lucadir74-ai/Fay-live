@@ -147,7 +147,8 @@
   #lbAdjBar label{font-size:15px!important}
   #lbAdjBar input[type=checkbox]{width:20px;height:20px}
   #lbAdjBar #adjReset{font-size:15px;padding:9px 18px}
-  .adjFix{font-size:13px;padding:7px 10px;flex:none}
+  #lbAdjBar .dom{font-size:13px;color:var(--muted);margin-top:2px;padding-top:10px;border-top:1px solid var(--line)}
+  #lbAdjBar .sw{width:22px;height:22px;border-radius:5px;flex:none;border:1px solid rgba(255,255,255,.25)}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -352,18 +353,25 @@
           <input type="range" id="adjT" min="-100" max="100" step="1" value="0">
           <button class="adjStep" data-t="adjT" data-d="1" title="più caldo">›</button>
           <b class="adjVal" id="valT">0</b></div>
-        <div class="row"><span>Tinta</span>
-          <button class="adjStep" data-t="adjG" data-d="-1" title="verso il verde">‹</button>
+        <div class="dom">Dominanti</div>
+        <div class="row"><i class="sw" style="background:#25D2C6"></i>
+          <button class="adjStep" data-t="adjR" data-d="-1" title="verso il ciano">‹</button>
+          <input type="range" id="adjR" min="-100" max="100" step="1" value="0">
+          <button class="adjStep" data-t="adjR" data-d="1" title="verso il rosso">›</button>
+          <i class="sw" style="background:#D8402B"></i>
+          <b class="adjVal" id="valR">0</b></div>
+        <div class="row"><i class="sw" style="background:#CE63D6"></i>
+          <button class="adjStep" data-t="adjG" data-d="-1" title="verso il magenta">‹</button>
           <input type="range" id="adjG" min="-100" max="100" step="1" value="0">
-          <button class="adjStep" data-t="adjG" data-d="1" title="verso il magenta">›</button>
+          <button class="adjStep" data-t="adjG" data-d="1" title="verso il verde">›</button>
+          <i class="sw" style="background:#2E8B3D"></i>
           <b class="adjVal" id="valG">0</b></div>
-        <div class="row" style="gap:6px;justify-content:flex-start;flex-wrap:wrap">
-          <span style="min-width:92px">Dominante</span>
-          <button class="adjFix" data-fix="giallo">Meno giallo</button>
-          <button class="adjFix" data-fix="blu">Meno blu</button>
-          <button class="adjFix" data-fix="verde">Meno verde</button>
-          <button class="adjFix" data-fix="magenta">Meno magenta</button>
-        </div>
+        <div class="row"><i class="sw" style="background:#E8C51E"></i>
+          <button class="adjStep" data-t="adjB2" data-d="-1" title="verso il giallo">‹</button>
+          <input type="range" id="adjB2" min="-100" max="100" step="1" value="0">
+          <button class="adjStep" data-t="adjB2" data-d="1" title="verso il blu">›</button>
+          <i class="sw" style="background:#1F6FE0"></i>
+          <b class="adjVal" id="valB2">0</b></div>
         <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:13px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
           <button id="adjReset">Azzera</button></div>
         <span id="adjNote" class="hint"></span>
@@ -3013,11 +3021,12 @@ function refreshLbStatus(){
 /* ---------- regolazioni luce/colore per singola foto ----------
    Valgono per il visualizzatore, il monitor cliente e la stampa.
    L'originale su disco non viene mai modificato.                    */
-const ADJ0 = {b:100, c:100, s:100, t:0, g:0, bw:false};
+const ADJ0 = {b:100, c:100, s:100, t:0, dr:0, dg:0, db:0, bw:false};
 function adjOf(p){
   if(!p || !p.adj) return null;
   const a = p.adj;
-  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !(a.g||0) && !a.bw) ? null : a;
+  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 &&
+          !(a.dr||0) && !(a.dg||0) && !(a.db||0) && !a.bw) ? null : a;
 }
 function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
   const a = adjOf(p);
@@ -3034,13 +3043,26 @@ function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
     ctx.fillStyle = a.t > 0 ? "#FF9A3C" : "#3CA0FF";
     ctx.fillRect(dx, dy, dw, dh);
   }
-  /* Tinta: l'altra metà delle dominanti. Calore corregge il giallo/blu, questa il
-     verde/magenta — tipico delle luci dei locali. */
-  if(a.g && !a.bw){
-    ctx.globalCompositeOperation = "soft-light";
-    ctx.globalAlpha = Math.min(0.65, Math.abs(a.g)/110);
-    ctx.fillStyle = a.g > 0 ? "#FF5CE1" : "#5CFF8A";
-    ctx.fillRect(dx, dy, dw, dh);
+  /* Dominanti per canale, come nei software di stampa: positivo aggiunge quel colore,
+     negativo lo toglie (cioè spinge verso il suo opposto: ciano, magenta, giallo). */
+  if(!a.bw){
+    const canali = [[a.dr||0,0],[a.dg||0,1],[a.db||0,2]];
+    for(const [v, i] of canali){
+      if(!v) continue;
+      const q = Math.round(Math.min(100, Math.abs(v)) * 1.28);   // 0-128
+      const col = [0,0,0];
+      if(v > 0){                       // aggiunge: schiarisce solo quel canale
+        col[i] = q;
+        ctx.globalCompositeOperation = "screen";
+      }else{                           // toglie: lascia intatti gli altri due
+        col[0] = col[1] = col[2] = 255;
+        col[i] = 255 - q;
+        ctx.globalCompositeOperation = "multiply";
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+      ctx.fillRect(dx, dy, dw, dh);
+    }
   }
   ctx.restore();
 }
@@ -3157,12 +3179,12 @@ function lbPhoto(){ return lbList()[state.lightboxIdx] || null; }
 function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
   $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s;
-  $("adjT").value=a.t; $("adjG").value=a.g||0;
+  $("adjT").value=a.t;
+  $("adjR").value=a.dr||0; $("adjG").value=a.dg||0; $("adjB2").value=a.db||0;
   mostraValoriAdj();
   $("adjBW").checked = !!a.bw;
   // senza colore non servono
-  $("adjS").disabled = $("adjT").disabled = $("adjG").disabled = !!a.bw;
-  document.querySelectorAll(".adjFix").forEach(b2=> b2.disabled = !!a.bw);
+  spegniColore(!!a.bw);
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
 }
 $("lbAdj").onclick = ()=>{
@@ -3178,7 +3200,15 @@ function mostraValoriAdj(){
   set("valC", +$("adjC").value - 100);
   set("valS", +$("adjS").value - 100);
   set("valT", +$("adjT").value);
+  set("valR", +$("adjR").value);
   set("valG", +$("adjG").value);
+  set("valB2", +$("adjB2").value);
+}
+function spegniColore(bn){
+  ["adjS","adjT","adjR","adjG","adjB2"].forEach(id=>{ const e=$(id); if(e) e.disabled = bn; });
+  document.querySelectorAll(".adjStep").forEach(b2=>{
+    if(["adjT","adjR","adjG","adjB2"].includes(b2.dataset.t)) b2.disabled = bn;
+  });
 }
 /* Un passo per volta sul valore, con i limiti del cursore rispettati. */
 function passoAdj(target, delta){
@@ -3191,10 +3221,9 @@ function applyAdjFromBar(){
   const p = lbPhoto(); if(!p) return;
   mostraValoriAdj();
   p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
-            g:+$("adjG").value, bw: $("adjBW").checked };
-  const bn = $("adjBW").checked;
-  $("adjS").disabled = $("adjT").disabled = $("adjG").disabled = bn;
-  document.querySelectorAll(".adjFix").forEach(b2=> b2.disabled = bn);
+            dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
+            bw: $("adjBW").checked };
+  spegniColore($("adjBW").checked);
   // ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
@@ -3207,16 +3236,7 @@ function applyAdjFromBar(){
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
   monitorFollow();              // il cliente vede subito la foto corretta
 }
-for(const id of ["adjB","adjC","adjS","adjT","adjG"]) $(id).oninput = applyAdjFromBar;
-/* Scorciatoie per le dominanti: un clic sposta di 10 nella direzione che le toglie. */
-const CORREZIONI = { giallo:["adjT",-10], blu:["adjT",10], verde:["adjG",10], magenta:["adjG",-10] };
-document.querySelectorAll(".adjFix").forEach(b2=>{
-  b2.onclick = ev=>{
-    ev.preventDefault();
-    const c = CORREZIONI[b2.dataset.fix]; if(c) passoAdj(c[0], c[1]);
-    b2.blur();
-  };
-});
+for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2"]) $(id).oninput = applyAdjFromBar;
 document.querySelectorAll(".adjStep").forEach(b2=>{
   b2.onclick = ev=>{ ev.preventDefault(); passoAdj(b2.dataset.t, +b2.dataset.d); b2.blur(); };
 });
