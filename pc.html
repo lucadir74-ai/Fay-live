@@ -3869,19 +3869,18 @@ function apriStats(){
   const perc = Math.min(100, Math.round(proiezione*100/LIMITE_PRO));
   const colore = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
   h += `<h4 style="margin:18px 0 8px">Spazio sul cloud</h4>
-    <div style="font-size:13px;line-height:1.9">
-      <div>Questa giornata occupa circa <b>${mb(stimaGiorno)}</b></div>
-      <div>A questo ritmo, con ${gg} giorni di originali e ${ggA} di anteprime: <b style="color:${colore}">${mb(proiezione)}</b> su 100 GB del piano Pro (${perc}%)</div>
+    <div id="spazioReale" style="font-size:13px;line-height:1.9;margin-bottom:10px">
+      <span style="color:var(--muted)">Leggo l'occupazione reale…</span>
+    </div>
+    <div style="font-size:13px;line-height:1.9;color:var(--muted)">
+      <div><b>Proiezione</b> (non è quanto occupi adesso): questa giornata pesa circa ${mb(stimaGiorno)};
+        ripetuta ogni giorno, con ${gg} giorni di originali e ${ggA} di anteprime, arriverebbe a
+        <span style="color:${colore}">${mb(proiezione)}</span> su 100 GB (${perc}%).</div>
       <div style="height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin:8px 0">
         <div style="height:100%;width:${perc}%;background:${colore}"></div>
       </div>
-      <div style="color:var(--muted);font-size:12px">
-        Stima calcolata sulle foto (~2 MB l'originale), non il dato reale di Supabase.
-        Il valore ufficiale è nella dashboard, sezione Usage.
-      </div>
+      <div style="font-size:12px">Calcolata sulle foto (~2 MB l'originale), serve solo a capire se il ritmo regge.</div>
     </div>`;
-  if(perc>90) h += `<p style="color:var(--danger);font-size:12.5px;margin-top:8px">
-    ⚠ A questo ritmo lo spazio non basta: riduci i giorni di conservazione degli originali.</p>`;
 
   $("statsBody").innerHTML = h;
 
@@ -3896,6 +3895,32 @@ function apriStats(){
     };
   });
   $("statsDlg").showModal();
+  mostraSpazioReale();
+}
+
+/* Occupazione VERA dei bucket, letta da Supabase con la funzione spazio_storage().
+   Prima qui c'era solo una proiezione: cancellando le foto il numero non cambiava mai. */
+async function mostraSpazioReale(){
+  const box = $("spazioReale");
+  if(!box) return;
+  if(!sb){ box.innerHTML = '<span style="color:var(--muted)">Cloud non disponibile</span>'; return; }
+  try{
+    const {data, error} = await sb.rpc("spazio_storage");
+    if(error) throw error;
+    const righe = data || [];
+    const totale = righe.reduce((a,r)=> a + Number(r.byte||0), 0);
+    const perc = Math.min(100, Math.round(totale*100/LIMITE_PRO));
+    const col = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
+    box.innerHTML =
+      `<div><b>Occupato adesso: <span style="color:${col}">${mb(totale)}</span></b> su 100 GB del piano Pro (${perc}%)</div>`+
+      `<div style="height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:6px 0">
+         <div style="height:100%;width:${perc}%;background:${col}"></div></div>`+
+      righe.map(r=>`<div style="color:var(--muted);font-size:12.5px">${String(r.bucket||"").replace(/[<>&]/g,"")}: ${mb(Number(r.byte||0))} — ${r.oggetti} file</div>`).join("");
+  }catch(err){
+    console.warn("spazio_storage", err);
+    box.innerHTML = '<span style="color:var(--muted)">Occupazione reale non disponibile: manca la funzione '+
+      '<code>spazio_storage()</code> su Supabase (o il permesso di eseguirla).</span>';
+  }
 }
 
 function venduteDi(r){
