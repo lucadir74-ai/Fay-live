@@ -3815,8 +3815,18 @@ function datiReport(){
 async function salvaStat(L, campo, valore){
   state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file:0};
   state.rulloStats[L][campo] = valore;
-  if(sb && cloud.rulli[L]){
-    await sbTry(()=>sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id), "report rullo");
+  if(!sb || !cloud.rulli[L]){
+    toast("Valore tenuto solo su questo PC: il rullo non è sul cloud", 6000);
+    return;
+  }
+  /* Prima l'esito non veniva controllato: se il cloud rifiutava (colonna mancante,
+     permessi) il numero spariva al ricaricamento senza che nessuno lo avesse detto. */
+  try{
+    const {error} = await sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id);
+    if(error) throw error;
+  }catch(err){
+    console.warn("report rullo", campo, err);
+    toast(`Non salvato sul cloud (${campo}): ` + (err.message || err), 9000);
   }
 }
 
