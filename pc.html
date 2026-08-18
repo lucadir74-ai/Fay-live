@@ -1374,7 +1374,7 @@ const NOME_ARCHIVIO = "FayLive";   // nome della cartella archivio uguale su tut
 /* Scelta della cartella archivio in un punto solo, con conferma esplicita:
    una postazione aveva scelto per sbaglio la scheda SD della macchina e, tolta la scheda,
    gli originali della serata non erano più da nessuna parte. */
-async function pickArchivio(){
+async function pickArchivio(nota){
   if(!window.showDirectoryPicker){ toast("Questo browser non supporta l'archivio su cartella"); return null; }
   let dir;
   try{ dir = await showDirectoryPicker({mode:"readwrite", id:"fayarchivio", startIn: state.archive || undefined}); }
@@ -1392,7 +1392,9 @@ async function pickArchivio(){
       `la scheda della macchina fotografica o una chiavetta: quando viene tolta, gli originali `+
       `della serata non ci sono più e le altre postazioni non riescono a stampare.\n\n`+
       `Vuoi usare "${dir.name}" lo stesso?`;
-  if(!confirm(messaggio)) return null;
+  /* La conferma va SEMPRE dopo il picker: una finestra di messaggio consuma il clic
+     dell'utente e Chrome poi rifiuta di aprire la scelta cartella. */
+  if(!confirm((nota? nota+"\n\n" : "") + messaggio)) return null;
   if(!standard) toast(`⚠ Archivio fuori standard: "${dir.name}" invece di ${NOME_ARCHIVIO}`, 7000);
   state.archive = dir;
   try{ await idb.set("archiveDir", dir); }catch(_){}
@@ -1481,7 +1483,7 @@ async function ensureArchive(){
   }catch(_){ /* si passa alla scelta manuale */ }
   // 2) prima volta: scelta della cartella fissa
   toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
-  return await pickArchivio();
+  return await pickArchivio("");
 }
 /* Dopo un refresh della pagina le foto importate tornano dal cloud senza il collegamento
    ai file su disco: il PC vede la richiesta di originale ma non ha più niente da caricare.
@@ -1567,11 +1569,11 @@ $("btnArchive").onclick = async ()=>{
 async function cambiaArchivio(){
   if(!window.showDirectoryPicker){ toast("Questo browser non supporta l'archivio su cartella"); return null; }
   const vecchia = state.archive ? state.archive.name : state.archiveName;
-  if(vecchia && !confirm(
-      `Gli originali importati d'ora in avanti verranno salvati nella nuova cartella.\n\n`+
-      `Quelli già salvati restano in "${vecchia}" e non vengono spostati: per ristampare una `+
-      `giornata vecchia dovrai tornare a puntare quella cartella.\n\nProcedo?`)) return null;
-  const dir = await pickArchivio();
+  const nota = vecchia
+    ? `Gli originali già salvati restano in "${vecchia}" e non vengono spostati: per ristampare `+
+      `una giornata vecchia dovrai tornare a puntare quella cartella.`
+    : "";
+  const dir = await pickArchivio(nota);
   if(!dir) return null;
   toast(`Archivio ora su "${dir.name}"`);
   if(cloud.servizio) ricollegaArchivio(true);   // se la nuova cartella ha già la giornata, riaggancia
