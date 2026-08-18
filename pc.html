@@ -117,9 +117,13 @@
   #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
   .cmp{position:relative}
-  .cmpDel{position:absolute;top:6px;right:6px;background:rgba(11,14,20,.85);color:#fff;border:1px solid var(--line);
-    border-radius:50%;width:26px;height:26px;line-height:1;cursor:pointer;font-size:13px}
-  .cmp:hover .cmpDel{background:var(--danger);border-color:var(--danger)}
+  /* Tondo con la X centrata davvero: prima il glifo era spinto in alto dal line-height
+     e dal padding del bottone. Qui centratura con flex e nessun padding. */
+  .cmpDel{position:absolute;top:6px;right:6px;display:flex;align-items:center;justify-content:center;
+    width:32px;height:32px;padding:0;box-sizing:border-box;border-radius:50%;
+    background:rgba(6,8,12,.72);color:#fff;border:2px solid #fff;
+    font-size:17px;font-weight:700;line-height:1;cursor:pointer}
+  .cmpDel:hover{background:var(--danger);border-color:#fff}
   #btnMail.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
     box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)}
   /* Il cliente ha appena inquadrato il QR e scritto la sua email: il tasto lampeggia
@@ -2674,10 +2678,10 @@ function openCompare(){
     const x=document.createElement("button");
     x.className="cmpDel"; x.textContent="✕"; x.title="Togli dalla selezione";
     d.append(img,c,x);
-    /* Un clic toglie la foto dal gruppo: è il gesto che serve quando il cliente cambia
-       idea davanti al mosaico. Doppio clic per aprirla in grande. */
-    d.onclick=()=>{ toggleSel(p); paintVisible(); openCompare(); };
-    d.ondblclick=(ev)=>{ ev.stopPropagation(); openLightboxList(selSet(), Math.max(0, selSet().findIndex(q=>q.id===p.id))); };
+    /* Il clic sulla foto la APRE in grande: toglierla dal gruppo per sbaglio, davanti
+       al cliente, era l'errore più facile da fare. Si toglie solo con la X. */
+    d.onclick=()=>{ openLightboxList(selSet(), Math.max(0, selSet().findIndex(q=>q.id===p.id))); };
+    x.onclick=(ev)=>{ ev.stopPropagation(); toggleSel(p); paintVisible(); openCompare(); };
     g.append(d);
   });
   $("compare").classList.add("open");
