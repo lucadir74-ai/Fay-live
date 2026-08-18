@@ -1235,7 +1235,10 @@ async function importaFiles(files){
   });
   if(!L) return;
 
-  await ensureArchive();
+  /* L'archivio non deve MAI fermare l'import: se la cartella non è disponibile le foto
+     entrano lo stesso (memoria + cloud) e si ricollegano dopo con "Ricollega originali". */
+  try{ await ensureArchive(); }
+  catch(err){ console.warn("archivio all'import", err); toast("Archivio non disponibile: importo lo stesso"); }
 
   files.sort((a,b)=>a.lastModified-b.lastModified || a.name.localeCompare(b.name));
   // se online, riserva i numeri dal cloud (atomico tra postazioni); altrimenti locali
@@ -1268,6 +1271,10 @@ async function importaFiles(files){
   const M=state.monitor;
   M.queue = buildSlideshowQueue();
   processBatch(batch);
+  }catch(err){
+    console.error("import", err);
+    alert("IMPORT INTERROTTO\n\n" + (err && err.message ? err.message : err) +
+          "\n\n(riferisci questo messaggio: dice esattamente dove si è fermato)");
   }finally{ importInCorso = false; }
 }
 
@@ -4884,6 +4891,16 @@ $("btnAutoOrig").onclick = ()=>{
            : "Caricamento automatico spento: salgono solo gli originali che servono davvero");
 };
 setAutoOrig(autoOrigOn());
+/* Finché non è chiaro cosa si rompe, gli errori non devono più sparire nella console:
+   qui vengono mostrati in chiaro, con la riga di codice. */
+addEventListener("error", e=>{
+  try{ toast("Errore: " + (e.message||"") + " (" + ((e.filename||"").split("/").pop()) + ":" + e.lineno + ")", 8000); }catch(_){}
+});
+addEventListener("unhandledrejection", e=>{
+  const r = e.reason;
+  try{ toast("Errore: " + (r && r.message ? r.message : r), 8000); }catch(_){}
+});
+
 $("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
 $("toolsMenu").onclick = ()=>{ $("toolsMenu").hidden = true; };   // scelta fatta: si richiude
 document.addEventListener("click", e=>{
