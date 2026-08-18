@@ -225,7 +225,8 @@
       <button id="btnReport">Report attività</button>
       <button id="btnInvii" title="Giorno per giorno: a chi sono state inviate le foto, quali codici e se l'invio è riuscito">Registro invii</button>
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
-      <button id="btnArchive">Archivio…</button>
+      <button id="btnArchive" title="Riattiva la cartella archivio di questa postazione (il permesso si perde a ogni ricaricamento della pagina)">Archivio…</button>
+      <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
@@ -446,7 +447,7 @@
   </div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
     <button id="doveOpen" title="Apre la finestra di Windows dentro la cartella dell'archivio: in alto si legge il percorso completo">Apri la cartella</button>
-    <button id="doveArch">Scegli archivio…</button>
+    <button id="doveArch">Cambia cartella…</button>
     <button id="doveClose" class="primary">Chiudi</button>
   </div>
 </dialog>
@@ -1445,6 +1446,30 @@ $("btnArchive").onclick = async ()=>{
   const d = await ensureArchive();
   if(d && cloud.servizio) ricollegaArchivio(true);   // riattivare l'archivio ricollega anche i file
 };
+
+/* Cambio della cartella archivio: ensureArchive riusa sempre quella ricordata, quindi
+   senza questa strada non c'era modo di spostarsi su un altro disco o un'altra cartella.
+   Le foto già scritte NON si spostano: restano dove sono e da lì si ricollegano solo
+   tornando a puntare quella cartella. */
+async function cambiaArchivio(){
+  if(!window.showDirectoryPicker){ toast("Questo browser non supporta l'archivio su cartella"); return null; }
+  const vecchia = state.archive ? state.archive.name : state.archiveName;
+  if(vecchia && !confirm(
+      `Gli originali importati d'ora in avanti verranno salvati nella nuova cartella.\n\n`+
+      `Quelli già salvati restano in "${vecchia}" e non vengono spostati: per ristampare una `+
+      `giornata vecchia dovrai tornare a puntare quella cartella.\n\nProcedo?`)) return null;
+  let dir;
+  try{ dir = await showDirectoryPicker({mode:"readwrite", startIn: state.archive || undefined}); }
+  catch(_){ return null; }                     // annullato dall'operatore
+  state.archive = dir;
+  try{ await idb.set("archiveDir", dir); }catch(_){}
+  try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
+  segnaArchivio(dir.name, true);
+  toast(`Archivio ora su "${dir.name}"`);
+  if(cloud.servizio) ricollegaArchivio(true);   // se la nuova cartella ha già la giornata, riaggancia
+  return dir;
+}
+$("btnArchiveChange").onclick = ()=> cambiaArchivio();   // il menu si richiude da solo
 /* ---------- "Dove sono salvate le foto" ----------
    Il browser non può leggere il percorso completo di una cartella: conosce solo il nome.
    Qui si mette insieme quello che l'app sa davvero (cartella, giornata, rulli, cloud,
@@ -1489,8 +1514,8 @@ $("doveOpen").onclick = async ()=>{
 };
 $("doveArch").onclick = async ()=>{
   $("doveDlg").close();
-  const d = await ensureArchive();
-  if(d && cloud.servizio) ricollegaArchivio(true);
+  if(state.archive || state.archiveName) await cambiaArchivio();
+  else { const d = await ensureArchive(); if(d && cloud.servizio) ricollegaArchivio(true); }
 };
 
 $("btnExportDir").onclick = async ()=>{
