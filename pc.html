@@ -2905,7 +2905,11 @@ async function inviaDiretto(set){
       const codici = daCaricare.filter(p=>!p.origUploaded).map(p=>p.code);
       if(!codici.length) break;
       try{
-        const {data} = await sb.from("foto").select("codice,originale_url").in("codice", codici);
+        /* anche qui: senza il filtro sui rulli della giornata una foto di ieri con lo
+           stesso codice faceva risultare "pronto" un originale che in realtà non c'era */
+        const idsRulliExp = Object.values(cloud.rulli||{}).map(r=>r&&r.id).filter(Boolean);
+        const {data} = await sb.from("foto").select("codice,originale_url")
+          .in("rullo_id", idsRulliExp).in("codice", codici);
         (data||[]).forEach(row=>{ if(row.originale_url){ const p=state.byCode.get(row.codice); if(p) p.origUploaded=true; } });
       }catch(_){}
       if(!daCaricare.some(p=>!p.origUploaded)) break;
@@ -4625,7 +4629,14 @@ async function riparaAnteprime(){
   const senzaUrl = vuote.filter(p=>!p.miniUrl && !p.anteprimaUrl).map(p=>p.code);
   if(senzaUrl.length){
     try{
-      const {data} = await sb.from("foto").select("codice,mini_url,anteprima_url").in("codice", senzaUrl);
+      /* I codici (A-001, A-002...) ripartono da capo ogni giornata: cercare per SOLO codice
+         restituiva anche le righe delle giornate precedenti e la foto di oggi si prendeva
+         l'immagine di ieri (postazioni secondarie con foto mescolate). Va sempre limitata
+         ai rulli della giornata aperta. */
+      const idsRulli = Object.values(cloud.rulli||{}).map(r=>r&&r.id).filter(Boolean);
+      if(!idsRulli.length) return daDisco;
+      const {data} = await sb.from("foto").select("codice,mini_url,anteprima_url")
+        .in("rullo_id", idsRulli).in("codice", senzaUrl);
       (data||[]).forEach(f=>{ const p=state.byCode.get(f.codice);
         if(p){ if(f.mini_url) p.miniUrl=f.mini_url; if(f.anteprima_url) p.anteprimaUrl=f.anteprima_url; } });
     }catch(_){}
