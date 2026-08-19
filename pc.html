@@ -2098,6 +2098,12 @@ async function syncPhotoUp(p){
       if(up.error) throw up.error;
       p.miniUrl = pubUrl(mp);
     }
+    /* Rete di sicurezza: non scrivere MAI sulla riga un indirizzo che appartiene a
+       un'altra giornata. I codici si ripetono ogni giorno e un indirizzo adottato per
+       sbaglio finiva nel database, rovinando le foto per tutte le postazioni e i tablet. */
+    const mioSrv = srvOf(p);
+    if(p.miniUrl && !String(p.miniUrl).includes(mioSrv)) p.miniUrl = null;
+    if(p.anteprimaUrl && !String(p.anteprimaUrl).includes(mioSrv)) p.anteprimaUrl = null;
     const {data,error} = await sb.from("foto").upsert({
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
