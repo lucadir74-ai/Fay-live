@@ -114,7 +114,7 @@
   #lbMenu{position:absolute;top:52px;right:16px;z-index:5;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:200px;background:rgba(11,14,20,.97);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbMenu[hidden]{display:none}
   #lbMenu button{text-align:left;width:100%}
-  #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:13px;padding:18px;width:340px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
   .cmp{position:relative}
   /* Tondo con la X centrata davvero: prima il glifo era spinto in alto dal line-height
@@ -137,8 +137,16 @@
   @media (prefers-reduced-motion:reduce){ #btnMail.nuova{animation:none} }
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
-  #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
-  #lbAdjBar input[type=range]{flex:1}
+  #lbAdjBar .row span{font-size:14px;color:var(--muted);min-width:84px}
+  #lbAdjBar input[type=range]{flex:1;height:22px}
+  /* frecce ai lati di ogni barra: con il cliente davanti il cursore trascinato e' impreciso,
+     un colpo di freccia sposta di poco e si ripete */
+  #lbAdjBar .fre{flex:0 0 auto;width:26px;height:26px;padding:0;line-height:1;font-size:15px;
+    border-radius:6px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);cursor:pointer}
+  #lbAdjBar .fre:hover{border-color:var(--accent);color:var(--accent)}
+  #lbAdjBar .dom{display:flex;align-items:center;gap:6px;min-width:84px;font-size:14px;color:var(--muted)}
+  #lbAdjBar .pas{width:13px;height:13px;border-radius:3px;flex:0 0 auto}
+  #lbAdjBar hr{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -339,7 +347,12 @@
         <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Colore</span><input type="range" id="adjS" min="0" max="200" step="1" value="100"></div>
         <div class="row"><span>Calore</span><input type="range" id="adjT" min="-100" max="100" step="1" value="0"></div>
-        <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:13px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
+        <hr>
+        <div class="row"><span class="dom"><i class="pas" style="background:#00d5d5"></i>R<i class="pas" style="background:#e03131"></i></span><input type="range" id="adjR" min="-100" max="100" step="1" value="0"></div>
+        <div class="row"><span class="dom"><i class="pas" style="background:#d500d5"></i>G<i class="pas" style="background:#2f9e44"></i></span><input type="range" id="adjG" min="-100" max="100" step="1" value="0"></div>
+        <div class="row"><span class="dom"><i class="pas" style="background:#e8e83a"></i>B<i class="pas" style="background:#1971c2"></i></span><input type="range" id="adjB2" min="-100" max="100" step="1" value="0"></div>
+        <hr>
+        <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
           <button id="adjReset">Azzera</button></div>
         <span id="adjNote" class="hint"></span>
       </div>
@@ -3279,11 +3292,12 @@ function refreshLbStatus(){
 /* ---------- regolazioni luce/colore per singola foto ----------
    Valgono per il visualizzatore, il monitor cliente e la stampa.
    L'originale su disco non viene mai modificato.                    */
-const ADJ0 = {b:100, c:100, s:100, t:0, bw:false};
+const ADJ0 = {b:100, c:100, s:100, t:0, bw:false, dr:0, dg:0, db:0};
 function adjOf(p){
   if(!p || !p.adj) return null;
   const a = p.adj;
-  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !a.bw) ? null : a;
+  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !a.bw
+          && !a.dr && !a.dg && !a.db) ? null : a;
 }
 function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
   const a = adjOf(p);
@@ -3299,6 +3313,21 @@ function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
     ctx.globalAlpha = Math.min(0.65, Math.abs(a.t)/110);
     ctx.fillStyle = a.t > 0 ? "#FF9A3C" : "#3CA0FF";
     ctx.fillRect(dx, dy, dw, dh);
+  }
+  /* Dominanti per canale: verso il colore puro si AGGIUNGE luce a quel canale,
+     verso il complementare lo si SMORZA. Come le tre barre del vecchio programma. */
+  if(!a.bw && (a.dr || a.dg || a.db)){
+    const canali = [[a.dr,0],[a.dg,1],[a.db,2]];
+    for(const [v, idx] of canali){
+      if(!v) continue;
+      const k = Math.round(Math.min(100, Math.abs(v)) * 0.62);   // 0-62: resta naturale
+      const c3 = [0,0,0];
+      ctx.globalAlpha = 1;
+      if(v > 0){ c3[idx] = k; ctx.globalCompositeOperation = "lighter"; }
+      else { c3[0]=c3[1]=c3[2]=255; c3[idx] = 255 - k; ctx.globalCompositeOperation = "multiply"; }
+      ctx.fillStyle = `rgb(${c3[0]},${c3[1]},${c3[2]})`;
+      ctx.fillRect(dx, dy, dw, dh);
+    }
   }
   ctx.restore();
 }
@@ -3411,6 +3440,9 @@ async function paintLightbox(){
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
 function closeLightbox(){
+  /* Le regolazioni valgono solo finche' la foto e' aperta: chiudendo si azzerano,
+     cosi' nessuno stampa dopo con la correzione di un'altra foto addosso. */
+  for(const p of state.photos) if(p.adj) p.adj = null;
   $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; state.lbFoto=null;
   // il monitor cliente torna allo slideshow: la vendita è finita
   const M=state.monitor;
@@ -3444,8 +3476,10 @@ function lbPhoto(){ return fotoAperta() || null; }
 function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
   $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
+  $("adjR").value=a.dr||0; $("adjG").value=a.dg||0; $("adjB2").value=a.db||0;
   $("adjBW").checked = !!a.bw;
   $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
+  $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = !!a.bw;
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
 }
 $("lbAdj").onclick = ()=>{
@@ -3455,8 +3489,10 @@ $("lbAdj").onclick = ()=>{
 function applyAdjFromBar(){
   const p = lbPhoto(); if(!p) return;
   p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
+            dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
             bw: $("adjBW").checked };
   $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
+  $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = $("adjBW").checked;
   // ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
@@ -3469,7 +3505,29 @@ function applyAdjFromBar(){
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
   monitorFollow();              // il cliente vede subito la foto corretta
 }
-for(const id of ["adjB","adjC","adjS","adjT"]) $(id).oninput = applyAdjFromBar;
+for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2"]) $(id).oninput = applyAdjFromBar;
+
+/* Frecce ai lati di ogni barra: un colpo = uno scatto piccolo, per regolare con precisione
+   senza trascinare il cursore (col cliente davanti il trascinamento e' impreciso). */
+(function frecceSuiCursori(){
+  const PASSO = 2;
+  for(const r of document.querySelectorAll("#lbAdjBar .row")){
+    const inp = r.querySelector("input[type=range]");
+    if(!inp) continue;
+    const mk = (txt, verso)=>{
+      const b=document.createElement("button");
+      b.className="fre"; b.textContent=txt; b.tabIndex=-1;
+      b.onclick=()=>{
+        if(inp.disabled) return;
+        const v = Math.min(+inp.max, Math.max(+inp.min, (+inp.value) + verso*PASSO));
+        inp.value = v; applyAdjFromBar();
+      };
+      return b;
+    };
+    r.insertBefore(mk("\u2039", -1), inp);
+    r.appendChild(mk("\u203a", +1));
+  }
+})();
 $("adjBW").onchange = applyAdjFromBar;
 $("adjReset").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
