@@ -2637,7 +2637,10 @@ async function getBig(p, maxSide=1920){
     bmp = await decodeBig(p, maxSide);
   }
   bigCache.set(p.id,bmp);
-  if(bigCache.size>24){ const [oldId, old]=bigCache.entries().next().value; old.close(); bigCache.delete(oldId); }
+  /* La cache deve tenere almeno la pagina in corso + quella precaricata (12 su 6 riquadri),
+     più le foto aperte nel visualizzatore: con 24 capitava che una foto della pagina venisse
+     sfrattata (e chiusa) proprio mentre serviva. */
+  if(bigCache.size>32){ const [oldId, old]=bigCache.entries().next().value; old.close(); bigCache.delete(oldId); }
   return bmp;
 }
 
@@ -3696,8 +3699,18 @@ function layoutFor(n){
   return [cols, Math.ceil(n/cols)];
 }
 // disegna una pagina di foto affiancate sul monitor cliente
+/* La pagina si disegna TUTTA INSIEME. Prima si aspettano tutte le immagini (in parallelo),
+   poi si pulisce lo schermo e si disegna in un colpo solo. Prima invece lo schermo veniva
+   pulito subito e ogni cella disegnata appena la sua foto era pronta: se una sola immagine
+   non era in cache, il cliente vedeva la schermata riempirsi una foto alla volta. */
 async function drawTilePage(page, expectMode, withInfo){
   const M=state.monitor; if(!M.ctx) return;
+  // 1) tutte le immagini della pagina, in parallelo: chi fallisce lascia la cella vuota
+  const bmps = await Promise.all(page.map(p => getBig(p, 1400).catch(()=>null)));
+  // 2) nel frattempo la pagina può essere stata superata (cambio modo, monitor chiuso):
+  //    in quel caso non si tocca lo schermo, così non resta mai una pagina a metà
+  if(!M.win || M.win.closed || M.mode!==expectMode) return;
+  if(!bmps.some(Boolean)) return;
   const [cols,rows] = layoutFor(page.length);
   const cw=M.canvas.width, ch=M.canvas.height;
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
@@ -3709,18 +3722,20 @@ async function drawTilePage(page, expectMode, withInfo){
   const bh = info ? Math.max(28, Math.round(ch * ((ev0.infoH ?? 4)/100))) : 0;
   const chGrid = ch - bh;
   const tw=(cw-gap*(cols+1))/cols, th=(chGrid-gap*(rows+1))/rows;
+  // 3) disegno sincrono: nessuna attesa qui dentro, la pagina compare intera
   for(let i=0;i<page.length;i++){
-    const p=page[i];
-    let bmp; try{ bmp=await getBig(p, 1400); }catch(_){ continue; }
-    if(!M.win || M.win.closed || M.mode!==expectMode) return;
-    const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
-    const k=Math.min(tw/bmp.width, th/bmp.height);
-    const dw=bmp.width*k, dh=bmp.height*k;
-    const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
-    drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
-    M.ctx.save(); M.ctx.translate(dx,dy);
-    drawCodeBadge(M.ctx,dw,dh,p.code);
-    M.ctx.restore();
+    const p=page[i], bmp=bmps[i];
+    if(!bmp) continue;                       // posizione mantenuta: le altre non si spostano
+    try{
+      const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
+      const k=Math.min(tw/bmp.width, th/bmp.height);
+      const dw=bmp.width*k, dh=bmp.height*k;
+      const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
+      drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
+      M.ctx.save(); M.ctx.translate(dx,dy);
+      drawCodeBadge(M.ctx,dw,dh,p.code);
+      M.ctx.restore();
+    }catch(_){ M.ctx.restore(); }            // una foto rotta non deve far saltare la pagina
   }
   if(bh){
     const by = ch - bh;                       // fascia in fondo, fuori dalle foto
@@ -3743,7 +3758,9 @@ async function paintMonitorMosaic(start){
   for(let i=0;i<Math.min(n,L);i++) page.push(q[(start+i)%L]);
   await drawTilePage(page, "slideshow", true);
   M._page=start;
-  for(let i=0;i<2 && L;i++){ const nx=q[(start+n+i)%L]; if(nx) getBig(nx,1400).catch(()=>{}); }
+  /* Si precarica la pagina SUCCESSIVA per intero (prima solo 2 foto): così al cambio
+     schermata le immagini sono già in cache e la pagina compare subito, tutta insieme. */
+  for(let i=0;i<n && L;i++){ const nx=q[(start+n+i)%L]; if(nx) getBig(nx,1400).catch(()=>{}); }
 }
 // selezione/preferiti affiancati, statici, sul monitor cliente
 async function presentMosaicSet(set){
