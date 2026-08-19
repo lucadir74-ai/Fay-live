@@ -1401,6 +1401,16 @@ const idb = {
 /* Riattiva l'archivio SENZA chiedere niente, quando Windows ha già dato il permesso
    in una sessione precedente. Serve dopo ogni ricaricamento della pagina: senza questo,
    PC1 riparte senza i file in mano e gli originali non salgono più da soli. */
+/* Archivio ritrovato: da qui in poi non si deve toccare piu' niente a mano —
+   si riagganciano gli originali della giornata e si rimettono in coda le anteprime
+   che mancano sul cloud. */
+function dopoArchivioPronto(){
+  if(!cloud.servizio) return;
+  setTimeout(async ()=>{
+    try{ await ricollegaArchivio(true); }catch(_){}
+    try{ caricaAnteprimeMancanti(); }catch(_){}
+  }, 800);
+}
 async function riattivaArchivioSilenzioso(){
   if(state.archive) return state.archive;
   if(!window.showDirectoryPicker) return null;
@@ -1414,6 +1424,7 @@ async function riattivaArchivioSilenzioso(){
     }
     state.archive = saved;
     segnaArchivio(saved.name, true);
+    dopoArchivioPronto();
     return saved;
   }catch(_){ return null; }
 }
@@ -1597,14 +1608,14 @@ function apriArchDlg(motivo){
 }
 $("archPick").onclick = async ()=>{
   const d = await pickArchivio();
-  if(d){ $("archDlg").close(); toast(`Originali salvati in "${d.name}"`); if(cloud.servizio) ricollegaArchivio(true); }
+  if(d){ $("archDlg").close(); toast(`Originali salvati in "${d.name}"`); dopoArchivioPronto(); }
 };
 $("archKeep").onclick = async ()=>{
   const d = await ensureArchive();
   const v = d ? await verificaArchivio(d) : {ok:false, motivo:"irraggiungibile"};
   if(v.ok){
     state.senzaArchivio = false; nascondiAllarmeArchivio();
-    $("archDlg").close(); if(cloud.servizio) ricollegaArchivio(true);
+    $("archDlg").close(); dopoArchivioPronto();
   }
   else if(v.motivo === "sospetta") apriArchDlg("sospetta");
   else toast("Cartella ancora non raggiungibile: scegline un'altra");
@@ -1707,6 +1718,7 @@ async function ensureArchive(){
       if(perm==="granted"){
         state.archive = saved;
         segnaArchivio(saved.name, true);
+        dopoArchivioPronto();
         return saved;
       }
     }
