@@ -372,6 +372,7 @@
         <div class="field"><label>Nome servizio (facoltativo)</label><input type="text" id="evName"></div>
         <div class="row">
           <div class="field"><label>Slideshow: secondi per scatto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
+          <div class="field"><label>QR al cliente: si chiude dopo (secondi · 0 = mai)</label><input type="number" id="evQrSecs" min="0" max="900" step="10" value="120"></div>
           <div class="field"><label>Foto insieme sullo schermo</label>
             <select id="evTiles">
               <option value="4">4 (2×2)</option>
@@ -706,7 +707,7 @@ async function sbTry(fn, label){
 }
 
 const state = {
-  event: {name:"", secs:4, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2, maskH:null, maskV:null}, // configurabile dal pannello Servizio, tutto facoltativo
+  event: {name:"", secs:4, qrSecs:120, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2, maskH:null, maskV:null}, // configurabile dal pannello Servizio, tutto facoltativo
   photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
@@ -816,6 +817,7 @@ $("btnEvent").onclick = ()=>{ openEventPanel(); };
 function openEventPanel(){
   const ev = state.event;
   $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
+  $("evQrSecs").value = ev.qrSecs ?? 120;
   $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
   $("evFrameOn").checked = ev.frameOn!==false;
   $("evFrameBorder").value = ev.frameBorder ?? 2.5;
@@ -962,7 +964,7 @@ async function loadMasksForSede(){
 /* Impostazioni del servizio (scritta, font, posizione codice, cornice, slideshow):
    fino a ieri vivevano solo in memoria e sparivano a ogni ricarica. Ora seguono la sede,
    sul cloud e in copia locale, esattamente come le mascherine. */
-const IMPOSTAZIONI_SALVATE = ["name","secs","tiles","text","infoLine","frameOn","frameBorder",
+const IMPOSTAZIONI_SALVATE = ["name","secs","qrSecs","tiles","text","infoLine","frameOn","frameBorder",
   "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos"];
 function impKey(){ return "faylive_imp_" + (cloud.sede ? cloud.sede.id : "nosede"); }
 function impCloudPath(){ return "impostazioni/" + (cloud.sede ? cloud.sede.id : "nosede") + ".json"; }
@@ -1046,6 +1048,7 @@ $("evSave").onclick = ()=>{
   const name=$("evName").value.trim();
   state.event = {
     name, secs: Math.max(2, +$("evSecs").value||4),
+    qrSecs: Math.max(0, +$("evQrSecs").value||0),
     tiles: +$("evTiles").value||6,
     text: $("evText").value.trim(),
     infoLine: $("evInfoLine").value.trim(),
@@ -3049,9 +3052,7 @@ $("cmpShow").onclick = ()=> presentMosaicSet(selSet());
    mostrando, e lo togli quando vuoi. Lo stesso tasto fa le due cose. */
 function alternaQr(codici, btn){
   if(venditaAttiva()){
-    mail.vendita = null;
-    const M = state.monitor; if(M.win && !M.win.closed) repaintMonitor();
-    toast("QR tolto dal monitor");
+    chiudiQr(false);
   }else{
     if(!codici.length){ toast("Nessuna foto da collegare al QR"); return; }
     inviaQrVendita(codici);
@@ -3062,7 +3063,7 @@ function aggiornaTastiQr(){
   const acceso = !!venditaAttiva();
   for(const id of ["cmpQr","lbQr"]){
     const b=$(id); if(!b) continue;
-    b.textContent = acceso ? "Chiudi QR" : "QR al cliente";
+    b.textContent = acceso ? "Chiudi QR" : "QR al cliente";   // il conto alla rovescia lo riscrive il timer
     b.classList.toggle("primary", !acceso);
   }
 }
@@ -5224,7 +5225,7 @@ $("btnRegistro").onclick = async ()=>{
    DA INVIARE — il cliente inquadra il QR sul monitor e scrive la sua email.
    La richiesta arriva qui; l'invio delle foto lo fa l'operatore da Gmail.
    ===================================================================== */
-const mail = { qrCanvas:null, qrFor:null, rows:[], vendita:null, _ultimoN:null, _lampeggio:null };
+const mail = { qrCanvas:null, qrFor:null, rows:[], vendita:null, _ultimoN:null, _lampeggio:null, _timer:null, _tick:null, _scade:0 };
 
 function mailQrEnabled(){ return localStorage.getItem("faylive_qr") !== "0"; }
 /* QR d'angolo: generico, per chi vuole le foto ma non ha ancora comprato.
@@ -5318,6 +5319,48 @@ function drawMonitorQR(){
 function venditaAttiva(){
   return mail.vendita;
 }
+/* ---------- timer del QR ----------
+   Il QR si manda a mano (lo decide l'operatore) ma non resta più acceso all'infinito:
+   dopo i secondi impostati nel pannello Servizio si toglie da solo. Con 0 secondi
+   torna il comportamento di prima, cioè si toglie solo col tasto "Chiudi QR".
+   L'arrivo dell'email del cliente NON lo chiude: capita che due persone dello stesso
+   tavolo lo inquadrino una dopo l'altra. */
+function qrDurata(){
+  const s = state.event ? (state.event.qrSecs ?? 120) : 120;
+  return Math.max(0, +s || 0);
+}
+function fermaTimerQr(){
+  if(mail._timer){ clearTimeout(mail._timer); mail._timer = null; }
+  if(mail._tick){ clearInterval(mail._tick); mail._tick = null; }
+}
+function avviaTimerQr(){
+  fermaTimerQr();
+  const s = qrDurata();
+  if(!s) return;                                  // 0 = nessuna scadenza
+  mail._scade = Date.now() + s*1000;
+  mail._timer = setTimeout(()=> chiudiQr(true), s*1000);
+  // conto alla rovescia visibile SOLO all'operatore (sul monitor cliente non compare)
+  mail._tick = setInterval(()=>{
+    if(!venditaAttiva()){ fermaTimerQr(); return; }
+    const r = Math.max(0, Math.round((mail._scade - Date.now())/1000));
+    for(const id of ["cmpQr","lbQr"]){ const b=$(id); if(b) b.textContent = `Chiudi QR · ${r}s`; }
+    if($("qrDlg").open && qrSessione && qrSessione.inviato && !qrSessione.ricevuta)
+      $("qrEsito").textContent = `QR sul monitor — si chiude da solo tra ${r}s.`;
+  }, 1000);
+}
+/* Unico punto di spegnimento: usato dal tasto, dal timer e dal cambio di servizio. */
+function chiudiQr(auto){
+  fermaTimerQr();
+  if(!venditaAttiva()) { aggiornaTastiQr(); return; }
+  mail.vendita = null;
+  const M = state.monitor; if(M.win && !M.win.closed) repaintMonitor();
+  aggiornaTastiQr();
+  toast(auto ? "QR tolto dal monitor (tempo scaduto)" : "QR tolto dal monitor");
+  if(auto && $("qrDlg").open && qrSessione)
+    $("qrEsito").textContent = qrSessione.ricevuta
+      ? "✓ Email ricevuta. QR tolto dal monitor a tempo scaduto."
+      : "QR tolto dal monitor a tempo scaduto — puoi rimandarlo.";
+}
 /* Il QR non parte più da solo a fine vendita: prima si chiede all'operatore.
    Ci sono clienti che non lo vogliono, e mandarlo sul monitor senza deciderlo
    toglieva il controllo a chi sta al desk. */
@@ -5342,7 +5385,10 @@ function inviaQrVendita(codici){
   mail.vendita = { codici, inviatoIl: Date.now() };
   const M = state.monitor;
   if(M.win && !M.win.closed) repaintMonitor();      // il QR d'angolo cambia subito
-  toast(`QR delle ${codici.length} foto sul monitor — resta finché non lo togli`);
+  const s = qrDurata();
+  avviaTimerQr();
+  toast(s ? `QR delle ${codici.length} foto sul monitor — si chiude tra ${s}s`
+          : `QR delle ${codici.length} foto sul monitor — resta finché non lo togli`);
 }
 $("qrNo").onclick = ()=>{ $("qrDlg").close(); };
 
