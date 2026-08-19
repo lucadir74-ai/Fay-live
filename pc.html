@@ -147,6 +147,9 @@
   #lbAdjBar .dom{display:flex;align-items:center;gap:6px;min-width:84px;font-size:14px;color:var(--muted)}
   #lbAdjBar .pas{width:13px;height:13px;border-radius:3px;flex:0 0 auto}
   #lbAdjBar hr{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
+  /* spazio sempre riservato: prima la nota compariva al primo tocco di un cursore
+     e il pannello si spostava di qualche millimetro sotto le dita */
+  #lbAdjBar #adjNote{display:block;min-height:32px;line-height:1.35}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -3771,7 +3774,14 @@ function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) st
 /* ---------- tastiera ---------- */
 addEventListener("keydown", e=>{
   const tag=document.activeElement.tagName;
-  if(tag==="INPUT"||tag==="SELECT"){ if(e.key==="Escape") document.activeElement.blur(); return; }
+  const inRegolazioni = document.activeElement.closest && document.activeElement.closest("#lbAdjBar");
+  if(tag==="INPUT"||tag==="SELECT"){
+    if(e.key==="Escape"){ document.activeElement.blur(); return; }
+    /* I cursori e la casella bianco e nero tengono il fuoco dopo il clic: senza questo
+       Invio non chiudeva piu' la foto e bisognava cliccare fuori. */
+    if(!(inRegolazioni && e.key==="Enter")) return;
+    document.activeElement.blur();
+  }
   // il tasto appena cliccato resta col fuoco: invio/spazio lo ri-cliccherebbero
   // invece di chiudere la vista → gli si toglie il fuoco e comanda la tastiera
   if((e.key==="Enter" || e.key===" ") && tag==="BUTTON"){ e.preventDefault(); document.activeElement.blur(); }
