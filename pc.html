@@ -2867,6 +2867,15 @@ $("searchBox").addEventListener("keydown", e=>{
     resetSearch();
     return;
   }
+  /* Col cursore ancora nella casella (dopo aver cercato un codice) i tasti comando
+     finivano scritti dentro come testo: "-" scriveva un trattino invece di mandare la
+     foto sul monitor. Qui i comandi della foto aperta valgono lo stesso. */
+  if($("lightbox").classList.contains("open") && (e.key==="-" || e.key==="+")){
+    e.preventDefault();
+    if(e.key==="-") $("lbShow").click();
+    else { const M=state.monitor; if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); toast("Tolta dal monitor — slideshow ripreso"); } }
+    return;
+  }
   // col cursore ancora nella casella, le frecce scorrono comunque le foto aperte
   if($("lightbox").classList.contains("open") && (e.key==="ArrowRight" || e.key==="ArrowLeft")){
     e.preventDefault();
