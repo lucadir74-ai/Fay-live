@@ -2670,8 +2670,12 @@ function renderTabs(){
   const cd=$("btnClearDay"); if(cd) cd.textContent = state.activeLetter ? "Svuota rullo "+state.activeLetter : "Svuota giornata";
   const stats=L=>{
     const ph = L? state.photos.filter(p=>p.letter===L) : state.photos;
+    /* 🖨 conta i FOGLI usciti dalla stampante, copie comprese: una foto stampata 6 volte
+       vale 6. Prima contava le foto diverse stampate (valeva 1), e il rullo diceva 6 dove
+       la stampante aveva fatto 12 — mentre la singola foto contava giusto e il report pure. */
     return { n:ph.length,
-             pr:ph.filter(p=>p.prints>0).length,
+             pr:ph.reduce((s,p)=>s+(p.prints||0),0),
+             prFoto:ph.filter(p=>p.prints>0).length,
              ex:ph.filter(p=>p.exported).length };
   };
   const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
@@ -2682,7 +2686,7 @@ function renderTabs(){
     return `<button class="ltab${active?" active":""}" data-l="${L||""}" title="${L?"Doppio clic per la descrizione del rullo":""}">
       <span class="lt">${label}</span>${desc}
       <span class="stat">${s.n} foto</span>
-      <span class="stat pr">🖨 ${s.pr}</span>
+      <span class="stat pr" title="${s.pr} fogli stampati su ${s.prFoto} foto (copie comprese)">🖨 ${s.pr}</span>
       <span class="stat ex">⇩ ${s.ex}</span>
     </button>`;
   };
@@ -2695,7 +2699,7 @@ function renderTabs(){
   const riepilogo = letters.length ? `<div class="daysum" title="Riepilogo della giornata (non apribile)">
       <span class="lt">GIORNATA</span>
       <span class="stat">${g.n} foto</span>
-      <span class="stat pr">🖨 ${g.pr}</span>
+      <span class="stat pr" title="${g.pr} fogli stampati su ${g.prFoto} foto (copie comprese)">🖨 ${g.pr}</span>
       <span class="stat ex">⇩ ${g.ex}</span>
     </div>` : "";
   nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
