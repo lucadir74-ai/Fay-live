@@ -25,7 +25,13 @@
   /* ---------- Layout ---------- */
   #app{display:flex;flex-direction:column;height:100%}
   header{position:relative;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
-  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  /* Le voci sono cresciute e le ultime finivano sotto il bordo dello schermo: il menu
+     non supera l'altezza della finestra e scorre. */
+  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5);
+    max-height:calc(100vh - 72px);overflow-y:auto;overscroll-behavior:contain}
+  #toolsMenu::-webkit-scrollbar{width:10px}
+  #toolsMenu::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+  #toolsMenu button{flex:none}
   #toolsMenu[hidden]{display:none}
   #toolsMenu button{text-align:left;width:100%}
   #toolsMenu hr{border:none;border-top:1px solid var(--line);margin:2px 0}
