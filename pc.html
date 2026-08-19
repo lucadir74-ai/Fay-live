@@ -248,6 +248,7 @@
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnArchive" title="Riattiva la cartella archivio di questa postazione (il permesso si perde a ogni ricaricamento della pagina)">Archivio…</button>
       <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
+      <button id="btnPulisciRichieste" title="Toglie le richieste di originali rimaste appese: le stampe ancora in attesa si possono rifare">Annulla richieste in sospeso</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
@@ -2227,13 +2228,17 @@ addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); pumpOrigQueu
 
 /* Controllo periodico delle richieste: il realtime sull'hotspot cade e non si riconnette,
    così una richiesta poteva restare appesa per sempre. Qui il PC che ha i file va a vedere da solo. */
+let avvisoCodaGonfia = false;
 async function serviRichieste(){
   if(!sb || !cloud.servizio) return;
   const ids = Object.values(cloud.rulli||{}).map(r=>r.id).filter(Boolean);
   if(!ids.length) return;
   try{
+    /* Il limite era 200: con centinaia di richieste vecchie e mai servibili (foto i cui
+       originali non stanno su nessun PC) le nuove finivano fuori dall'elenco e non le
+       vedeva nessuno. Ora si legge molto più largo e si avvisa quando la coda è gonfia. */
     const {data, error} = await sb.from("foto")
-      .select("codice,originale_url").eq("richiesta_originale", true).in("rullo_id", ids).limit(200);
+      .select("codice,originale_url").eq("richiesta_originale", true).in("rullo_id", ids).limit(2000);
     if(error) throw error;
     let nonServite = 0;
     for(const f of (data||[])){
@@ -2248,6 +2253,11 @@ async function serviRichieste(){
     }
     richiesteAperte = nonServite;
     updateOrigCount();
+    if(nonServite >= 150 && !avvisoCodaGonfia){
+      avvisoCodaGonfia = true;
+      toast(`${nonServite} richieste che nessuna postazione può servire: usa Altro → Annulla richieste in sospeso`, 9000);
+    }
+    if(!nonServite) avvisoCodaGonfia = false;
     // qualcuno chiede originali che dovrebbero essere miei ma non ho i file agganciati:
     // provo a ripescarli dall'archivio da solo, al massimo una volta al minuto
     if(nonServite && state.archive && Date.now()-ultimoRelink > 60000) ricollegaArchivio(true);
@@ -2256,6 +2266,23 @@ async function serviRichieste(){
 /* Ogni 2 secondi, non 5: quando un tablet chiede un originale il cliente è già davanti
    al venditore, e cinque secondi persi prima ancora di iniziare a caricare pesano. */
 setInterval(serviRichieste, 2000);
+
+/* Le richieste di foto che nessun PC possiede restano appese per sempre e ingombrano
+   l'elenco. Qui si azzerano tutte in blocco: chi sta ancora aspettando ripreme Stampa. */
+$("btnPulisciRichieste").onclick = async ()=>{
+  if(!sb || !cloud.servizio){ toast("Nessuna giornata aperta"); return; }
+  const ids = Object.values(cloud.rulli||{}).map(r=>r.id).filter(Boolean);
+  if(!ids.length) return;
+  if(!confirm("Tolgo tutte le richieste di originali rimaste in sospeso su questa giornata.\n\n"+
+              "Le foto non vengono toccate: chi sta aspettando una stampa dovrà ripremere Stampa.\n\nProcedo?")) return;
+  try{
+    const {error} = await sb.from("foto").update({richiesta_originale:false})
+      .eq("richiesta_originale", true).in("rullo_id", ids);
+    if(error) throw error;
+    richiesteAperte = 0; avvisoCodaGonfia = false; updateOrigCount();
+    toast("Richieste in sospeso annullate");
+  }catch(err){ toast("Non riuscito: " + (err.message || err), 8000); }
+};
 /* Il controllo a intervalli viene rallentato da Chrome quando la scheda non è in primo
    piano (l'operatore passa su Gmail, su Esplora file…): lì gli intervalli scendono a uno
    al minuto e le richieste dei tablet restano appese. Questo timer vive in un thread
