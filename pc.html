@@ -1204,7 +1204,7 @@ $("restoreInput").onchange = async e=>{
       p.preview=prevBlob; thumbCache.set(ckey(p.code), prevBlob);
       if(!p.thumb){ try{ p.thumb=await blobToThumb(prevBlob); }catch(_){} }
       // ricarica sul cloud mantenendo lo stesso codice/riga
-      const ap=cloud.servizio.id+"/"+p.code+".jpg";
+      const ap=srvOf(p)+"/"+p.code+".jpg";
       const up=await sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true});
       if(!up.error){
         p.anteprimaUrl=pubUrl(ap);
@@ -1218,7 +1218,7 @@ $("restoreInput").onchange = async e=>{
         m.getContext("2d").drawImage(c,0,0,m.width,m.height);
         const miniBlob = await toBlobAsync(m, 0.72);
         p.mini = miniBlob;
-        const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
+        const mp = srvOf(p)+"/"+p.code+"_m.jpg";
         const um = await sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true});
         if(!um.error){
           p.miniUrl = pubUrl(mp);
@@ -1295,6 +1295,7 @@ async function importaFiles(files){
   for(const f of files){
     n++;
     const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
+              srvId: cloud.servizio? cloud.servizio.id : null,
               file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
@@ -2092,7 +2093,7 @@ async function syncPhotoUp(p){
   try{
     await ensureRullo(p.letter);
     if(p.mini && !p.miniUrl){
-      const mp = cloud.servizio.id+"/"+p.code+"_m.jpg";
+      const mp = srvOf(p)+"/"+p.code+"_m.jpg";
       const up = await sb.storage.from("anteprime").upload(mp, p.mini, {contentType:"image/jpeg", upsert:true});
       if(up.error) throw up.error;
       p.miniUrl = pubUrl(mp);
@@ -2139,7 +2140,7 @@ function pumpBigQueue(){
     bigActive++;
     (async ()=>{
       try{
-        const ap = cloud.servizio.id+"/"+p.code+".jpg";
+        const ap = srvOf(p)+"/"+p.code+".jpg";
         const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
         if(up.error) throw up.error;
         p.anteprimaUrl = pubUrl(ap);
@@ -2514,7 +2515,7 @@ setInterval(serviRichiesteAltreGiornate, 8000);
    Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
    Se nessuna via è possibile (foto di un'altra postazione, non ancora sul cloud, e io non ho il file),
    torna null e il chiamante ripiega sull'anteprima avvisando l'operatore. */
-const origPath = p => cloud.servizio ? cloud.servizio.id+"/"+p.code+".jpg" : p.code+".jpg";
+const origPath = p => srvOf(p)+"/"+p.code+".jpg";
 
 async function ensureOriginalBlob(p){
   // 1) ho il file in locale (l'ho importato io)?
@@ -3773,6 +3774,10 @@ addEventListener("keydown", e=>{
 /* Chiave della cache locale: DEVE contenere la giornata.
    I codici ripartono da A-001 a ogni svuotamento, quindi con la sola sigla una postazione
    ripescava dal proprio disco la vecchia foto A-001 al posto di quella nuova. */
+/* Il percorso dei file sul cloud va legato alla GIORNATA DELLA FOTO, non a quella
+   aperta in quel momento: le anteprime salgono in coda, e se nel frattempo si cambia
+   giornata finivano nella cartella sbagliata (righe di oggi che puntano a ieri). */
+function srvOf(p){ return (p && p.srvId) ? p.srvId : (cloud.servizio ? cloud.servizio.id : "nosrv"); }
 function ckey(code){ return (cloud.servizio? cloud.servizio.id : "nosrv") + "|" + code; }
 /* Slot separato per la MINIATURA della griglia (~25 KB). Prima non veniva mai messa in
    cache — solo la grande da 1280 — quindi a ogni aggiornamento della pagina la griglia
@@ -3855,6 +3860,10 @@ function ultimaScelta(){
   try{
     const o=JSON.parse(localStorage.getItem(ULTIMA_KEY)||"null");
     if(!o || !o.sede) return null;
+    /* La data salvata vale SOLO se è ancora la giornata di servizio corrente.
+       Prima bastavano 14 ore dall'ultimo uso: chiudendo alle 3 di notte e riaprendo
+       il pomeriggio dopo, la postazione ripartiva dalla giornata di IERI senza dirlo. */
+    if(o.data && o.data !== serviceDateStr()) return {sede:o.sede, data:null};
     if(Date.now() - (o.ts||0) > ULTIMA_ORE*3600*1000) return {sede:o.sede, data:null};  // solo la sede
     return o;
   }catch(_){ return null; }
@@ -4760,6 +4769,7 @@ $("stThumbCloud").onclick = ()=>{
 function addRemotePhotoFast(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
+            srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
@@ -4769,6 +4779,7 @@ function addRemotePhotoFast(f, letter){
 async function addRemotePhoto(f, letter){
   if(state.byCode.has(f.codice)) return;
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
+            srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
