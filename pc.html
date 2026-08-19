@@ -25,13 +25,7 @@
   /* ---------- Layout ---------- */
   #app{display:flex;flex-direction:column;height:100%}
   header{position:relative;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
-  /* Le voci sono cresciute e le ultime finivano sotto il bordo dello schermo: il menu
-     non supera l'altezza della finestra e scorre. */
-  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5);
-    max-height:calc(100vh - 72px);overflow-y:auto;overscroll-behavior:contain}
-  #toolsMenu::-webkit-scrollbar{width:10px}
-  #toolsMenu::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
-  #toolsMenu button{flex:none}
+  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #toolsMenu[hidden]{display:none}
   #toolsMenu button{text-align:left;width:100%}
   #toolsMenu hr{border:none;border-top:1px solid var(--line);margin:2px 0}
@@ -120,7 +114,7 @@
   #lbMenu{position:absolute;top:52px;right:16px;z-index:5;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:200px;background:rgba(11,14,20,.97);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbMenu[hidden]{display:none}
   #lbMenu button{text-align:left;width:100%}
-  #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:14px;padding:18px;width:380px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:10px;padding:14px;width:270px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar[hidden]{display:none}
   .cmp{position:relative}
   /* Tondo con la X centrata davvero: prima il glifo era spinto in alto dal line-height
@@ -143,18 +137,8 @@
   @media (prefers-reduced-motion:reduce){ #btnMail.nuova{animation:none} }
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
-  #lbAdjBar .row span{font-size:15px;color:var(--muted);min-width:92px}
-  #lbAdjBar .row{gap:9px}
-  #lbAdjBar input[type=range]{flex:1;min-width:90px;height:26px}
-  /* Frecce per correggere di uno alla volta: col cursore è impossibile essere precisi.
-     Si usano col cliente davanti, quindi devono essere grosse da centrare al volo. */
-  .adjStep{padding:0;width:38px;height:38px;line-height:1;font-size:22px;font-weight:700;flex:none}
-  .adjVal{font-family:var(--mono);font-size:15px;font-weight:700;min-width:46px;text-align:right;color:var(--ink)}
-  #lbAdjBar label{font-size:15px!important}
-  #lbAdjBar input[type=checkbox]{width:20px;height:20px}
-  #lbAdjBar #adjReset{font-size:15px;padding:9px 18px}
-  #lbAdjBar .dom{font-size:13px;color:var(--muted);margin-top:2px;padding-top:10px;border-top:1px solid var(--line)}
-  #lbAdjBar .sw{width:22px;height:22px;border-radius:5px;flex:none;border:1px solid rgba(255,255,255,.25)}
+  #lbAdjBar .row span{font-size:13px;color:var(--muted);min-width:74px}
+  #lbAdjBar input[type=range]{flex:1}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -184,11 +168,8 @@
   #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
   dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
-  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw);max-height:92vh;overflow:hidden}
-  /* Solo da APERTA: senza [open] la regola display:flex vince sullo stile del browser
-     e la finestra resta a schermo anche dopo il tasto Chiudi. */
-  #statsDlg[open]{display:flex;flex-direction:column}
-  #statsDlg #statsBody{flex:1;min-height:0;max-height:none;overflow:auto}
+  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
+  #statsDlg #statsBody{max-height:76vh}
   #statsDlg table{width:100%}
   dialog::backdrop{background:rgba(6,8,12,.7)}
   /* pointer-events:none è ESSENZIALE: il toast resta nel DOM anche da invisibile (opacity 0)
@@ -231,11 +212,26 @@
   #sedeSelect,#giornoSelect{background:var(--surface2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;max-width:170px}
   #sedeSelect:hover,#giornoSelect:hover{border-color:var(--accent)}
   @keyframes pulse{50%{opacity:.35}}
+  /* Allarme archivio: deve essere impossibile non vederlo (scheda tolta, cartella sbagliata) */
+  #archAlert{position:fixed;left:0;right:0;top:0;z-index:9999;background:var(--danger);color:#fff;
+    display:flex;align-items:center;gap:14px;padding:12px 18px;font-weight:600;font-size:14px;
+    box-shadow:0 6px 20px rgba(0,0,0,.45)}
+  #archAlert[hidden]{display:none}
+  #archAlert .spacer{flex:1}
+  #archAlert button{background:#fff;color:var(--danger);border:none;border-radius:8px;
+    padding:7px 14px;font:inherit;font-weight:700;cursor:pointer}
+  #archAlert button:hover{opacity:.88}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
 <body>
+<div id="archAlert" hidden>
+  <span>⛔</span>
+  <span id="archAlertMsg">Archivio non raggiungibile: gli originali non vengono salvati.</span>
+  <span class="spacer"></span>
+  <button id="archAlertFix">Sistema ora</button>
+</div>
 <div id="app">
   <header>
     <h1>Fay <span>Live</span></h1>
@@ -254,7 +250,6 @@
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnArchive" title="Riattiva la cartella archivio di questa postazione (il permesso si perde a ogni ricaricamento della pagina)">Archivio…</button>
       <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
-      <button id="btnPulisciRichieste" title="Toglie le richieste di originali rimaste appese: le stampe ancora in attesa si possono rifare">Annulla richieste in sospeso</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
@@ -340,45 +335,10 @@
         </div>
       </div>
       <div id="lbAdjBar">
-        <div class="row"><span>Luce</span>
-          <button class="adjStep" data-t="adjB" data-d="-1" title="−1">‹</button>
-          <input type="range" id="adjB" min="50" max="150" step="1" value="100">
-          <button class="adjStep" data-t="adjB" data-d="1" title="+1">›</button>
-          <b class="adjVal" id="valB">100</b></div>
-        <div class="row"><span>Contrasto</span>
-          <button class="adjStep" data-t="adjC" data-d="-1" title="−1">‹</button>
-          <input type="range" id="adjC" min="50" max="150" step="1" value="100">
-          <button class="adjStep" data-t="adjC" data-d="1" title="+1">›</button>
-          <b class="adjVal" id="valC">100</b></div>
-        <div class="row"><span>Colore</span>
-          <button class="adjStep" data-t="adjS" data-d="-1" title="−1">‹</button>
-          <input type="range" id="adjS" min="0" max="200" step="1" value="100">
-          <button class="adjStep" data-t="adjS" data-d="1" title="+1">›</button>
-          <b class="adjVal" id="valS">100</b></div>
-        <div class="row"><span>Calore</span>
-          <button class="adjStep" data-t="adjT" data-d="-1" title="più freddo">‹</button>
-          <input type="range" id="adjT" min="-100" max="100" step="1" value="0">
-          <button class="adjStep" data-t="adjT" data-d="1" title="più caldo">›</button>
-          <b class="adjVal" id="valT">0</b></div>
-        <div class="dom">Dominanti</div>
-        <div class="row"><i class="sw" style="background:#25D2C6"></i>
-          <button class="adjStep" data-t="adjR" data-d="-1" title="verso il ciano">‹</button>
-          <input type="range" id="adjR" min="-100" max="100" step="1" value="0">
-          <button class="adjStep" data-t="adjR" data-d="1" title="verso il rosso">›</button>
-          <i class="sw" style="background:#D8402B"></i>
-          <b class="adjVal" id="valR">0</b></div>
-        <div class="row"><i class="sw" style="background:#CE63D6"></i>
-          <button class="adjStep" data-t="adjG" data-d="-1" title="verso il magenta">‹</button>
-          <input type="range" id="adjG" min="-100" max="100" step="1" value="0">
-          <button class="adjStep" data-t="adjG" data-d="1" title="verso il verde">›</button>
-          <i class="sw" style="background:#2E8B3D"></i>
-          <b class="adjVal" id="valG">0</b></div>
-        <div class="row"><i class="sw" style="background:#E8C51E"></i>
-          <button class="adjStep" data-t="adjB2" data-d="-1" title="verso il giallo">‹</button>
-          <input type="range" id="adjB2" min="-100" max="100" step="1" value="0">
-          <button class="adjStep" data-t="adjB2" data-d="1" title="verso il blu">›</button>
-          <i class="sw" style="background:#1F6FE0"></i>
-          <b class="adjVal" id="valB2">0</b></div>
+        <div class="row"><span>Luce</span><input type="range" id="adjB" min="50" max="150" step="1" value="100"></div>
+        <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
+        <div class="row"><span>Colore</span><input type="range" id="adjS" min="0" max="200" step="1" value="100"></div>
+        <div class="row"><span>Calore</span><input type="range" id="adjT" min="-100" max="100" step="1" value="0"></div>
         <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:13px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
           <button id="adjReset">Azzera</button></div>
         <span id="adjNote" class="hint"></span>
@@ -505,9 +465,11 @@
   <h3 style="margin-bottom:10px">Dove salvo le foto di questa postazione</h3>
   <div id="archBody" style="font-size:13px;line-height:1.55"></div>
   <div style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
-    <b>La cartella dev'essere <code>C:\FayLive</code>, uguale su tutte le postazioni.</b><br>
-    Se non c'è, creala prima in Esplora file: Disco locale (C:) → tasto destro → Nuovo → Cartella → <b>FayLive</b>.<br>
-    Non scegliere la scheda SD della macchina fotografica né una chiavetta USB: quando vengono tolte
+    <b>Scegli solo DOVE: la cartella <code>FayLive</code> la crea l'app.</b><br>
+    Premi <b>Scegli cartella…</b> → seleziona <b>Disco locale (C:)</b> → conferma. Dentro ci troverai <code>C:\FayLive</code>,
+    uguale su tutte le postazioni. Non serve creare né rinominare niente a mano.
+    Se Windows non lascia scegliere <code>C:</code>, seleziona <b>Documenti</b>: la cartella FayLive nasce lì.<br>
+    La scheda SD della macchina e le chiavette USB vengono rifiutate: quando vengono tolte
     gli originali spariscono e le altre postazioni non riescono più a stampare.
   </div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
@@ -592,7 +554,7 @@
 <dialog id="statsDlg">
   <h3 style="margin-bottom:4px">Report giornata</h3>
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
-  <div id="statsBody" style="overflow:auto"></div>
+  <div id="statsBody" style="max-height:76vh;overflow:auto"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
@@ -733,7 +695,7 @@ const state = {
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
   letterDesc: {},         // lettera -> descrizione rullo
-  rulloStats: {},         // lettera -> {omaggi, scarti, file}  (scritti a mano nel report)
+  rulloStats: {},         // lettera -> {omaggi, scarti}  (scritti a mano nel report)
   selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
   activeLetter: null,     // null = tutte
   focusIdx: -1,
@@ -1126,9 +1088,13 @@ async function leggiCartellaFoto(dir){
 }
 $("btnImport").onclick = async ()=>{
   if(!window.showDirectoryPicker){ $("fileInput").click(); return; }   // browser vecchi
+  /* La cartella dove finiscono gli originali si decide PRIMA di leggere la scheda:
+     se non è a posto qui non si importa, si apre la finestra dell'archivio. */
+  if(!(await archivioProntoPerImport())) return;
   let dir;
   try{ dir = await showDirectoryPicker({mode:"read", id:"fayimport"}); }
   catch(_){ return; }                                                  // annullato
+  if(!(await cartelleCompatibili(dir))) return;
   try{
     toast("Leggo la cartella…");
     importaFiles(await leggiCartellaFoto(dir));
@@ -1377,6 +1343,7 @@ $("progCancel").onclick = ()=>{
 };
 /* ---------- archivio su cartella dedicata ---------- */
 state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
+state.senzaArchivio = false; // true solo se l'operatore sceglie di lavorare senza archivio locale
 state.archiveName = null; // nome della cartella ricordata, anche quando il permesso è da riattivare
 
 /* La voce "Archivio" della barra di stato deve dire SEMPRE in quale cartella sta
@@ -1438,32 +1405,129 @@ const NOME_ARCHIVIO = "FayLive";   // nome della cartella archivio uguale su tut
 /* Scelta della cartella archivio in un punto solo, con conferma esplicita:
    una postazione aveva scelto per sbaglio la scheda SD della macchina e, tolta la scheda,
    gli originali della serata non erano più da nessuna parte. */
+/* ---------- protezioni sulla cartella archivio ----------
+   Storia: una postazione ha scelto per sbaglio come archivio la scheda SD della macchina;
+   tolta la scheda, gli originali della serata non erano più da nessuna parte. Le difese sono
+   quattro e lavorano insieme:
+     1) l'operatore non scrive né sceglie il nome: indica solo DOVE, la cartella FayLive la crea l'app;
+     2) le schede di memoria vengono riconosciute e rifiutate (DCIM & c.);
+     3) dentro l'archivio c'è un file sentinella con un codice: se manca, quella cartella non è l'archivio;
+     4) prova di scrittura vera prima di dichiarare l'archivio buono.                        */
+const SENTINELLA = ".faylive-archivio.json";
+
+async function leggiSentinella(dir){
+  try{
+    const fh = await dir.getFileHandle(SENTINELLA);
+    return JSON.parse(await (await fh.getFile()).text());
+  }catch(_){ return null; }
+}
+/* Scrive la sentinella: vale anche come prova di scrittura reale (se il supporto è
+   protetto o staccato, qui fallisce e l'archivio non viene accettato). */
+async function scriviSentinella(dir, idEsistente){
+  const dati = {
+    app: "Fay Live",
+    id: idEsistente || ("FL-" + Math.random().toString(36).slice(2,10).toUpperCase()),
+    postazione: nomePostazione(),
+    cartella: dir.name,
+    aggiornato: new Date().toISOString()
+  };
+  const fh = await dir.getFileHandle(SENTINELLA, {create:true});
+  const w = await fh.createWritable();
+  await w.write(JSON.stringify(dati, null, 2));
+  await w.close();
+  try{ await idb.set("archiveId", dati.id); }catch(_){}
+  return dati;
+}
+/* Riconosce le schede della macchina fotografica e le chiavette di scarico foto. */
+async function sembraSchedaFoto(dir){
+  const cartelleSpia = ["dcim","misc","canonmsc","private","mp_root","avf_info","clip","sub","dcim100"];
+  const nomiSpia = /^(no.?name|untitled|senza.?nome|sd.?card|scheda|eos.?digital|nikon|sony|canon|lumix|fuji|gopro|usb|sd)$/i;
+  if(nomiSpia.test((dir.name||"").trim())) return true;
+  try{
+    for await (const e of dir.values()){
+      if(e.kind === "directory" && cartelleSpia.includes(e.name.toLowerCase())) return true;
+    }
+  }catch(_){}
+  return false;
+}
+/* Verifica completa: raggiungibile + scrivibile + è davvero l'archivio configurato.
+   Ritorna {ok:true} oppure {ok:false, motivo:"irraggiungibile"|"sospetta"|"nonscrivibile"} */
+async function verificaArchivio(dir){
+  if(!dir) return {ok:false, motivo:"irraggiungibile"};
+  try{
+    const perm = await dir.queryPermission({mode:"readwrite"});
+    if(perm !== "granted") return {ok:false, motivo:"irraggiungibile"};
+    for await (const _ of dir.values()) break;      // se il supporto non c'è, qui salta
+  }catch(_){ return {ok:false, motivo:"irraggiungibile"}; }
+
+  const sent = await leggiSentinella(dir);
+  let atteso = null;
+  try{ atteso = await idb.get("archiveId"); }catch(_){}
+  if(!sent){
+    /* Nessuna sentinella: se questa postazione ne aveva già una configurata, la cartella
+       aperta adesso NON è quella giusta (rinominata, spostata, o scelta un'altra). */
+    if(atteso) return {ok:false, motivo:"sospetta"};
+    try{ await scriviSentinella(dir, null); }         // prima volta: la creo io
+    catch(_){ return {ok:false, motivo:"nonscrivibile"}; }
+    return {ok:true};
+  }
+  if(sent.id !== atteso){ try{ await idb.set("archiveId", sent.id); }catch(_){} }
+  return {ok:true};
+}
+
 async function pickArchivio(nota){
   if(!window.showDirectoryPicker){ toast("Questo browser non supporta l'archivio su cartella"); return null; }
-  let dir;
-  try{ dir = await showDirectoryPicker({mode:"readwrite", id:"fayarchivio", startIn: state.archive || undefined}); }
+  let scelta;
+  try{ scelta = await showDirectoryPicker({mode:"readwrite", id:"fayarchivio", startIn: state.archive || undefined}); }
   catch(_){ return null; }                                   // annullato dall'operatore
-  /* Regola di casa: su OGNI postazione l'archivio è la cartella C:\FayLive. Se il nome non
-     torna, quasi sempre è stata presa la scheda della macchina o una chiavetta. */
-  const standard = dir.name.trim().toLowerCase() === NOME_ARCHIVIO.toLowerCase();
-  const messaggio = standard
-    ? `Gli originali verranno salvati in "${dir.name}".\n\n`+
-      `Controlla che sia la cartella sul disco di QUESTO PC (C:\\${NOME_ARCHIVIO}) e non una `+
-      `cartella con lo stesso nome dentro la scheda o una chiavetta.\n\nConfermi?`
-    : `⚠ ATTENZIONE — la cartella scelta si chiama "${dir.name}".\n\n`+
-      `Su tutte le postazioni l'archivio deve essere la cartella "${NOME_ARCHIVIO}" sul disco `+
-      `del PC (C:\\${NOME_ARCHIVIO}). Un nome diverso quasi sempre vuol dire che è stata scelta `+
-      `la scheda della macchina fotografica o una chiavetta: quando viene tolta, gli originali `+
-      `della serata non ci sono più e le altre postazioni non riescono a stampare.\n\n`+
-      `Vuoi usare "${dir.name}" lo stesso?`;
+
+  /* 1) scheda di memoria: si rifiuta e basta, niente "vuoi usarla lo stesso?" */
+  if(await sembraSchedaFoto(scelta)){
+    alert(`⛔ "${scelta.name}" sembra la scheda della macchina fotografica (o una chiavetta di scarico).\n\n`+
+          `Non può essere l'archivio: quando la scheda viene tolta gli originali della serata spariscono `+
+          `e le altre postazioni non riescono più a stampare.\n\n`+
+          `Scegli il disco di questo PC (Disco locale C:) e ci penso io a creare la cartella ${NOME_ARCHIVIO}.`);
+    return null;
+  }
+
+  /* 2) il nome non lo scrive nessuno: se la cartella scelta non è già FayLive, la creo dentro. */
+  let dir = scelta, creata = false;
+  if((scelta.name||"").trim().toLowerCase() !== NOME_ARCHIVIO.toLowerCase()){
+    let esisteGia = true;
+    try{ await scelta.getDirectoryHandle(NOME_ARCHIVIO); }catch(_){ esisteGia = false; }
+    try{ dir = await scelta.getDirectoryHandle(NOME_ARCHIVIO, {create:true}); creata = !esisteGia; }
+    catch(err){
+      alert(`⛔ Non riesco a creare la cartella ${NOME_ARCHIVIO} dentro "${scelta.name}".\n\n`+
+            (err && err.message ? err.message+"\n\n" : "")+
+            `Prova a scegliere Disco locale (C:) oppure Documenti.`);
+      return null;
+    }
+  }
+
+  /* 3) prova di scrittura vera + sentinella con il codice di questo archivio */
+  const vecchia = await leggiSentinella(dir);
+  try{ await scriviSentinella(dir, vecchia && vecchia.id); }
+  catch(err){
+    alert(`⛔ La cartella "${dir.name}" non è scrivibile: gli originali non ci si possono salvare.\n\n`+
+          (err && err.message ? err.message : "")+`\n\nScegli un'altra posizione (Disco locale C:).`);
+    return null;
+  }
+
   /* La conferma va SEMPRE dopo il picker: una finestra di messaggio consuma il clic
      dell'utente e Chrome poi rifiuta di aprire la scelta cartella. */
-  if(!confirm((nota? nota+"\n\n" : "") + messaggio)) return null;
-  if(!standard) toast(`⚠ Archivio fuori standard: "${dir.name}" invece di ${NOME_ARCHIVIO}`, 7000);
+  const dove = (dir === scelta) ? "" : ` dentro "${scelta.name}"`;
+  if(!confirm((nota? nota+"\n\n" : "")+
+      `Gli originali di questa postazione verranno salvati nella cartella "${dir.name}"${dove}`+
+      (creata ? " (creata adesso)" : "")+`.\n\n`+
+      `Dev'essere sul disco di QUESTO PC — non sulla scheda della macchina, non su una chiavetta.\n\nConfermi?`)){
+    return null;
+  }
   state.archive = dir;
+  state.senzaArchivio = false;
   try{ await idb.set("archiveDir", dir); }catch(_){}
   try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
   segnaArchivio(dir.name, true);
+  nascondiAllarmeArchivio();
   return dir;
 }
 
@@ -1479,13 +1543,35 @@ async function archivioRaggiungibile(){
   }catch(_){ return false; }
 }
 
+/* Fascia rossa in cima allo schermo: un toast che passa non basta, di sera nessuno lo vede. */
+function mostraAllarmeArchivio(msg){
+  const b = $("archAlert"); if(!b) return;
+  $("archAlertMsg").textContent = msg;
+  b.hidden = false;
+}
+function nascondiAllarmeArchivio(){
+  const b = $("archAlert"); if(b) b.hidden = true;
+}
+$("archAlertFix").onclick = ()=>{
+  apriArchDlg(state.archive ? "sospetta" : (state.archiveName ? "irraggiungibile" : "assente"));
+};
+
 /* Chiesta all'apertura della sede, PRIMA che si importi qualsiasi scheda. */
 function apriArchDlg(motivo){
-  const nome = state.archive ? state.archive.name : state.archiveName;
-  const testo = motivo === "irraggiungibile"
-    ? `La cartella <b>${(nome||"").replace(/[<>&]/g,"")}</b> non è raggiungibile: il supporto è stato tolto oppure è stata spostata o rinominata.<br>Gli originali importati adesso non verrebbero salvati su questo PC.`
+  const nome = (state.archive ? state.archive.name : state.archiveName) || "";
+  const n = nome.replace(/[<>&]/g,"");
+  const testo =
+    motivo === "irraggiungibile"
+      ? `La cartella <b>${n}</b> non è raggiungibile: il supporto è stato tolto oppure è stata spostata o rinominata.<br>Gli originali importati adesso non verrebbero salvati su questo PC.`
+    : motivo === "sospetta"
+      ? `<b style="color:var(--danger)">La cartella <b>${n}</b> non è l'archivio di questa postazione.</b><br>`+
+        `Dentro l'archivio vero c'è un file di riconoscimento scritto da Fay Live, e qui non c'è: `+
+        `quasi sempre vuol dire che è stata scelta una cartella diversa (o una scheda). `+
+        `Se importi adesso, gli originali finiscono in un posto sbagliato.`
+    : motivo === "nonscrivibile"
+      ? `Nella cartella <b>${n}</b> non si riesce a scrivere: il supporto è protetto o pieno.<br>Gli originali importati adesso non verrebbero salvati.`
     : motivo === "riattivare"
-      ? `Questa postazione usa la cartella <b>${(nome||"").replace(/[<>&]/g,"")}</b>, ma dopo il ricaricamento della pagina Windows chiede di nuovo il permesso.`
+      ? `Questa postazione usa la cartella <b>${n}</b>, ma dopo il ricaricamento della pagina Windows chiede di nuovo il permesso.`
       : `Questa postazione non ha ancora una cartella dove salvare gli originali delle foto importate.`;
   $("archBody").innerHTML = `<p>${testo}</p>`;
   $("archKeep").hidden = (motivo !== "riattivare");
@@ -1497,33 +1583,95 @@ $("archPick").onclick = async ()=>{
 };
 $("archKeep").onclick = async ()=>{
   const d = await ensureArchive();
-  if(d && await archivioRaggiungibile()){ $("archDlg").close(); if(cloud.servizio) ricollegaArchivio(true); }
+  const v = d ? await verificaArchivio(d) : {ok:false, motivo:"irraggiungibile"};
+  if(v.ok){
+    state.senzaArchivio = false; nascondiAllarmeArchivio();
+    $("archDlg").close(); if(cloud.servizio) ricollegaArchivio(true);
+  }
+  else if(v.motivo === "sospetta") apriArchDlg("sospetta");
   else toast("Cartella ancora non raggiungibile: scegline un'altra");
 };
 $("archSkip").onclick = ()=>{
   $("archDlg").close();
+  state.senzaArchivio = true;                       // scelta esplicita: da qui l'import non chiede più
+  mostraAllarmeArchivio("Nessun archivio su questo PC: le foto restano solo sul cloud e le altre postazioni non potranno stampare in alta qualità.");
   toast("Nessun archivio: le foto restano solo sul cloud finché non scegli una cartella", 5000);
 };
 
 /* Controllo all'apertura della sede: la cartella si decide PRIMA di importare. */
 async function controllaArchivioSede(){
   await riattivaArchivioSilenzioso();
-  if(await archivioRaggiungibile()){ toast(`Originali salvati in "${state.archive.name}"`); return; }
-  if(state.archive){ state.archive = null; apriArchDlg("irraggiungibile"); return; }
+  if(state.archive){
+    const v = await verificaArchivio(state.archive);
+    if(v.ok){ nascondiAllarmeArchivio(); toast(`Originali salvati in "${state.archive.name}"`); return; }
+    const nome = state.archive.name;
+    if(v.motivo !== "sospetta"){ state.archive = null; segnaArchivio(nome, false); }
+    apriArchDlg(v.motivo);
+    return;
+  }
   apriArchDlg(state.archiveName ? "riattivare" : "assente");
 }
 
-/* Se durante la serata il supporto viene staccato, va detto subito e non a fine serata. */
-let archivioAvvisato = false;
-setInterval(async ()=>{
-  if(!state.archive) return;
-  if(await archivioRaggiungibile()){ archivioAvvisato = false; return; }
-  const nome = state.archive.name;
-  state.archive = null; segnaArchivio(nome, false);
-  if(!archivioAvvisato){
-    archivioAvvisato = true;
-    toast(`⚠ La cartella archivio "${nome}" non è più raggiungibile: gli originali non vengono salvati`, 9000);
+/* Cancello prima dell'import: senza archivio verde non si importa.
+   Ritorna true solo se si può procedere. */
+async function archivioProntoPerImport(){
+  if(!window.showDirectoryPicker) return true;             // browser vecchio: flusso classico
+  if(state.senzaArchivio) return true;                     // l'operatore ha scelto di farne a meno
+  await riattivaArchivioSilenzioso();
+  if(state.archive){
+    const v = await verificaArchivio(state.archive);
+    if(v.ok){ nascondiAllarmeArchivio(); return true; }
+    const nome = state.archive.name;
+    if(v.motivo !== "sospetta"){ state.archive = null; segnaArchivio(nome, false); }
+    apriArchDlg(v.motivo);
+    return false;
   }
+  apriArchDlg(state.archiveName ? "riattivare" : "assente");
+  return false;
+}
+
+/* La cartella da importare e l'archivio non devono avere niente a che spartire.
+   Il caso vero: l'archivio era DENTRO la scheda SD infilata nel lettore. */
+async function cartelleCompatibili(importDir){
+  if(!state.archive || !importDir) return true;
+  try{
+    if(await importDir.isSameEntry(state.archive)){
+      alert(`⛔ Stai importando la cartella dell'archivio stessa ("${state.archive.name}").\n\n`+
+            `Scegli la cartella della scheda della macchina fotografica.`);
+      return false;
+    }
+    if(await state.archive.resolve(importDir)){
+      alert(`⛔ La cartella che stai importando è dentro l'archivio ("${state.archive.name}").\n\n`+
+            `Sono foto già importate: scegli la scheda della macchina fotografica.`);
+      return false;
+    }
+    if(await importDir.resolve(state.archive)){
+      alert(`⛔ FERMO — l'archivio "${state.archive.name}" si trova DENTRO la cartella che stai importando.\n\n`+
+            `Vuol dire che l'archivio è sulla scheda o sulla chiavetta: quando la togli, gli originali `+
+            `della serata spariscono.\n\nCambia archivio (Altro → Cambia cartella archivio) e mettilo sul disco del PC.`);
+      return false;
+    }
+  }catch(_){}
+  return true;
+}
+
+/* Se durante la serata il supporto viene staccato, va detto subito e non a fine serata.
+   Ogni 30 s si controlla che ci sia; ogni 2 minuti si rilegge anche la sentinella. */
+let archivioAvvisato = false, tickArchivio = 0;
+setInterval(async ()=>{
+  if(!state.archive || state.senzaArchivio) return;
+  tickArchivio++;
+  const v = (tickArchivio % 4 === 0)
+    ? await verificaArchivio(state.archive)
+    : (await archivioRaggiungibile() ? {ok:true} : {ok:false, motivo:"irraggiungibile"});
+  if(v.ok){ archivioAvvisato = false; nascondiAllarmeArchivio(); return; }
+  const nome = state.archive.name;
+  if(v.motivo !== "sospetta"){ state.archive = null; segnaArchivio(nome, false); }
+  const msg = v.motivo === "sospetta"
+    ? `La cartella "${nome}" non è più riconosciuta come archivio: gli originali potrebbero finire nel posto sbagliato.`
+    : `La cartella archivio "${nome}" non è più raggiungibile: gli originali NON vengono salvati su questo PC.`;
+  mostraAllarmeArchivio(msg);
+  if(!archivioAvvisato){ archivioAvvisato = true; toast("⚠ "+msg, 9000); }
 }, 30000);
 
 async function ensureArchive(){
@@ -1546,7 +1694,7 @@ async function ensureArchive(){
     }
   }catch(_){ /* si passa alla scelta manuale */ }
   // 2) prima volta: scelta della cartella fissa
-  toast("Scegli (o crea) la cartella fissa dell'archivio, es. C:\\FayLive — verrà ricordata");
+  toast("Scegli il disco di questo PC (C:): la cartella FayLive la creo io e resta ricordata", 5000);
   return await pickArchivio("");
 }
 /* Dopo un refresh della pagina le foto importate tornano dal cloud senza il collegamento
@@ -2234,17 +2382,13 @@ addEventListener("online", ()=>{ if(cloud.sede){ setSync("online"); pumpOrigQueu
 
 /* Controllo periodico delle richieste: il realtime sull'hotspot cade e non si riconnette,
    così una richiesta poteva restare appesa per sempre. Qui il PC che ha i file va a vedere da solo. */
-let avvisoCodaGonfia = false;
 async function serviRichieste(){
   if(!sb || !cloud.servizio) return;
   const ids = Object.values(cloud.rulli||{}).map(r=>r.id).filter(Boolean);
   if(!ids.length) return;
   try{
-    /* Il limite era 200: con centinaia di richieste vecchie e mai servibili (foto i cui
-       originali non stanno su nessun PC) le nuove finivano fuori dall'elenco e non le
-       vedeva nessuno. Ora si legge molto più largo e si avvisa quando la coda è gonfia. */
     const {data, error} = await sb.from("foto")
-      .select("codice,originale_url").eq("richiesta_originale", true).in("rullo_id", ids).limit(2000);
+      .select("codice,originale_url").eq("richiesta_originale", true).in("rullo_id", ids).limit(200);
     if(error) throw error;
     let nonServite = 0;
     for(const f of (data||[])){
@@ -2259,11 +2403,6 @@ async function serviRichieste(){
     }
     richiesteAperte = nonServite;
     updateOrigCount();
-    if(nonServite >= 150 && !avvisoCodaGonfia){
-      avvisoCodaGonfia = true;
-      toast(`${nonServite} richieste che nessuna postazione può servire: usa Altro → Annulla richieste in sospeso`, 9000);
-    }
-    if(!nonServite) avvisoCodaGonfia = false;
     // qualcuno chiede originali che dovrebbero essere miei ma non ho i file agganciati:
     // provo a ripescarli dall'archivio da solo, al massimo una volta al minuto
     if(nonServite && state.archive && Date.now()-ultimoRelink > 60000) ricollegaArchivio(true);
@@ -2272,23 +2411,6 @@ async function serviRichieste(){
 /* Ogni 2 secondi, non 5: quando un tablet chiede un originale il cliente è già davanti
    al venditore, e cinque secondi persi prima ancora di iniziare a caricare pesano. */
 setInterval(serviRichieste, 2000);
-
-/* Le richieste di foto che nessun PC possiede restano appese per sempre e ingombrano
-   l'elenco. Qui si azzerano tutte in blocco: chi sta ancora aspettando ripreme Stampa. */
-$("btnPulisciRichieste").onclick = async ()=>{
-  if(!sb || !cloud.servizio){ toast("Nessuna giornata aperta"); return; }
-  const ids = Object.values(cloud.rulli||{}).map(r=>r.id).filter(Boolean);
-  if(!ids.length) return;
-  if(!confirm("Tolgo tutte le richieste di originali rimaste in sospeso su questa giornata.\n\n"+
-              "Le foto non vengono toccate: chi sta aspettando una stampa dovrà ripremere Stampa.\n\nProcedo?")) return;
-  try{
-    const {error} = await sb.from("foto").update({richiesta_originale:false})
-      .eq("richiesta_originale", true).in("rullo_id", ids);
-    if(error) throw error;
-    richiesteAperte = 0; avvisoCodaGonfia = false; updateOrigCount();
-    toast("Richieste in sospeso annullate");
-  }catch(err){ toast("Non riuscito: " + (err.message || err), 8000); }
-};
 /* Il controllo a intervalli viene rallentato da Chrome quando la scheda non è in primo
    piano (l'operatore passa su Gmail, su Esplora file…): lì gli intervalli scendono a uno
    al minuto e le richieste dei tablet restano appese. Questo timer vive in un thread
@@ -3054,12 +3176,11 @@ function refreshLbStatus(){
 /* ---------- regolazioni luce/colore per singola foto ----------
    Valgono per il visualizzatore, il monitor cliente e la stampa.
    L'originale su disco non viene mai modificato.                    */
-const ADJ0 = {b:100, c:100, s:100, t:0, dr:0, dg:0, db:0, bw:false};
+const ADJ0 = {b:100, c:100, s:100, t:0, bw:false};
 function adjOf(p){
   if(!p || !p.adj) return null;
   const a = p.adj;
-  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 &&
-          !(a.dr||0) && !(a.dg||0) && !(a.db||0) && !a.bw) ? null : a;
+  return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !a.bw) ? null : a;
 }
 function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
   const a = adjOf(p);
@@ -3075,27 +3196,6 @@ function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
     ctx.globalAlpha = Math.min(0.65, Math.abs(a.t)/110);
     ctx.fillStyle = a.t > 0 ? "#FF9A3C" : "#3CA0FF";
     ctx.fillRect(dx, dy, dw, dh);
-  }
-  /* Dominanti per canale, come nei software di stampa: positivo aggiunge quel colore,
-     negativo lo toglie (cioè spinge verso il suo opposto: ciano, magenta, giallo). */
-  if(!a.bw){
-    const canali = [[a.dr||0,0],[a.dg||0,1],[a.db||0,2]];
-    for(const [v, i] of canali){
-      if(!v) continue;
-      const q = Math.round(Math.min(100, Math.abs(v)) * 1.28);   // 0-128
-      const col = [0,0,0];
-      if(v > 0){                       // aggiunge: schiarisce solo quel canale
-        col[i] = q;
-        ctx.globalCompositeOperation = "screen";
-      }else{                           // toglie: lascia intatti gli altri due
-        col[0] = col[1] = col[2] = 255;
-        col[i] = 255 - q;
-        ctx.globalCompositeOperation = "multiply";
-      }
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-      ctx.fillRect(dx, dy, dw, dh);
-    }
   }
   ctx.restore();
 }
@@ -3211,52 +3311,20 @@ $("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPho
 function lbPhoto(){ return lbList()[state.lightboxIdx] || null; }
 function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
-  $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s;
-  $("adjT").value=a.t;
-  $("adjR").value=a.dr||0; $("adjG").value=a.dg||0; $("adjB2").value=a.db||0;
-  mostraValoriAdj();
+  $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
   $("adjBW").checked = !!a.bw;
-  // senza colore non servono
-  spegniColore(!!a.bw);
+  $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
 }
 $("lbAdj").onclick = ()=>{
   const bar=$("lbAdjBar"); bar.hidden = !bar.hidden;
   if(!bar.hidden) syncAdjBar();
 };
-/* A schermo tutti i valori partono da 0: luce, contrasto e colore sono percentuali
-   (100 = originale) ma mostrarle così, accanto a calore che parte da zero, confondeva. */
-function segno(n){ return (n>0? "+" : "") + n; }
-function mostraValoriAdj(){
-  const set = (el, n)=>{ const e=$(el); if(e) e.textContent = segno(n); };
-  set("valB", +$("adjB").value - 100);
-  set("valC", +$("adjC").value - 100);
-  set("valS", +$("adjS").value - 100);
-  set("valT", +$("adjT").value);
-  set("valR", +$("adjR").value);
-  set("valG", +$("adjG").value);
-  set("valB2", +$("adjB2").value);
-}
-function spegniColore(bn){
-  ["adjS","adjT","adjR","adjG","adjB2"].forEach(id=>{ const e=$(id); if(e) e.disabled = bn; });
-  document.querySelectorAll(".adjStep").forEach(b2=>{
-    if(["adjT","adjR","adjG","adjB2"].includes(b2.dataset.t)) b2.disabled = bn;
-  });
-}
-/* Un passo per volta sul valore, con i limiti del cursore rispettati. */
-function passoAdj(target, delta){
-  const el = $(target); if(!el || el.disabled) return;
-  const min = +el.min, max = +el.max;
-  el.value = Math.min(max, Math.max(min, (+el.value) + delta));
-  applyAdjFromBar();
-}
 function applyAdjFromBar(){
   const p = lbPhoto(); if(!p) return;
-  mostraValoriAdj();
   p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
-            dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
             bw: $("adjBW").checked };
-  spegniColore($("adjBW").checked);
+  $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
   // ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
@@ -3269,16 +3337,12 @@ function applyAdjFromBar(){
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
   monitorFollow();              // il cliente vede subito la foto corretta
 }
-for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2"]) $(id).oninput = applyAdjFromBar;
-document.querySelectorAll(".adjStep").forEach(b2=>{
-  b2.onclick = ev=>{ ev.preventDefault(); passoAdj(b2.dataset.t, +b2.dataset.d); b2.blur(); };
-});
+for(const id of ["adjB","adjC","adjS","adjT"]) $(id).oninput = applyAdjFromBar;
 $("adjBW").onchange = applyAdjFromBar;
 $("adjReset").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   p.adj = null;
   syncAdjBar();
-  mostraValoriAdj();
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     c.width=lbBmp.width; c.height=lbBmp.height;
@@ -3934,60 +3998,35 @@ function mb(bytes){
 function datiReport(){
   const righe = {};
   for(const p of state.photos){
-    const r = righe[p.letter] || (righe[p.letter] = {foto:0, stampe:0});
+    const r = righe[p.letter] || (righe[p.letter] = {foto:0, stampe:0, esportate:0});
     r.foto++;
     r.stampe += (p.prints||0);
+    if(p.exported) r.esportate++;
   }
-  /* Omaggi, scarti e file non si ricavano dalle foto: sono numeri della serata, per rullo.
-     I "file" sono le foto vendute come file digitale senza stamparle, quindi si SOMMANO
-     alle vendute (omaggi e scarti si sottraggono). */
+  // omaggi e scarti non sono per foto: sono due numeri della serata, per rullo
   for(const L of Object.keys(righe)){
     const st = state.rulloStats[L] || {};
     righe[L].omaggi = st.omaggi || 0;
     righe[L].scarti = st.scarti || 0;
-    righe[L].file   = st.file   || 0;
   }
   return righe;
 }
 
 // salva sul cloud il valore digitato, così lo vedono anche le altre postazioni
 async function salvaStat(L, campo, valore){
-  state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file:0};
+  state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0};
   state.rulloStats[L][campo] = valore;
-  if(!sb || !cloud.rulli[L]){
-    toast("Valore tenuto solo su questo PC: il rullo non è sul cloud", 6000);
-    return;
-  }
-  /* Prima l'esito non veniva controllato: se il cloud rifiutava (colonna mancante,
-     permessi) il numero spariva al ricaricamento senza che nessuno lo avesse detto. */
-  try{
-    const {error} = await sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id);
-    if(error) throw error;
-    // rilettura: un update può "riuscire" senza toccare niente (permessi), e il valore
-    // tornava a zero solo al ricaricamento, quando ormai nessuno collegava le due cose
-    const {data, error:e2} = await sb.from("rulli").select(campo).eq("id", cloud.rulli[L].id).single();
-    if(e2) throw e2;
-    if(!data || Number(data[campo]) !== Number(valore)){
-      alert(`Il valore "${campo}" del rullo ${L} NON è stato salvato sul cloud.\n\n`+
-            `Scritto: ${valore} — riletto: ${data ? data[campo] : "niente"}.\n\n`+
-            `Di solito vuol dire che manca il permesso di modifica sulla tabella rulli.`);
-    }
-  }catch(err){
-    const m = String(err && err.message ? err.message : err);
-    console.warn("report rullo", campo, err);
-    alert(m.includes(campo) || m.toLowerCase().includes("column")
-      ? `La colonna "${campo}" non esiste ancora sul database.\n\nSu Supabase → SQL Editor esegui:\n\n`+
-        `alter table rulli add column if not exists ${campo} integer default 0;\n\nDettaglio: ${m}`
-      : `Non salvato sul cloud (${campo}): ${m}`);
+  if(sb && cloud.rulli[L]){
+    await sbTry(()=>sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id), "report rullo");
   }
 }
 
 function apriStats(){
   const righe = datiReport();
   const L = Object.keys(righe).sort();
-  const tot = {foto:0, stampe:0, omaggi:0, scarti:0, file:0};
-  L.forEach(k=>{ ["foto","stampe","omaggi","scarti","file"].forEach(c=> tot[c]+=righe[k][c]); });
-  const vendute = venduteDi(tot);
+  const tot = {foto:0, stampe:0, omaggi:0, scarti:0, esportate:0};
+  L.forEach(k=>{ ["foto","stampe","omaggi","scarti","esportate"].forEach(c=> tot[c]+=righe[k][c]); });
+  const vendute = Math.max(0, tot.stampe - tot.omaggi - tot.scarti);
 
   $("statsWhen").textContent = (cloud.sede? cloud.sede.nome : "—")+
     (cloud.servizio? " — "+cloud.servizio.data_servizio : "");
@@ -3999,27 +4038,25 @@ function apriStats(){
     <tr style="color:var(--muted)">
       <th style="text-align:left;padding:6px 10px">Rullo</th>
       <th ${th}>Foto</th><th ${th}>Stampe</th><th ${th}>Omaggi</th>
-      <th ${th}>Scarti</th><th ${th}>File</th><th ${th}>Vendute</th>
+      <th ${th}>Scarti</th><th ${th}>Vendute</th><th ${th}>Esportate</th>
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
-    const v = venduteDi(r);
+    const v = Math.max(0, r.stampe - r.omaggi - r.scarti);
     h += `<tr>
       <td style="padding:6px 10px;border-top:1px solid var(--line);font-weight:700">${k}</td>
       <td ${td}>${r.foto}</td><td ${td}>${r.stampe}</td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="omaggi" value="${r.omaggi}"></td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="scarti" value="${r.scarti}"></td>
-      <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="file" value="${r.file}"></td>
-      <td ${td}><b data-v="${k}">${v}</b></td></tr>`;
+      <td ${td}><b data-v="${k}">${v}</b></td><td ${td}>${r.esportate||"—"}</td></tr>`;
   });
   h += `<tr style="background:rgba(255,255,255,.04);font-weight:800">
       <td style="padding:8px 10px;border-top:2px solid var(--line)">TOTALE</td>
       <td ${td}>${tot.foto}</td><td ${td} id="stTotStampe">${tot.stampe}</td>
       <td ${td} id="stTotOm">${tot.omaggi}</td><td ${td} id="stTotSc">${tot.scarti}</td>
-      <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
+      <td ${td} id="stTotVen">${vendute}</td><td ${td}>${tot.esportate}</td></tr></table>
     <p style="color:var(--muted);font-size:12.5px;margin-top:8px">
-      Omaggi, scarti e file si scrivono a mano qui. Vendute = stampe − omaggi − scarti + file
-      (i file sono le foto vendute in digitale senza stampa).
+      Omaggi e scarti si scrivono a mano qui: vengono sottratti alle stampe per ottenere le vendute.
       Restano salvati sulla giornata e li vedono tutte le postazioni.</p>`;
 
   // --- spazio sul cloud: STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
@@ -4031,89 +4068,55 @@ function apriStats(){
   const perc = Math.min(100, Math.round(proiezione*100/LIMITE_PRO));
   const colore = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
   h += `<h4 style="margin:18px 0 8px">Spazio sul cloud</h4>
-    <div id="spazioReale" style="font-size:13px;line-height:1.9;margin-bottom:10px">
-      <span style="color:var(--muted)">Leggo l'occupazione reale…</span>
-    </div>
-    <div style="font-size:13px;line-height:1.9;color:var(--muted)">
-      <div><b>Proiezione</b> (non è quanto occupi adesso): questa giornata pesa circa ${mb(stimaGiorno)};
-        ripetuta ogni giorno, con ${gg} giorni di originali e ${ggA} di anteprime, arriverebbe a
-        <span style="color:${colore}">${mb(proiezione)}</span> su 100 GB (${perc}%).</div>
+    <div style="font-size:13px;line-height:1.9">
+      <div>Questa giornata occupa circa <b>${mb(stimaGiorno)}</b></div>
+      <div>A questo ritmo, con ${gg} giorni di originali e ${ggA} di anteprime: <b style="color:${colore}">${mb(proiezione)}</b> su 100 GB del piano Pro (${perc}%)</div>
       <div style="height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin:8px 0">
         <div style="height:100%;width:${perc}%;background:${colore}"></div>
       </div>
-      <div style="font-size:12px">Calcolata sulle foto (~2 MB l'originale), serve solo a capire se il ritmo regge.</div>
+      <div style="color:var(--muted);font-size:12px">
+        Stima calcolata sulle foto (~2 MB l'originale), non il dato reale di Supabase.
+        Il valore ufficiale è nella dashboard, sezione Usage.
+      </div>
     </div>`;
+  if(perc>90) h += `<p style="color:var(--danger);font-size:12.5px;margin-top:8px">
+    ⚠ A questo ritmo lo spazio non basta: riduci i giorni di conservazione degli originali.</p>`;
 
   $("statsBody").innerHTML = h;
 
   // i due campi si salvano da soli e ricalcolano le vendute
   $("statsBody").querySelectorAll("input[data-l]").forEach(el=>{
-    const salva = async ()=>{
+    el.onchange = async ()=>{
       const L2 = el.dataset.l, c = el.dataset.c;
       const v = Math.max(0, parseInt(el.value,10) || 0);
       el.value = v;
       await salvaStat(L2, c, v);
       aggiornaVendute();
     };
-    el.onchange = salva;
-    /* Invio conferma il numero senza dover cliccare fuori dalla casella. */
-    el.onkeydown = ev=>{
-      if(ev.key === "Enter"){ ev.preventDefault(); ev.stopPropagation(); salva(); el.blur(); }
-    };
   });
   $("statsDlg").showModal();
-  mostraSpazioReale();
 }
 
-/* Occupazione VERA dei bucket, letta da Supabase con la funzione spazio_storage().
-   Prima qui c'era solo una proiezione: cancellando le foto il numero non cambiava mai. */
-async function mostraSpazioReale(){
-  const box = $("spazioReale");
-  if(!box) return;
-  if(!sb){ box.innerHTML = '<span style="color:var(--muted)">Cloud non disponibile</span>'; return; }
-  try{
-    const {data, error} = await sb.rpc("spazio_storage");
-    if(error) throw error;
-    const righe = data || [];
-    const totale = righe.reduce((a,r)=> a + Number(r.byte||0), 0);
-    const perc = Math.min(100, Math.round(totale*100/LIMITE_PRO));
-    const col = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
-    box.innerHTML =
-      `<div><b>Occupato adesso: <span style="color:${col}">${mb(totale)}</span></b> su 100 GB del piano Pro (${perc}%)</div>`+
-      `<div style="height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:6px 0">
-         <div style="height:100%;width:${perc}%;background:${col}"></div></div>`+
-      righe.map(r=>`<div style="color:var(--muted);font-size:12.5px">${String(r.bucket||"").replace(/[<>&]/g,"")}: ${mb(Number(r.byte||0))} — ${r.oggetti} file</div>`).join("");
-  }catch(err){
-    console.warn("spazio_storage", err);
-    box.innerHTML = '<span style="color:var(--muted)">Occupazione reale non disponibile: manca la funzione '+
-      '<code>spazio_storage()</code> su Supabase (o il permesso di eseguirla).</span>';
-  }
-}
-
-function venduteDi(r){
-  return Math.max(0, (r.stampe||0) - (r.omaggi||0) - (r.scarti||0) + (r.file||0));
-}
 function aggiornaVendute(){
   const righe = datiReport();
-  let tS=0, tO=0, tSc=0, tF=0;
+  let tS=0, tO=0, tSc=0;
   Object.keys(righe).forEach(k=>{
     const r = righe[k];
-    tS+=r.stampe; tO+=r.omaggi; tSc+=r.scarti; tF+=r.file;
+    tS+=r.stampe; tO+=r.omaggi; tSc+=r.scarti;
     const b = $("statsBody").querySelector(`b[data-v="${k}"]`);
-    if(b) b.textContent = venduteDi(r);
+    if(b) b.textContent = Math.max(0, r.stampe - r.omaggi - r.scarti);
   });
   const set=(id,v)=>{ const e=$(id); if(e) e.textContent=v; };
-  set("stTotOm", tO); set("stTotSc", tSc); set("stTotFile", tF);
-  set("stTotVen", venduteDi({stampe:tS, omaggi:tO, scarti:tSc, file:tF}));
+  set("stTotOm", tO); set("stTotSc", tSc); set("stTotVen", Math.max(0, tS-tO-tSc));
 }
 $("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; apriStats(); };
 $("statsClose").onclick = ()=> $("statsDlg").close();
 $("statsCsv").onclick = ()=>{
   const righe = datiReport();
   const L = Object.keys(righe).sort();
-  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;File;Vendute\n";
+  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;Vendute;Esportate\n";
   L.forEach(k=>{ const r=righe[k];
-    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, r.file, venduteDi(r)].join(";")+"\n";
+    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, Math.max(0,r.stampe-r.omaggi-r.scarti), r.esportate].join(";")+"\n";
   });
   const nome = "report_"+((cloud.sede?cloud.sede.nome:"faylive").replace(/\W+/g,"_"))+
                "_"+(cloud.servizio? cloud.servizio.data_servizio : "oggi")+".csv";
@@ -4298,7 +4301,7 @@ async function loadServizioFoto(){
   const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
   (rulli||[]).forEach(r=>{ cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
     if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-    state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0};
+    state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0};
     state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
   const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
   const ids=(rulli||[]).map(r=>r.id);
@@ -4399,7 +4402,7 @@ async function pullNuoveFoto(manuale){
   syncing=true;
   try{
     const {data:rulli, error} = await sb.from("rulli")
-      .select("id,lettera,ultimo_num,descrizione,omaggi,scarti,file").eq("servizio_id", cloud.servizio.id);
+      .select("id,lettera,ultimo_num,descrizione,omaggi,scarti").eq("servizio_id", cloud.servizio.id);
     if(error) throw error;
     /* Rulli spariti dal cloud (giornata o rullo svuotati da un'altra postazione): finora
        restavano a video qui, perché la sincronizzazione sapeva solo AGGIUNGERE. */
@@ -4421,7 +4424,7 @@ async function pullNuoveFoto(manuale){
     for(const r of (rulli||[])){
       cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
       if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-      state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0};
+      state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0};
       state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num||0);
       /* Quante foto di questo rullo ci sono sul cloud? Solo il numero, nessuna riga scaricata.
          Si conta invece di guardare l'ultimo codice: se anche questa postazione ha importato
