@@ -2421,6 +2421,93 @@ try{
   w.onmessage = ()=> serviRichieste();
 }catch(err){ console.warn("worker richieste non disponibile", err); }
 
+/* ---------- richieste di GIORNATE DIVERSE da quella aperta ----------
+   serviRichieste() guarda solo i rulli del servizio aperto: se questa postazione era
+   tornata a ieri per una ristampa, le richieste di oggi non le serviva nessuno e l'altro
+   PC restava appeso su "in attesa dell'originale". Qui si serve QUALSIASI giornata della
+   sede, pescando il file direttamente dall'archivio locale per data e codice.
+   Gira piano e si ferma appena ci sono richieste urgenti della giornata aperta: la
+   giornata in corso ha sempre la precedenza sulla banda. */
+const indiceArchivio = new Map();          // "AAAA-MM-GG" -> {t, files:Map(codice -> handle)}
+async function indiceGiornata(dateStr){
+  const c = indiceArchivio.get(dateStr);
+  if(c && Date.now()-c.t < 120000) return c.files;      // riletto al massimo ogni 2 minuti
+  if(!state.archive) return null;
+  const files = new Map();
+  let dayDir;
+  try{ dayDir = await state.archive.getDirectoryHandle(dateStr); }
+  catch(_){ indiceArchivio.set(dateStr, {t:Date.now(), files}); return files; }   // giornata non mia
+  async function scan(d, depth){
+    if(depth > 3) return;
+    for await (const e of d.values()){
+      if(e.kind === "directory"){ await scan(e, depth+1); continue; }
+      if(!/\.(jpe?g|png|webp)$/i.test(e.name)) continue;
+      const m = e.name.match(/([A-Z]{1,3})-(\d{1,4})/i);
+      if(!m) continue;
+      const code = m[1].toUpperCase()+"-"+String(parseInt(m[2],10)).padStart(3,"0");
+      if(!files.has(code)) files.set(code, e);
+    }
+  }
+  try{ await scan(dayDir, 0); }catch(_){}
+  indiceArchivio.set(dateStr, {t:Date.now(), files});
+  return files;
+}
+async function caricaOriginaleDaArchivio(riga, handle, servizioId){
+  const t0 = Date.now();
+  const f = await handle.getFile();
+  const buf = await f.arrayBuffer();
+  const blob = new Blob([buf], {type:f.type||"image/jpeg"});
+  const path = servizioId+"/"+riga.codice+".jpg";
+  const limite = Math.min(240000, Math.max(90000, Math.round(blob.size/1048576*60000)));
+  const up = await conScadenzaUpload(
+    sb.storage.from("originali").upload(path, blob, {contentType:blob.type, upsert:true}),
+    limite, riga.codice);
+  if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
+  await sb.from("foto").update({originale_url:path, richiesta_originale:false}).eq("id", riga.id);
+  registraVelocita(blob.size, Date.now()-t0);
+  logEvento("originale caricato", {codici:riga.codice,
+    dettaglio:"giornata "+riga._data+" (fuori dalla giornata aperta), "+Math.round(blob.size/1024)+" KB"});
+}
+let serviAltreInCorso = false, avvisoAltreGiornate = 0;
+async function serviRichiesteAltreGiornate(){
+  if(serviAltreInCorso) return;
+  if(!sb || !cloud.sede || !state.archive || state.senzaArchivio) return;
+  if(origQueue.length || origUrgActive) return;          // prima la giornata in corso
+  serviAltreInCorso = true;
+  try{
+    const {data, error} = await sb.from("foto")
+      .select("id,codice,originale_url,rulli!inner(servizi!inner(id,data_servizio,sede_id))")
+      .eq("richiesta_originale", true).limit(60);
+    if(error) throw error;
+    const aperta = cloud.servizio ? String(cloud.servizio.id) : "";
+    const righe = (data||[]).filter(f=>{
+      const sv = f.rulli && f.rulli.servizi;
+      return sv && !f.originale_url &&
+             String(sv.sede_id) === String(cloud.sede.id) &&
+             String(sv.id) !== aperta;                   // quella aperta la serve già serviRichieste()
+    });
+    let fatte = 0;
+    for(const f of righe){
+      if(fatte >= 2) break;                              // due per giro: non si affoga l'hotspot
+      const sv = f.rulli.servizi;
+      const files = await indiceGiornata(sv.data_servizio);
+      const h = files && files.get(f.codice);
+      if(!h) continue;                                   // non è roba di questo archivio
+      f._data = sv.data_servizio;
+      try{
+        if(Date.now()-avvisoAltreGiornate > 15000){
+          avvisoAltreGiornate = Date.now();
+          toast(`Carico ${f.codice} del ${sv.data_servizio}: lo chiede un'altra postazione`, 4000);
+        }
+        await caricaOriginaleDaArchivio(f, h, sv.id);
+        fatte++;
+      }catch(err){ console.warn("originale altra giornata", f.codice, err); }
+    }
+  }catch(err){ console.warn("serviRichiesteAltreGiornate", err); }
+  finally{ serviAltreInCorso = false; }
+}
+setInterval(serviRichiesteAltreGiornate, 8000);
+
 /* ---------- originali on-demand (usato per le foto vecchie, fuori dalla finestra cloud) ----------
    Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
    Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
