@@ -3629,6 +3629,10 @@ function setMonState(mode){
   }
   if(x) x.hidden = (mode==="off");
 }
+/* Quante foto stanno in una schermata del monitor: la stessa cifra usata dal mosaico. */
+function fotoPerPagina(){
+  return (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
+}
 function buildSlideshowQueue(){
   // solo il rullo trasmesso (null = tutti), in ordine di codice: prima per lettera, poi per numero
   const L = state.monitor.letter;
@@ -3645,7 +3649,11 @@ function startSlideshow(){
     if(!M.queue.length){ paintMonitorMessage(M.letter ? `Rullo ${M.letter}: in attesa di foto…` : "In attesa di foto…"); return; }
     if(M.qPos>=M.queue.length) M.qPos=0;
     await paintMonitorMosaic(M.qPos);
-    M.qPos++;
+    /* Si avanza di una SCHERMATA intera, non di una foto: se il cliente ne vede 6,
+       al cambio deve trovarne altre 6 nuove, non le stesse cinque spostate di un posto. */
+    const passo = fotoPerPagina();
+    M.qPos += passo;
+    if(M.qPos >= M.queue.length) M.qPos = 0;
   };
   step();
   M.timer=setInterval(step, (state.event?.secs||4)*1000);
