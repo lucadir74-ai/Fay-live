@@ -702,6 +702,7 @@ const state = {
   filter: "",
   lightboxIdx: -1,
   lbCustom: null,        // lista personalizzata per il lightbox (vista insieme)
+  lbFoto: null,          // FOTO aperta nel visualizzatore: comanda lei, non la posizione in lista
   monitor: { win: null, ctx: null, canvas: null, mode: "off", timer: null, queue: [], qPos: 0, present: [], pIdx: 0, letter: null }, // letter: rullo trasmesso (null = tutti)
 };
 
@@ -2812,7 +2813,7 @@ $("searchBox").addEventListener("keydown", e=>{
     const aperta = $("lightbox").classList.contains("open");
     // la casella ripete il codice della foto già aperta (ce lo scrivono le frecce):
     // in quel caso invio vuol dire "chiudi", non "riapri la stessa"
-    const stessa = aperta && q.found.length===1 && lbList()[state.lightboxIdx] === q.found[0];
+    const stessa = aperta && q.found.length===1 && fotoAperta() === q.found[0];
 
     if(q.found.length && !stessa){
       if(q.tokens.length > 1){
@@ -2843,7 +2844,7 @@ $("searchBox").addEventListener("keydown", e=>{
   if($("lightbox").classList.contains("open") && (e.key==="ArrowRight" || e.key==="ArrowLeft")){
     e.preventDefault();
     $(e.key==="ArrowRight" ? "lbNext" : "lbPrev").click();
-    const p = lbList()[state.lightboxIdx];
+    const p = fotoAperta();
     if(p) $("searchBox").value = p.code;   // la casella segue la foto, senza rilanciare la ricerca
   }
 });
@@ -2873,7 +2874,7 @@ function fineVendita(set){
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
-$("lbSend").onclick = async ()=>{ const p=lbList()[state.lightboxIdx]; if(p) await inviaDiretto([p]); };
+$("lbSend").onclick = async ()=>{ const p=fotoAperta(); if(p) await inviaDiretto([p]); };
 
 /* INVIO DIRETTO DAL PC (stesso meccanismo del tablet).
    Diverso dalla lista "Da inviare": lì l'email arriva dal QR, qui la scrivi tu subito.
@@ -3012,7 +3013,7 @@ function aggiornaTastiQr(){
 }
 $("cmpQr").onclick = ()=> alternaQr(selSet().map(p=>p.code), $("cmpQr"));
 $("lbQr").onclick  = ()=>{
-  const p = lbList()[state.lightboxIdx];
+  const p = fotoAperta();
   const set = state.selection.size ? selSet() : (p?[p]:[]);
   alternaQr(set.map(x=>x.code), $("lbQr"));
 };
@@ -3256,7 +3257,7 @@ function setLbStatus(p){
   $("lbStatus").innerHTML=h;
 }
 function refreshLbStatus(){
-  const p=lbList()[state.lightboxIdx];
+  const p=fotoAperta();
   if(p && $("lightbox").classList.contains("open")){ setLbStatus(p); paintLightbox(); }
 }
 
@@ -3296,9 +3297,37 @@ function mostraPannelloRegolazioni(){
   const bar=$("lbAdjBar");
   if(bar && bar.hidden) bar.hidden = false;
 }
+/* La foto aperta è AGGANCIATA all'oggetto, non alla posizione nella lista.
+   Prima ogni comando (stampa, invio, QR, monitor) leggeva lbList()[lightboxIdx]: se
+   mentre la foto era aperta arrivavano foto dalle altre postazioni, o cambiava il filtro,
+   la lista si riordinava sotto e quell'indice puntava a UN'ALTRA foto — a schermo restava
+   la tua, in stampa usciva quella accanto. Ora l'indice serve solo a scorrere. */
+function fotoAperta(){
+  const list = lbList();
+  if(state.lbFoto){
+    const i = list.indexOf(state.lbFoto);
+    if(i >= 0) state.lightboxIdx = i;        // la lista è cambiata sotto: riallineo l'indice
+    return state.lbFoto;                     // comanda comunque la foto agganciata
+  }
+  const p = list[state.lightboxIdx] || null;
+  state.lbFoto = p;
+  return p;
+}
+function lbScorri(delta){
+  const list = lbList();
+  let i = state.lbFoto ? list.indexOf(state.lbFoto) : state.lightboxIdx;
+  if(i < 0) i = state.lightboxIdx;
+  const j = i + delta;
+  if(j < 0 || j >= list.length) return;
+  state.lightboxIdx = j;
+  state.lbFoto = list[j];
+  if(!state.lbCustom) state.focusIdx = j;
+  paintLightbox(); monitorFollow();
+}
 function openLightboxList(set, i){
   state.lbCustom = set;
   state.lightboxIdx = i;
+  state.lbFoto = set[i] || null;
   $("lightbox").classList.add("open");
   mostraPannelloRegolazioni();
   paintLightbox();
@@ -3306,14 +3335,15 @@ function openLightboxList(set, i){
 async function openLightbox(i){
   state.lbCustom = null;
   const list=filteredPhotos(); if(!list[i]) return;
-  state.lightboxIdx=i; state.focusIdx=i;
+  state.lightboxIdx=i; state.focusIdx=i; state.lbFoto=list[i];
   $("lightbox").classList.add("open");
   mostraPannelloRegolazioni();
   await paintLightbox();
 }
 let lbSeq=0, lbBmp=null, lbBmpFor=null;
 async function paintLightbox(){
-  const list=lbList(); const p=list[state.lightboxIdx]; if(!p) return;
+  const p=fotoAperta(); if(!p) return;
+  const list=lbList();
   const my=++lbSeq;
   askOriginal(p);                  // se la foto è di un'altra postazione, la chiedo subito
   $("lbCode").textContent=p.code;
@@ -3366,7 +3396,7 @@ async function paintLightbox(){
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
 function closeLightbox(){
-  $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null;
+  $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; state.lbFoto=null;
   // il monitor cliente torna allo slideshow: la vendita è finita
   const M=state.monitor;
   if(M.win && !M.win.closed && M.mode==="present") startSlideshow(); if($("searchBox").value){ resetSearch(); } paintVisible(); }
@@ -3379,23 +3409,23 @@ $("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas"
 function monitorFollow(){
   const M=state.monitor;
   if(!M.win || M.win.closed || M.mode!=="present") return;
-  const p=lbList()[state.lightboxIdx]; if(!p) return;
+  const p=fotoAperta(); if(!p) return;
   M.present=[p]; M.pIdx=0;
   paintMonitorPhoto(p, true);
   const nx=lbList()[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
-$("lbPrev").onclick=()=>{ if(state.lightboxIdx>0){ state.lightboxIdx--; if(!state.lbCustom) state.focusIdx--; paintLightbox(); monitorFollow(); } };
-$("lbNext").onclick=()=>{ if(state.lightboxIdx<lbList().length-1){ state.lightboxIdx++; if(!state.lbCustom) state.focusIdx++; paintLightbox(); monitorFollow(); } };
-$("lbSelect").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p){ toggleSel(p); paintLightbox(); } };
+$("lbPrev").onclick=()=>lbScorri(-1);
+$("lbNext").onclick=()=>lbScorri(1);
+$("lbSelect").onclick=()=>{ const p=fotoAperta(); if(p){ toggleSel(p); paintLightbox(); } };
 /* Segnare una foto mentre il cliente la guarda è il gesto più frequente della serata:
    deve stare in barra, non dentro il menu Altro. Spazio fa la stessa cosa. */
 $("lbFav").onclick=()=>{ $("lbSelect").click(); };
-$("lbShow").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) presentSet([p]); };
-$("lbPrint").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) printPhotos([p]); };
-$("lbExport").onclick=()=>{ const p=lbList()[state.lightboxIdx]; if(p) exportPhotos([p]); };
+$("lbShow").onclick=()=>{ const p=fotoAperta(); if(p) presentSet([p]); };
+$("lbPrint").onclick=()=>{ const p=fotoAperta(); if(p) printPhotos([p]); };
+$("lbExport").onclick=()=>{ const p=fotoAperta(); if(p) exportPhotos([p]); };
 
 /* --- cursori luce e colore --- */
-function lbPhoto(){ return lbList()[state.lightboxIdx] || null; }
+function lbPhoto(){ return fotoAperta() || null; }
 function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
   $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
