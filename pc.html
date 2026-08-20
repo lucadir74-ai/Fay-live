@@ -5661,7 +5661,12 @@ async function loadMailRequests(){
 setInterval(()=>{ if(sb && cloud.servizio) refreshMailBadge(); }, 15000);
 
 /* Rigenera anteprima e miniatura dagli originali su disco, poche per volta per non
-   rubare banda e processore durante la vendita. */
+   rubare banda e processore durante la vendita.
+   DIFETTO CORRETTO: qui si usavano PV e MINI, che pero' sono dichiarati DENTRO la funzione
+   di importazione e fuori da li' non esistono. Ogni giro moriva subito con
+   "PV is not defined" — l'errore finiva solo nella console — e le anteprime grandi rimaste
+   indietro non venivano rigenerate MAI, per tutta la serata. */
+const PV_RIGEN = 1280, MINI_RIGEN = 420;
 let rigenerando = false;
 async function rigeneraDaDisco(){
   if(rigenerando || !sb || !cloud.servizio) return;
@@ -5673,13 +5678,13 @@ async function rigeneraDaDisco(){
       try{
         const f = p.arch ? await p.arch.getFile() : p.file;
         if(!f) continue;
-        const bmp = await decodeScaled(f, PV, (p.h||0) > (p.w||0));
+        const bmp = await decodeScaled(f, PV_RIGEN, (p.h||0) > (p.w||0));
         const c = document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
         c.getContext("2d").drawImage(bmp,0,0); bmp.close();
         p.preview = await toBlobAsync(c, 0.85);
         thumbCache.set(ckey(p.code), p.preview);
         if(!p.mini){
-          const km = Math.min(1, MINI/Math.max(c.width, c.height));
+          const km = Math.min(1, MINI_RIGEN/Math.max(c.width, c.height));
           const m = document.createElement("canvas");
           m.width = Math.max(1, Math.round(c.width*km));
           m.height = Math.max(1, Math.round(c.height*km));
