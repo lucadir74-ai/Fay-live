@@ -3199,7 +3199,8 @@ async function doPrint(set){
     .pg img{position:absolute;top:50%;left:50%}
   </style></head><body></body></html>`);
   w.document.close();
-  toast(`Preparo ${set.length} stampe ad alta risoluzione…`);
+  const fogli = set.reduce((n,p)=> n + Math.max(1, Math.min(20, p.copie||1)), 0);
+  toast(`Preparo ${fogli} stampe ad alta risoluzione…` + (fogli>set.length? ` (${set.length} foto, copie comprese)`:""));
   const loads=[]; let low=0;
   for(const p of set){
     let c;
@@ -3207,19 +3208,25 @@ async function doPrint(set){
     catch(err){ toast(err.message||("Impossibile stampare "+p.code)); continue; }
     if(c._lowQuality) low++;
     const land = c.width > c.height;       // foto orizzontale?
-    const img=w.document.createElement("img");
-    img.src=c.toDataURL("image/jpeg",0.95);
-    if(land){
-      // ruoto 90° per riempire il foglio verticale
-      img.style.transform="translate(-50%,-50%) rotate(90deg)";
-      img.style.height="100vw"; img.style.width="auto"; img.style.maxWidth="100vh";
-    } else {
-      img.style.transform="translate(-50%,-50%)";
-      img.style.width="100vw"; img.style.height="100vh"; img.style.objectFit="contain";
+    const dataUrl = c.toDataURL("image/jpeg",0.95);
+    /* Copie chieste dal tablet: la stessa foto entra nel lavoro di stampa tante volte
+       quante sono le copie, così escono già tutte senza toccare il dialogo stampante. */
+    const copie = Math.max(1, Math.min(20, p.copie||1));
+    for(let k=0;k<copie;k++){
+      const img=w.document.createElement("img");
+      img.src=dataUrl;
+      if(land){
+        // ruoto 90° per riempire il foglio verticale
+        img.style.transform="translate(-50%,-50%) rotate(90deg)";
+        img.style.height="100vw"; img.style.width="auto"; img.style.maxWidth="100vh";
+      } else {
+        img.style.transform="translate(-50%,-50%)";
+        img.style.width="100vw"; img.style.height="100vh"; img.style.objectFit="contain";
+      }
+      loads.push(img.decode().catch(()=>{}));
+      const d=w.document.createElement("div"); d.className="pg"; d.append(img);
+      w.document.body.append(d);
     }
-    loads.push(img.decode().catch(()=>{}));
-    const d=w.document.createElement("div"); d.className="pg"; d.append(img);
-    w.document.body.append(d);
   }
   await Promise.all(loads);
   // la finestra con le foto si chiude quando il dialogo di stampa è stato chiuso.
@@ -3235,20 +3242,23 @@ async function doPrint(set){
   setTimeout(()=>{ if(!stampaFatta) closePrintWin(); }, 120000);
   // chiudi la foto aperta in grande dopo la stampa
   if($("lightbox").classList.contains("open")) closeLightbox();
-  set.forEach(p=>{ p.prints++; });
+  // il contatore stampe cresce di quante copie sono uscite davvero
+  set.forEach(p=>{ p.prints += Math.max(1, Math.min(20, p.copie||1)); });
   /* Una foto appena stampata non è più "da stampare": il segnale arrivato dal tablet si
      spegne qui, così vale per QUALSIASI modo di stampare — dalla lista, dalla selezione
      nella griglia o dalla foto aperta — e non solo dal tasto della lista. */
   const eranoDaStampare = set.filter(p=>p.daStampare);
   eranoDaStampare.forEach(p=>{
-    p.daStampare = false;
-    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"richiesta stampa servita");
+    p.daStampare = false; p.copie = 1;       // richiesta servita: si riparte da 1 copia
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"richiesta stampa servita");
   });
   if(eranoDaStampare.length) updatePrintQueueBadge();
   renderTabs(); paintVisible(); refreshLbStatus();
   set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
   if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
-  else toast(set.length===1? `Stampata ${set[0].code}` : `Stampate ${set.length} foto`);
+  else toast(set.length===1
+      ? `Stampata ${set[0].code}` + (fogli>1? ` · ${fogli} copie`:"")
+      : `Stampate ${set.length} foto` + (fogli>set.length? ` · ${fogli} fogli`:""));
   if(typeof resetSearch==="function") resetSearch();   // casella e conteggio puliti per il cliente dopo
 }
 async function exportPhotos(set){
@@ -4892,7 +4902,7 @@ function addRemotePhotoFast(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
-            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, copie:f.copie||1,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
@@ -4902,7 +4912,7 @@ async function addRemotePhoto(f, letter){
   const p={ id:"cloud_"+f.id, dbId:f.id, code:f.codice, letter, num:parseInt(f.codice.split("-")[1],10)||0,
             srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
-            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare,
+            prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, copie:f.copie||1,
             miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
@@ -4951,7 +4961,9 @@ function subscribeRealtime(){
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"foto"}, payload=>{
       const f=payload.new; const p=[...state.byCode.values()].find(x=>x.dbId===f.id);
       if(p){
-        p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare; renderTabs(); paintVisible();
+        p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare;
+        p.copie=f.copie||1;                       // quante copie ha chiesto il tablet
+        renderTabs(); paintVisible();
         if(f.richiesta_originale && !p.origUploaded){
           if(p.file || p.arch){
             uploadOneOriginal(p); // subito, senza accodare
@@ -5003,12 +5015,16 @@ setInterval(async ()=>{
   try{
     const rulliIds = Object.values(cloud.rulli).map(r=>r.id);
     if(!rulliIds.length) return;
-    const {data} = await sb.from("foto").select("id,da_stampare").in("rullo_id",rulliIds).eq("da_stampare",true);
-    const cloudSet = new Set((data||[]).map(r=>r.id));
+    const {data} = await sb.from("foto").select("id,da_stampare,copie").in("rullo_id",rulliIds).eq("da_stampare",true);
+    const cloudMap = new Map((data||[]).map(r=>[r.id, r.copie||1]));
     let changed=false;
     state.photos.forEach(p=>{
-      const should = cloudSet.has(p.dbId);
-      if(should && !p.daStampare){ p.daStampare=true; changed=true; }
+      const should = cloudMap.has(p.dbId);
+      if(should){
+        const n = cloudMap.get(p.dbId);
+        if(!p.daStampare){ p.daStampare=true; changed=true; }
+        if((p.copie||1)!==n){ p.copie=n; changed=true; }
+      }
     });
     if(changed) updatePrintQueueBadge();
   }catch(_){}
@@ -5022,6 +5038,8 @@ $("btnPrintQueue").onclick = ()=>{
       <input type="checkbox" class="pqChk" data-code="${p.code}" checked>
       <button class="pqOpen" data-i="${i}" title="Apri la foto per guardarla e regolarla"
 style="font-family:var(--mono);font-weight:700">${p.code}</button>
+      ${(p.copie||1)>1 ? `<b style="background:var(--danger);color:#fff;border-radius:6px;
+        padding:2px 9px;font-size:14px">×${p.copie}</b>` : ''}
       <span style="color:var(--muted)">${p.prints>0?'· già stampata':''}</span>
       <div style="flex:1"></div>
       <span style="color:var(--muted)">${p.adj? (p.adj.bw? 'b/n' : 'ritoccata') : ''}</span>
@@ -5049,7 +5067,7 @@ $("pqPrintAll").onclick=async ()=>{
 };
 $("pqClear").onclick=async ()=>{
   const list=printQueuePhotos();
-  for(const p of list){ p.daStampare=false; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"coda"); }
+  for(const p of list){ p.daStampare=false; p.copie=1; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"coda"); }
   updatePrintQueueBadge(); $("pqDlg").close();
   toast("Lista da stampare svuotata");
 };

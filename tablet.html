@@ -61,6 +61,25 @@
   .cell .grp{position:absolute;left:6px;top:6px;background:rgba(245,185,66,.92);color:#151109;
     font:600 12px "Segoe UI",sans-serif;padding:2px 7px;border-radius:8px;max-width:70%;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* quante copie stampare: foglio che compare quando si manda in stampa */
+  #cpSheet{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;z-index:70;
+    align-items:flex-end;justify-content:center}
+  #cpSheet.open{display:flex}
+  #cpBox{background:#151922;width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:18px 16px 26px}
+  #cpBox h3{margin:0 0 4px;font-size:20px}
+  #cpBox p{margin:0 0 16px;color:var(--muted);font-size:14px}
+  #cpQuick{display:flex;gap:10px;margin-bottom:16px}
+  #cpQuick button{flex:1;background:#222836;border:1px solid #39415a;color:#e8ecf5;
+    padding:18px 0;border-radius:14px;font-size:24px;font-weight:700;font-family:inherit}
+  #cpQuick button:active{background:#2f3849}
+  #cpAltro{display:flex;align-items:center;gap:12px}
+  #cpMeno,#cpPiu{width:56px;height:56px;border-radius:14px;background:#222836;border:1px solid #39415a;
+    color:#e8ecf5;font-size:26px;font-family:inherit}
+  #cpN{font-size:26px;font-weight:700;min-width:56px;text-align:center}
+  #cpOk{background:#F5B942;border:0;color:#151109;padding:16px 18px;border-radius:12px;
+    font-size:18px;font-weight:700;font-family:inherit}
+  #cpAnnulla{background:transparent;border:1px solid var(--line);color:var(--muted);
+    padding:16px 16px;border-radius:12px;font-size:16px;font-family:inherit}
   #grpSheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:60;
     align-items:flex-end;justify-content:center}
   #grpSheet.open{display:flex}
@@ -290,6 +309,29 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- quante copie: 1 è il caso normale, i tasti mandano in stampa con un tocco solo -->
+  <div id="cpSheet">
+    <div id="cpBox">
+      <h3>Quante copie per foto?</h3>
+      <p id="cpSub"></p>
+      <div id="cpQuick">
+        <button data-n="1">1</button>
+        <button data-n="2">2</button>
+        <button data-n="3">3</button>
+        <button data-n="4">4</button>
+        <button data-n="5">5</button>
+      </div>
+      <div id="cpAltro">
+        <button id="cpMeno">−</button>
+        <span id="cpN">1</span>
+        <button id="cpPiu">+</button>
+        <div style="flex:1"></div>
+        <button id="cpAnnulla">Annulla</button>
+        <button id="cpOk">Manda in stampa</button>
+      </div>
+    </div>
+  </div>
 
   <div id="grpSheet">
     <div id="grpBox">
@@ -686,13 +728,40 @@ $("grpSheet").onclick = e=>{ if(e.target.id==="grpSheet") $("grpSheet").classLis
 
 $("selShare").onclick=()=> { const ps=selectedPhotos(); sharePhotos(ps); logActivity(ps,"condivise"); };
 $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logActivity(ps,"esportate"); };
+/* Quante copie stampare. Il foglio si apre a ogni "manda in stampa": i tasti 1-5 mandano
+   subito (un tocco solo), il − + serve per numeri più alti. Chiudendo si annulla tutto.
+   Il numero viaggia sul cloud nella colonna `copie` e il PC lo mostra nella lista. */
+const CP = { risolvi:null, n:1 };
+function chiediCopie(sub){
+  return new Promise(res=>{
+    CP.risolvi = res; CP.n = 1;
+    $("cpSub").textContent = sub || "";
+    $("cpN").textContent = "1";
+    $("cpSheet").classList.add("open");
+  });
+}
+function chiudiCopie(v){
+  $("cpSheet").classList.remove("open");
+  const r = CP.risolvi; CP.risolvi = null;
+  if(r) r(v);
+}
+$("cpQuick").onclick = e=>{ const b=e.target.closest("button"); if(b) chiudiCopie(+b.dataset.n); };
+$("cpMeno").onclick  = ()=>{ CP.n=Math.max(1,CP.n-1); $("cpN").textContent=CP.n; };
+$("cpPiu").onclick   = ()=>{ CP.n=Math.min(20,CP.n+1); $("cpN").textContent=CP.n; };
+$("cpOk").onclick    = ()=> chiudiCopie(CP.n);
+$("cpAnnulla").onclick = ()=> chiudiCopie(null);
+$("cpSheet").onclick = e=>{ if(e.target.id==="cpSheet") chiudiCopie(null); };
+const testoCopie = n => n>1 ? ` · ${n} copie l'una` : "";
+
 $("selPrint").onclick=async ()=>{
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`);
+  if(!copie) return;
   // segna le foto come "da stampare" → il PC le mostra nella lista Da stampare
-  for(const p of ps){ try{ await sb.from("foto").update({da_stampare:true}).eq("id",p.id); }catch(_){} }
+  for(const p of ps){ try{ await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id); }catch(_){} }
   logActivity(ps,"in stampa");
-  toast(`${ps.length} foto mandate in stampa`);
+  toast(`${ps.length} foto mandate in stampa${testoCopie(copie)}`);
   // esci dalla selezione
   S.selmode=false; document.body.classList.remove("selmode"); S.selected.clear(); render();
 };
@@ -1227,11 +1296,13 @@ $("btnPrint").onclick = async ()=>{
   const ps = activeFavs();
   if(!ps.length){ toast("Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
   if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`);
+  if(!copie) return;
   const b=$("btnPrint"); b.disabled=true; b.classList.add("busy");
   let ok=0, ko=[];
   for(const p of ps){
     try{
-      const {error} = await sb.from("foto").update({da_stampare:true}).eq("id",p.id);
+      const {error} = await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id);
       if(error) throw error;
       ok++;
     }catch(_){ ko.push(p.code); }
@@ -1239,7 +1310,7 @@ $("btnPrint").onclick = async ()=>{
   b.disabled=false; b.classList.remove("busy");
   if(ok) logActivity(ps.filter(p=>!ko.includes(p.code)),"in stampa");
   toast(ko.length ? `${ok} mandate in stampa, ${ko.length} non riuscite (${ko.join(", ")})`
-                  : `${ok} foto mandate in stampa`);
+                  : `${ok} foto mandate in stampa${testoCopie(copie)}`);
 };
 
 // tasti nel visore: agiscono sulla FOTO aperta
@@ -1251,10 +1322,12 @@ $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); lo
 $("vPrint").onclick = async ()=>{
   const p=V.list[V.idx]; if(!p) return;
   if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const copie = await chiediCopie(p.code);
+  if(!copie) return;
   try{
-    await sb.from("foto").update({da_stampare:true}).eq("id",p.id);
+    await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id);
     logActivity([p],"in stampa");
-    toast(`${p.code} mandata in stampa`);
+    toast(`${p.code} mandata in stampa${testoCopie(copie)}`);
   }catch(err){ toast("Non riuscito: "+(err.message||err)); }
 };
 $("vSend").onclick = ()=>{
@@ -1460,7 +1533,8 @@ function autoRefreshOk(){
       && !opBusy
       && !S.selmode
       && !$("viewer").classList.contains("open")
-      && !$("grpSheet").classList.contains("open");
+      && !$("grpSheet").classList.contains("open")
+      && !$("cpSheet").classList.contains("open");
 }
 setInterval(()=>{ if(autoRefreshOk()) refresh(false); }, 25000);
 
