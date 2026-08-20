@@ -510,6 +510,7 @@ async function caricaFotoDeiRulli(ids){
 async function openServizio(sv){
   if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
   S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null; S.gruppo=null;
+  caricaFavSalvati(sv.id);        // rimette i cuori scelti prima del ricaricamento
   setDot(true,"Apro la giornata…");
   const {data:rulli}=await sb.from("rulli").select("*").eq("servizio_id",sv.id);
   (rulli||[]).forEach(r=>S.rulli[r.id]={lettera:r.lettera, desc:r.descrizione});
@@ -947,7 +948,36 @@ function esc(s){ return (s||"").replace(/[<>&"]/g,""); }
    Quello che il cloud non ha ancora registrato (linea caduta) resta qui e vince
    sul valore letto dal database al prossimo aggiornamento. */
 const favLocali = new Map();          // id foto -> true/false scelto su QUESTO tablet
-function ricordaFav(p){ favLocali.set(p.id, p.fav); }
+/* Le scelte restano scritte anche nella memoria del tablet: se la pagina viene ricaricata
+   (aggiornamento del browser, schermo che si riavvia, app chiusa per sbaglio) i cuori
+   tornano tutti al loro posto senza dipendere da cosa è riuscito ad arrivare sul cloud.
+   La chiave è per giornata, e le giornate vecchie si buttano da sole dopo due settimane. */
+const FAV_KEY = "faylive_fav_";
+let favChiave = null;                 // chiave della giornata aperta ora
+function pulisciFavVecchi(){
+  const limite = Date.now() - 14*24*3600*1000;
+  for(let i=localStorage.length-1; i>=0; i--){
+    const k = localStorage.key(i);
+    if(!k || !k.startsWith(FAV_KEY)) continue;
+    try{ const o=JSON.parse(localStorage.getItem(k)); if(!o || !o.t || o.t < limite) localStorage.removeItem(k); }
+    catch(_){ localStorage.removeItem(k); }
+  }
+}
+function caricaFavSalvati(servizioId){
+  favLocali.clear();
+  favChiave = servizioId ? FAV_KEY+servizioId : null;
+  pulisciFavVecchi();
+  if(!favChiave) return;
+  try{
+    const o = JSON.parse(localStorage.getItem(favChiave)||"null");
+    (o && o.v || []).forEach(([id,val])=> favLocali.set(id, !!val));
+  }catch(_){}
+}
+function salvaFavSalvati(){
+  if(!favChiave) return;
+  try{ localStorage.setItem(favChiave, JSON.stringify({t:Date.now(), v:[...favLocali]})); }catch(_){}
+}
+function ricordaFav(p){ favLocali.set(p.id, p.fav); salvaFavSalvati(); }
 function applicaFavLocali(lista){ lista.forEach(p=>{ if(favLocali.has(p.id)) p.fav = favLocali.get(p.id); }); }
 
 async function toggleFav(p){
@@ -976,7 +1006,7 @@ async function toggleFav(p){
       if(p.fav && !p.origPath) campi.richiesta_originale = true;
       const {error} = await sb.from("foto").update(campi).eq("id",p.id);
       if(error) throw error;
-      favLocali.delete(p.id);        // il cloud è allineato: basta lui
+      salvaFavSalvati();             // cloud allineato; la copia locale resta per i ricaricamenti
       if(campi.richiesta_originale){ avviaSpiaOriginali(); logTecnico([p], "originale richiesto"); }
     }catch(_){ toast("Preferito salvato qui, lo sincronizzo appena torna la linea"); }
   }
@@ -1020,12 +1050,12 @@ $("btnFavClear").onclick = async ()=>{
   if(!favs.length){ toast("Non ci sono preferiti da pulire"+(S.letter?" nel rullo "+S.letter:"")); return; }
   if(!confirm(`Tolgo i ${favs.length} preferiti${S.letter? " del rullo "+S.letter : ""}?`)) return;
   favs.forEach(p=>{ p.fav=false; favLocali.set(p.id,false); });
+  salvaFavSalvati();
   S.favOnly=false; lastGrid=""; render();
   if(sb){
     for(const p of favs){
       try{
-        const {error} = await sb.from("foto").update({preferito:false}).eq("id",p.id);
-        if(!error) favLocali.delete(p.id);
+        await sb.from("foto").update({preferito:false}).eq("id",p.id);
       }catch(_){}
     }
   }
