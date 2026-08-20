@@ -461,6 +461,7 @@
       <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
       <button id="selOmaggio" title="Stampe regalate al cliente">🎁 Omaggio</button>
       <button id="selScarto" title="Stampe venute male e buttate">🗑 Scarto</button>
+      <button id="selMenoStampa" title="Toglie una stampa dal contatore: la stampa era stata annullata e non è uscita">➖ Stampa</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -2988,6 +2989,22 @@ async function annullaStat(perRullo, campo){
 $("selFile").onclick    = async ()=>{ const set=selSet(); await segnaStat(set,"file_venduti","vendute come file"); fineVendita(set); };
 $("selOmaggio").onclick = async ()=>{ await segnaStat(selSet(),"omaggi","in omaggio"); };
 $("selScarto").onclick  = async ()=>{ await segnaStat(selSet(),"scarti","segnate come scarto"); };
+/* La finestra di stampa di Windows non dice se si e' premuto Stampa o Annulla, quindi la
+   stampa viene contata quando la finestra si chiude. Se non e' uscita, questo tasto toglie
+   una stampa dal contatore in qualsiasi momento: prima si poteva rimediare solo col tasto
+   "Non e' uscita" del messaggio, che dopo pochi secondi spariva. */
+$("selMenoStampa").onclick = ()=>{
+  const set=selSet();
+  if(!set.length){ toast("Nessuna foto selezionata"); return; }
+  let tolte=0;
+  set.forEach(p=>{
+    if((p.prints||0)<=0) return;
+    p.prints = p.prints - 1; tolte++; toccaLocale(p);
+    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stampa tolta");
+  });
+  renderTabs(); paintVisible(); refreshLbStatus();
+  toast(tolte ? `Tolta una stampa a ${tolte} foto` : "Queste foto non risultano stampate");
+};
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
@@ -3336,7 +3353,7 @@ async function doPrint(set){
     else toastAnnulla(set.length===1
         ? `Stampata ${set[0].code}` + (fogli>1? ` · ${fogli} copie`:"")
         : `Stampate ${set.length} foto` + (fogli>set.length? ` · ${fogli} fogli`:""),
-        "Non è uscita", disfa);
+        "Non è uscita", disfa, 45000);
     if(typeof resetSearch==="function") resetSearch();   // casella e conteggio puliti per il cliente dopo
   };
 
