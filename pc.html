@@ -637,6 +637,16 @@
   </div>
 </dialog>
 
+<dialog id="copDlg">
+  <h3 style="margin-bottom:6px">Quante copie per foto?</h3>
+  <p class="hint" style="margin-bottom:12px">Imposta le copie QUI, non nella finestra di Windows:
+  così escono già i fogli giusti e il contatore delle stampe è corretto.</p>
+  <div id="copBox" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="copCancel">Annulla</button>
+  </div>
+</dialog>
+
 <dialog id="descDlg">
   <h3 style="margin-bottom:10px">Descrizione rullo <span id="ddLetter" class="badge"></span></h3>
   <input type="text" id="ddInput" maxlength="40" style="width:100%;margin-bottom:16px">
@@ -3230,8 +3240,48 @@ async function originalReady(p){
   return false;
 }
 
-async function printPhotos(set){
+/* Le copie vanno decise QUI, non nella finestra di stampa di Windows: il browser non puo'
+   leggere quel campo, quindi una stampa in 3 copie decisa li' dentro veniva contata come 1.
+   Impostandole qui il lavoro di stampa contiene gia' 3 pagine e il contatore e' giusto. */
+function chiediCopie(preimpostato){
+  return new Promise(res=>{
+    const dlg=$("copDlg"), box=$("copBox");
+    let n = Math.max(1, Math.min(20, preimpostato||1));
+    const disegna = ()=>{
+      box.innerHTML="";
+      for(let i=1;i<=5;i++){
+        const b=document.createElement("button");
+        b.textContent=i;
+        b.style.cssText="min-width:56px;font-size:18px;font-weight:700"+(i===n?";outline:2px solid var(--accent)":"");
+        b.onclick=()=>{ dlg.close(); res(i); };
+        box.append(b);
+      }
+      const meno=document.createElement("button"); meno.textContent="−";
+      meno.onclick=()=>{ n=Math.max(1,n-1); disegna(); };
+      const val=document.createElement("span");
+      val.textContent=n; val.style.cssText="min-width:40px;text-align:center;font-size:20px;font-weight:700";
+      const piu=document.createElement("button"); piu.textContent="+";
+      piu.onclick=()=>{ n=Math.min(20,n+1); disegna(); };
+      const ok=document.createElement("button"); ok.textContent="Stampa "+n;
+      ok.style.cssText="background:var(--accent);color:#000;font-weight:700";
+      ok.onclick=()=>{ dlg.close(); res(n); };
+      box.append(meno,val,piu,ok);
+    };
+    disegna();
+    $("copCancel").onclick=()=>{ dlg.close(); res(0); };
+    dlg.showModal();
+  });
+}
+async function printPhotos(set, opzioni){
   if(!set.length){ toast("Nessuna foto da stampare"); return; }
+  /* Se la richiesta arriva dal tablet le copie le ha gia' scelte il tablet: non si richiede.
+     Se la stampa parte da qui, si chiede prima, una volta sola per tutto il gruppo. */
+  if(!(opzioni && opzioni.copieGiaDecise)){
+    const gia = Math.max(...set.map(p=>Math.max(1, Math.min(20, p.copie||1))));
+    const n = await chiediCopie(gia);
+    if(!n) return;                       // annullato
+    set.forEach(p=>{ p.copie = n; });
+  }
   // assicura che gli originali delle foto da stampare siano in coda di caricamento
   set.forEach(p=>{ queueOriginalUpload(p); askOriginal(p); });
   // pre-controllo disponibilità
@@ -3358,6 +3408,8 @@ async function doPrint(set){
       p.daStampare = false; p.copie = 1; toccaLocale(p);   // richiesta servita: si riparte da 1 copia
       if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"richiesta stampa servita");
     });
+    // le copie decise a mano su questo PC valgono per QUESTA stampa: la prossima riparte da 1
+    set.forEach(p=>{ if(!p.daStampare) p.copie = 1; });
     if(eranoDaStampare.length) updatePrintQueueBadge();
     renderTabs(); paintVisible(); refreshLbStatus();
     set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
@@ -5220,7 +5272,7 @@ $("pqPrintAll").onclick=async ()=>{
   const codes=[...document.querySelectorAll(".pqChk:checked")].map(c=>c.dataset.code);
   const set=state.photos.filter(p=>codes.includes(p.code));
   $("pqDlg").close();
-  if(set.length) await printPhotos(set);
+  if(set.length) await printPhotos(set, {copieGiaDecise:true});
   // dopo la stampa, togli il flag da_stampare
   for(const p of set){ p.daStampare=false; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
   updatePrintQueueBadge();
