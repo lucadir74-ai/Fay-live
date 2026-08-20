@@ -2402,6 +2402,21 @@ function logEvento(azione, o){
 }
 
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
+let rulliScoperti = {};    // lettera del rullo -> quante richieste scoperte
+/* Avviso a scomparsa: dice QUALE rullo resta senza originali, cosi' si sa subito su quale
+   postazione andare a riagganciare l'archivio. Un rullo gia' segnalato non ripete l'avviso
+   prima di 3 minuti, altrimenti col controllo ogni 2 secondi sarebbe un tormento. */
+const avvisatoRullo = {};
+function avvisaRulliScoperti(perRullo){
+  const ora = Date.now();
+  for(const [L, n] of Object.entries(perRullo)){
+    if(avvisatoRullo[L] && ora - avvisatoRullo[L] < 180000) continue;
+    avvisatoRullo[L] = ora;
+    toast(`⚠ Rullo ${L}: ${n} originali richiesti che questo PC non ha — li deve caricare la postazione che ha scattato quel rullo`, 8000);
+  }
+  // rullo tornato a posto: se ricapita, l'avviso riparte subito
+  for(const L of Object.keys(avvisatoRullo)){ if(!perRullo[L]) delete avvisatoRullo[L]; }
+}
 const origFalliti = new Set();   // originali urgenti arresi dopo 8 tentativi
 /* Velocità reale di caricamento, media degli ultimi 20 file. Serve a distinguere
    "la linea è lenta stasera" da "l'app si è impiantata": due diagnosi opposte. */
@@ -2427,7 +2442,10 @@ function updateOrigCount(){
   if(v && (urg||origBg.length)) txt += " · "+v+" KB/s";
   if(bg)  txt += " · in sottofondo: "+bg + (!autoOrigOn() ? " (fermo)"
                  : ((thumbQueue.length||thumbActive) ? " (in attesa delle anteprime)" : ""));
-  if(richiesteAperte) txt += " · ⚠ richieste non servite: "+richiesteAperte;
+  if(richiesteAperte){
+    const det = Object.entries(rulliScoperti||{}).map(([L,n])=>L+":"+n).join(", ");
+    txt += " · ⚠ richieste non servite: "+richiesteAperte + (det ? " ("+det+")" : "");
+  }
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
   $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
@@ -2452,13 +2470,18 @@ async function serviRichieste(){
        Ora le gia' servite sono escluse dalla query, la finestra e' molto piu' larga e il
        segnale rimasto acceso per errore viene spento. */
     const {data, error} = await sb.from("foto")
-      .select("id,codice,originale_url").eq("richiesta_originale", true)
+      .select("id,codice,originale_url,rullo_id").eq("richiesta_originale", true)
       .is("originale_url", null).in("rullo_id", ids).limit(1000);
     if(error) throw error;
+    // id del rullo -> lettera, per poter dire QUALE rullo resta scoperto
+    const letteraDi = {};
+    for(const [L, r] of Object.entries(cloud.rulli||{})){ if(r && r.id) letteraDi[r.id] = L; }
     let nonServite = 0;
+    const perRullo = {};
+    const segnaScoperta = (L)=>{ L = L || "?"; perRullo[L] = (perRullo[L]||0) + 1; };
     for(const f of (data||[])){
       const p = state.byCode.get(f.codice);
-      if(!p) { nonServite++; continue; }
+      if(!p) { nonServite++; segnaScoperta(letteraDi[f.rullo_id]); continue; }
       if(p.origUploaded || f.originale_url){
         // l'originale c'e' gia': spengo la richiesta, altrimenti resta li' a occupare posto
         if(f.id) sbTry(()=>sb.from("foto").update({richiesta_originale:false}).eq("id",f.id),"richiesta gia' servita");
@@ -2468,9 +2491,11 @@ async function serviRichieste(){
         if(!origSet.has(p.code)) logEvento("richiesta ricevuta", {codici:f.codice, rullo:p.letter});
         queueOriginalUpload(p, true);   // ce l'ho: lo carico subito
       }
-      else nonServite++;                                   // non è roba mia, la servirà un altro PC
+      else { nonServite++; segnaScoperta(p.letter || letteraDi[f.rullo_id]); }   // non è roba mia, la servirà un altro PC
     }
     richiesteAperte = nonServite;
+    rulliScoperti = perRullo;
+    avvisaRulliScoperti(perRullo);
     updateOrigCount();
     // qualcuno chiede originali che dovrebbero essere miei ma non ho i file agganciati:
     // provo a ripescarli dall'archivio da solo, al massimo una volta al minuto
