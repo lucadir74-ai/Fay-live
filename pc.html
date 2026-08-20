@@ -3295,14 +3295,14 @@ async function doPrint(set){
 
     // il contatore stampe cresce di quante copie sono uscite davvero
     const copieDi = new Map(set.map(p=>[p, Math.max(1, Math.min(20, p.copie||1))]));
-    set.forEach(p=>{ p.prints += copieDi.get(p); });
+    set.forEach(p=>{ p.prints += copieDi.get(p); toccaLocale(p); });
     /* Una foto appena stampata non è più "da stampare": il segnale arrivato dal tablet si
        spegne qui, così vale per QUALSIASI modo di stampare — dalla lista, dalla selezione
        nella griglia o dalla foto aperta — e non solo dal tasto della lista. */
     const eranoDaStampare = set.filter(p=>p.daStampare);
     const copieRichieste = new Map(eranoDaStampare.map(p=>[p, p.copie||1]));
     eranoDaStampare.forEach(p=>{
-      p.daStampare = false; p.copie = 1;       // richiesta servita: si riparte da 1 copia
+      p.daStampare = false; p.copie = 1; toccaLocale(p);   // richiesta servita: si riparte da 1 copia
       if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"richiesta stampa servita");
     });
     if(eranoDaStampare.length) updatePrintQueueBadge();
@@ -3311,9 +3311,9 @@ async function doPrint(set){
 
     // rimette tutto com'era: serve quando nella finestra di Windows si è premuto Annulla
     const disfa = ()=>{
-      set.forEach(p=>{ p.prints = Math.max(0, p.prints - copieDi.get(p)); });
+      set.forEach(p=>{ p.prints = Math.max(0, p.prints - copieDi.get(p)); toccaLocale(p); });
       eranoDaStampare.forEach(p=>{
-        p.daStampare = true; p.copie = copieRichieste.get(p) || 1;
+        p.daStampare = true; p.copie = copieRichieste.get(p) || 1; toccaLocale(p);
         if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:true, copie:p.copie}).eq("id",p.dbId),"stampa annullata");
       });
       set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
@@ -5089,31 +5089,53 @@ function subscribeRealtime(){
 
 // --- coda "Da stampare" (foto segnate dai tablet) ---
 function printQueuePhotos(){ return state.photos.filter(p=>p.daStampare); }
+/* Quando questo PC cambia stampe / da_stampare, la riga viene "toccata": per 20 secondi il
+   controllo periodico non la tocca, cosi' non rimette indietro un cambio appena fatto qui
+   mentre il cloud sta ancora scrivendo. */
+function toccaLocale(p){ if(p) p._tsLoc = Date.now(); }
+function toccataDiRecente(p){ return p._tsLoc && (Date.now() - p._tsLoc) < 20000; }
 function updatePrintQueueBadge(){
   const n=printQueuePhotos().length;
   const b=$("pqBadge");
   if(b){ b.textContent=n; b.hidden=false; b.classList.toggle("alert", n>0); }
 }
-// fallback: controlla periodicamente la coda di stampa dal cloud (se il realtime è lento)
+/* Controllo periodico dal cloud: allinea questa postazione a tutte le altre, anche se il
+   realtime non arriva. Va nei DUE sensi:
+   - lista "Da stampare": una foto sparita dalla lista sul cloud (l'ha stampata un altro PC)
+     sparisce anche qui; una comparsa compare;
+   - segno "Stampata": il numero di stampe di un'altra postazione arriva anche qui, cosi'
+     l'icona sulla foto e' uguale su tutti i PC senza dover aggiornare la pagina.
+   Le foto cambiate su QUESTO PC negli ultimi 20 secondi non si toccano (vedi toccaLocale). */
 setInterval(async ()=>{
   if(!sb || !cloud.servizio) return;
   try{
     const rulliIds = Object.values(cloud.rulli).map(r=>r.id);
     if(!rulliIds.length) return;
-    const {data} = await sb.from("foto").select("id,da_stampare,copie").in("rullo_id",rulliIds).eq("da_stampare",true);
-    const cloudMap = new Map((data||[]).map(r=>[r.id, r.copie||1]));
-    let changed=false;
+    const [qCoda, qStampe] = await Promise.all([
+      sb.from("foto").select("id,copie").in("rullo_id",rulliIds).eq("da_stampare",true),
+      sb.from("foto").select("id,stampe").in("rullo_id",rulliIds).gt("stampe",0)
+    ]);
+    const inCoda  = new Map(((qCoda&&qCoda.data)||[]).map(r=>[r.id, r.copie||1]));
+    const stampate= new Map(((qStampe&&qStampe.data)||[]).map(r=>[r.id, r.stampe||0]));
+    let coda=false, segni=false;
     state.photos.forEach(p=>{
-      const should = cloudMap.has(p.dbId);
-      if(should){
-        const n = cloudMap.get(p.dbId);
-        if(!p.daStampare){ p.daStampare=true; changed=true; }
-        if((p.copie||1)!==n){ p.copie=n; changed=true; }
+      if(!p.dbId || toccataDiRecente(p)) return;
+      // --- lista da stampare ---
+      if(inCoda.has(p.dbId)){
+        const n = inCoda.get(p.dbId);
+        if(!p.daStampare){ p.daStampare=true; coda=true; }
+        if((p.copie||1)!==n){ p.copie=n; coda=true; }
+      }else if(p.daStampare){
+        p.daStampare=false; p.copie=1; coda=true;   // servita da un'altra postazione
       }
+      // --- segno "stampata" ---
+      const n = stampate.has(p.dbId) ? stampate.get(p.dbId) : 0;
+      if((p.prints||0) !== n){ p.prints = n; segni=true; }
     });
-    if(changed) updatePrintQueueBadge();
+    if(coda) updatePrintQueueBadge();
+    if(coda || segni){ renderTabs(); paintVisible(); if(typeof refreshLbStatus==="function") refreshLbStatus(); }
   }catch(_){}
-}, 8000);
+}, 6000);
 $("btnPrintQueue").onclick = ()=>{
   const list=printQueuePhotos();
   const box=$("pqList");
@@ -5147,12 +5169,12 @@ $("pqPrintAll").onclick=async ()=>{
   $("pqDlg").close();
   if(set.length) await printPhotos(set);
   // dopo la stampa, togli il flag da_stampare
-  for(const p of set){ p.daStampare=false; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
+  for(const p of set){ p.daStampare=false; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
   updatePrintQueueBadge();
 };
 $("pqClear").onclick=async ()=>{
   const list=printQueuePhotos();
-  for(const p of list){ p.daStampare=false; p.copie=1; if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"coda"); }
+  for(const p of list){ p.daStampare=false; p.copie=1; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"coda"); }
   updatePrintQueueBadge(); $("pqDlg").close();
   toast("Lista da stampare svuotata");
 };
