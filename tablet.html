@@ -598,6 +598,9 @@ function render(){
   // anche lo stato "pronte X/Y": scriverlo qui a mano cancellava la spia a ogni ridisegno
   aggiornaSpiaBadge();
   $("favOnly").classList.toggle("on", S.favOnly);
+  // dentro la vista preferiti il tasto dice come uscirne
+  $("favOnly").lastElementChild.textContent = S.favOnly ? "Chiudi preferiti" : "Preferiti";
+  $("favOnly").querySelector(".heart").textContent = S.favOnly ? "♥" : "♡";
   aggiornaIndicatoreAnteprime();
 
   // griglia
