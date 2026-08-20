@@ -293,6 +293,7 @@
         <button class="ichip" data-f="ko">Non riusciti <span class="n" id="invNK"></span></button>
       </div>
     </div>
+    <div id="invKO"></div>
     <div id="invList"></div>
   </div>
 
@@ -441,14 +442,17 @@ function aggiornaIndicatoreAnteprime(){
   if(!tot){ el.textContent=""; return; }
   const pronte = scope.filter(p=>p.url).length;      // ha almeno la miniatura: si vede
   const grandi = scope.filter(p=>p.bigUrl).length;   // apribile a schermo pieno
+  const salvate = magazzinoAttivo && magazzinoTot
+        ? ` · 📥 ${magazzinoFatte}/${magazzinoTot}`
+        : (magazzino && magazzinoTot && magazzinoFatte>=magazzinoTot ? " · 📥 sul tablet" : "");
   if(pronte>=tot && grandi>=tot){
-    el.textContent = `✓ ${tot} anteprime`;
+    el.textContent = `✓ ${tot} anteprime` + salvate;
     el.style.color = "var(--ok, #4caf50)";
   }else if(pronte>=tot){
-    el.textContent = `⇩ ${grandi}/${tot} a schermo pieno`;
+    el.textContent = `⇩ ${grandi}/${tot} a schermo pieno` + salvate;
     el.style.color = "var(--muted)";
   }else{
-    el.textContent = `⇩ ${pronte}/${tot} anteprime`;
+    el.textContent = `⇩ ${pronte}/${tot} anteprime` + salvate;
     el.style.color = "var(--accent)";
   }
 }
@@ -530,6 +534,8 @@ async function openServizio(sv){
   setDot(true,"Sincronizzato");
   subscribe();
   render();
+  await apriMagazzino(sv.id);
+  riempiMagazzino();                 // in sottofondo, non blocca nulla
 }
 
 /* ---------- tempo reale ---------- */
@@ -599,6 +605,8 @@ function render(){
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
     else { S.gruppo=null; S.letter=b.dataset.l||S.letter; }
     render(); $("grid").scrollTop=0;
+    /* cambiato rullo: il magazzino riparte dando la precedenza a QUESTO rullo */
+    if(!magazzinoAttivo) riempiMagazzino();
   });
 
   // conteggio preferiti (del rullo attivo) — lo scrive aggiornaSpiaBadge, che ci aggiunge
@@ -903,6 +911,80 @@ function pumpDraw(){
   }
 }
 
+/* ---------- magazzino immagini sul tablet ----------
+   Le immagini scaricate restano SUL TABLET (Cache Storage del browser), non solo in memoria:
+   sopravvivono al ricaricamento della pagina e si rivedono all'istante anche con la linea
+   che va e viene. In sottofondo, mentre l'operatore lavora, il tablet continua piano piano
+   a scaricare quello che non ha ancora, dando sempre la precedenza a cio' che si guarda.
+   Il magazzino e' intestato alla giornata: aprendo una giornata nuova quelli vecchi si
+   cancellano da soli, cosi' la memoria del tablet non cresce all'infinito. */
+const MAG_PREFIX = "faylive-img-";
+var magazzino = null;
+async function apriMagazzino(servizioId){
+  magazzino = null;
+  if(!("caches" in window)) return null;
+  try{
+    magazzino = await caches.open(MAG_PREFIX+servizioId);
+    const nomi = await caches.keys();
+    for(const n of nomi){
+      if(n.startsWith(MAG_PREFIX) && n !== MAG_PREFIX+servizioId){ try{ await caches.delete(n); }catch(_){} }
+    }
+  }catch(_){ magazzino = null; }
+  return magazzino;
+}
+/* Scarica un'immagine: prima guarda nel magazzino, e quello che scarica lo mette da parte. */
+async function scaricaImmagine(url, scadenza){
+  if(magazzino){
+    try{ const gia = await magazzino.match(url); if(gia) return await gia.blob(); }catch(_){}
+  }
+  const ac = new AbortController();
+  const t = setTimeout(()=>ac.abort(), scadenza||12000);
+  let r;
+  try{ r = await fetch(url, {signal: ac.signal}); }
+  finally{ clearTimeout(t); }
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  if(magazzino){ try{ await magazzino.put(url, r.clone()); }catch(_){} }
+  return await r.blob();
+}
+async function giaNelMagazzino(url){
+  if(!magazzino || !url) return false;
+  try{ return !!(await magazzino.match(url)); }catch(_){ return false; }
+}
+/* Scaricamento in sottofondo, una alla volta e con la coda di disegno che ha la precedenza:
+   prima le miniature del rullo aperto, poi quelle di tutta la giornata, infine le anteprime
+   grandi del rullo aperto (quelle che si vedono a schermo pieno davanti al cliente). */
+var magazzinoAttivo = false;
+var magazzinoFatte = 0, magazzinoTot = 0;
+async function respira(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function riempiMagazzino(){
+  if(magazzinoAttivo || !magazzino || !S.photos.length) return;
+  magazzinoAttivo = true;
+  try{
+    const L = S.letter;
+    const delRullo = p=> L ? p.letter===L : true;
+    const mini = [...S.photos.filter(delRullo), ...S.photos.filter(p=>!delRullo(p))]
+                   .map(p=>p.url).filter(Boolean);
+    const grandi = S.photos.filter(delRullo).map(p=>p.bigUrl).filter(Boolean);
+    const lista = [...new Set([...mini, ...grandi])];
+    magazzinoTot = lista.length; magazzinoFatte = 0;
+    for(const url of lista){
+      if(!S.servizio) break;
+      if(await giaNelMagazzino(url)){ magazzinoFatte++; continue; }
+      // se l'operatore sta scorrendo, la banda serve a lui: si aspetta
+      while(drawQueue.length){ await respira(1200); }
+      try{ await scaricaImmagine(url, 25000); magazzinoFatte++; }
+      catch(_){ await respira(3000); }
+      aggiornaIndicatoreAnteprime();
+      await respira(120);
+    }
+  }finally{
+    magazzinoAttivo = false;
+    aggiornaIndicatoreAnteprime();
+  }
+}
+// ogni tanto si riparte, per prendere le foto arrivate nel frattempo
+setInterval(()=>{ if(S.servizio && !magazzinoAttivo) riempiMagazzino(); }, 45000);
+
 // disegna l'anteprima su canvas.
 // Si scarica il file e si decodifica con createImageBitmap: l'<img> con decode() su Android
 // a volte si considera pronta quando non lo è, ed è così che uscivano le foto tagliate a metà.
@@ -932,13 +1014,7 @@ async function drawThumb(cv, p){
       /* Prima, se la richiesta falliva o restava appesa, la cella restava NERA per sempre:
          l'osservatore l'aveva già dimenticata e nessuno riprovava. Sull'hotspot succede
          spesso. Ora ogni richiesta ha una scadenza e si riprova, diradando i tentativi. */
-      const ac = new AbortController();
-      const scad = setTimeout(()=>ac.abort(), 12000);
-      let r;
-      try{ r = await fetch(p.url, {signal: ac.signal}); }
-      finally{ clearTimeout(scad); }
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      const blob = await r.blob();
+      const blob = await scaricaImmagine(p.url, 12000);
       try{ bmp = await createImageBitmap(blob, {resizeWidth:BMP_W, resizeQuality:"medium"}); }
       catch(_){ bmp = await createImageBitmap(blob); }
       thumbBmpCache.set(p.url, bmp);
@@ -1296,10 +1372,69 @@ function mostraEsito(testo, titolo){
   };
 }
 
-async function inviaConFilemail(list, ctx){
+/* ---------- invii non riusciti, salvati SUL TABLET ----------
+   Se manca la linea, l'invio non parte E il registro sul cloud non si puo' scrivere:
+   l'indirizzo del cliente si perdeva del tutto. Ora ogni invio viene messo da parte QUI
+   prima ancora di partire, e viene tolto solo quando il server conferma. Quello che resta
+   e' la lista dei clienti a cui le foto non sono arrivate, con il tasto per rispedire. */
+const KO_KEY = "faylive_invii_ko";
+function leggiKO(){
+  try{ return JSON.parse(localStorage.getItem(KO_KEY) || "[]"); }catch(_){ return []; }
+}
+function scriviKO(v){
+  try{ localStorage.setItem(KO_KEY, JSON.stringify(v.slice(-100))); }catch(_){}
+  aggiornaSpiaInvii();
+}
+function salvaKO(rec){
+  const v = leggiKO().filter(x=>x.id!==rec.id);
+  v.push(rec); scriviKO(v);
+}
+function rimuoviKO(id){ scriviKO(leggiKO().filter(x=>x.id!==id)); }
+function aggiornaSpiaInvii(){
+  const n = leggiKO().length;
+  const b = $("btnInvii"); if(!b) return;
+  const et = b.querySelectorAll("span")[1];
+  if(et) et.textContent = n ? `Invii (${n})` : "Invii";
+  b.style.color = n ? "#ff8080" : "";
+}
+/* Rispedisce un invio rimasto indietro: ritrova le foto dai codici e rilancia. */
+async function riprovaKO(id){
+  const rec = leggiKO().find(x=>x.id===id);
+  if(!rec){ toast("Invio non trovato"); return; }
+  if(!S.servizio || String(rec.servizioId)!==String(S.servizio.id)){
+    toast("Apri la giornata del "+(rec.giorno||"quell'invio")+" per rispedirlo"); return;
+  }
+  const ps = (rec.codici||[]).map(c=>S.photos.find(p=>p.code===c)).filter(Boolean);
+  if(!ps.length){ toast("Le foto di quell'invio non sono in questa giornata"); return; }
+  await inviaConFilemail(ps, "", {emailGia: rec.email, koId: rec.id});
+  renderKO();
+}
+function renderKO(){
+  const box = $("invKO"); if(!box) return;
+  const v = leggiKO().slice().reverse();
+  if(!v.length){ box.innerHTML=""; return; }
+  box.innerHTML = `<div style="padding:12px 14px;background:#3a1c1c;border-radius:12px;margin:10px 0">
+    <div style="font-weight:700;margin-bottom:8px">✉ Non partiti da questo tablet (${v.length})</div>` +
+    v.map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #55302f">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;word-break:break-all">${esc(r.email)}</div>
+          <div style="opacity:.8;font-size:13px">${esc((r.codici||[]).join(", ")).slice(0,120)}</div>
+          <div style="opacity:.6;font-size:12px">${esc(r.giorno||"")} · ${esc(r.motivo||"non riuscito")}</div>
+        </div>
+        <button data-ko="${esc(r.id)}" style="padding:8px 12px;border-radius:9px">Riprova</button>
+        <button data-kox="${esc(r.id)}" title="Toglilo dalla lista" style="padding:8px 10px;border-radius:9px">✕</button>
+      </div>`).join("") + `</div>`;
+  box.querySelectorAll("[data-ko]").forEach(b=> b.onclick = ()=> riprovaKO(b.dataset.ko));
+  box.querySelectorAll("[data-kox]").forEach(b=> b.onclick = ()=>{
+    if(confirm("Tolgo questo invio dalla lista? L'indirizzo del cliente non resta da nessuna parte."))
+      { rimuoviKO(b.dataset.kox); renderKO(); }
+  });
+}
+
+async function inviaConFilemail(list, ctx, opz){
   if(!list.length){ toast("Nessuna foto da inviare"+(ctx||"")); return; }
   if(!sb || !S.servizio){ mostraEsito("Cloud non raggiungibile: controlla la connessione.","Invio non riuscito"); return; }
-  const email = await chiediEmail(list.length);
+  const email = (opz && opz.emailGia) || await chiediEmail(list.length);
   if(!email) return;
 
   toast("Preparo gli originali…");
@@ -1343,6 +1478,13 @@ async function inviaConFilemail(list, ctx){
 
   const b=$("btnSend"); b.disabled=true;
   attesaInCorso = true; await tieniSchermoAcceso();
+  /* Messo da parte PRIMA di partire: se cade la linea, si spegne il tablet o si chiude la
+     pagina a meta' invio, l'indirizzo del cliente resta comunque qui. */
+  const koId = (opz && opz.koId) || ("ko"+Date.now()+Math.random().toString(36).slice(2,6));
+  salvaKO({ id:koId, ts:Date.now(), email,
+            servizioId: S.servizio ? S.servizio.id : null,
+            giorno: (S.servizio && S.servizio.data_servizio) || "",
+            codici: list.map(p=>p.code), motivo:"invio in corso" });
   toast(`Invio ${files.length} foto a ${email}…`);
   try{
     const r=await fetch("/api/invia",{
@@ -1356,15 +1498,24 @@ async function inviaConFilemail(list, ctx){
     if(!r.ok || !out.ok){
       console.warn("filemail", r.status, testoGrezzo);
       const dettaglio = out.dettaglio || out.errore || (testoGrezzo||"").slice(0,300) || "nessuna risposta dal server";
+      salvaKO({ id:koId, ts:Date.now(), email,
+                servizioId: S.servizio ? S.servizio.id : null,
+                giorno: (S.servizio && S.servizio.data_servizio) || "",
+                codici: list.map(p=>p.code), motivo:"il server ha risposto "+r.status });
       logTecnico(list, "invio", {esito:"errore", dettaglio:`${email} — HTTP ${r.status}: ${String(dettaglio).slice(0,200)}`});
       mostraEsito(`Il server ha risposto ${r.status}.\n\n${dettaglio}`, "Invio non riuscito");
       return;
     }
+    rimuoviKO(koId);                 // il server ha confermato: non e' piu' in sospeso
     logActivity(list,"inviate");
     logTecnico(list, "invio", {dettaglio:`${files.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
     mostraEsito(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl cliente riceve un link valido 7 giorni.`);
   }catch(err){
     console.warn("filemail", err);
+    salvaKO({ id:koId, ts:Date.now(), email,
+              servizioId: S.servizio ? S.servizio.id : null,
+              giorno: (S.servizio && S.servizio.data_servizio) || "",
+              codici: list.map(p=>p.code), motivo:"linea assente o server irraggiungibile" });
     logTecnico(list, "invio", {esito:"errore", dettaglio:`${email} — server irraggiungibile: `+((err&&err.message)||err)});
     mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
@@ -1435,16 +1586,29 @@ function sizeCanvas(){
 const bigCache = new Map();          // url -> Image decodificata
 function ricordaBig(url, im){
   bigCache.set(url, im);
-  if(bigCache.size>14){ bigCache.delete(bigCache.keys().next().value); }
+  if(bigCache.size>14){
+    const k = bigCache.keys().next().value;
+    const vecchia = bigCache.get(k);
+    bigCache.delete(k);
+    try{ if(vecchia && vecchia._obj) URL.revokeObjectURL(vecchia._obj); }catch(_){}
+  }
 }
-function caricaBig(url){
-  if(!url) return Promise.resolve(null);
+/* L'anteprima grande passa anch'essa dal magazzino: la seconda volta che il cliente
+   torna sulla stessa foto compare subito, senza rete. */
+async function caricaBig(url){
+  if(!url) return null;
   const gia = bigCache.get(url);
-  if(gia) return Promise.resolve(gia);
-  return new Promise(res=>{
-    const im=new Image(); im.crossOrigin="anonymous"; im.src=url;
-    im.decode().then(()=>{ ricordaBig(url, im); res(im); }).catch(()=>res(null));
-  });
+  if(gia) return gia;
+  try{
+    const blob = await scaricaImmagine(url, 20000);
+    const obj = URL.createObjectURL(blob);
+    const im = new Image();
+    im.src = obj;
+    await im.decode();
+    im._obj = obj;
+    ricordaBig(url, im);
+    return im;
+  }catch(_){ return null; }
 }
 /* Precarica in silenzio le due foto avanti e una indietro: scorrendo col dito la
    successiva e' gia' pronta invece di comparire nera per qualche secondo. */
@@ -1874,7 +2038,8 @@ async function invRegistra(a, nomi, quante, email, esito, motivo){
 }
 
 /* ---------- comandi ---------- */
-$("btnInvii").onclick = ()=>{ $("invDlg").classList.add("on"); invCarica(); };
+$("btnInvii").onclick = ()=>{ $("invDlg").classList.add("on"); renderKO(); invCarica(); };
+aggiornaSpiaInvii();   // la spia rossa si accende gia' all'apertura della pagina
 $("invClose").onclick = ()=> $("invDlg").classList.remove("on");
 $("invGiorni").onchange = invCarica;
 $("invCerca").oninput = invRender;
