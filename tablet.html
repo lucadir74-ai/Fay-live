@@ -358,6 +358,8 @@
     <button class="sb" id="selPrint">🖨 Manda in stampa</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
+    <button class="sb" id="selFile">📄 Solo file</button>
+    <button class="sb" id="selOmaggio">🎁 Omaggio</button>
     <button class="sb" id="selGroup">📁 Gruppo</button>
     <button class="sb" id="selDone">✕ Chiudi selezione</button>
   </div>
@@ -742,6 +744,31 @@ $("grpNone").onclick = ()=> assegnaGruppo(null);
 $("grpClose").onclick = ()=> $("grpSheet").classList.remove("open");
 $("grpSheet").onclick = e=>{ if(e.target.id==="grpSheet") $("grpSheet").classList.remove("open"); };
 
+/* Segna sul conto della serata quello che il PC non può sapere: foto vendute solo come
+   file digitale e stampe regalate. Il numero sta sul RULLO (lo stesso che il PC mostra
+   nel report), qui lo si somma mentre il cliente è ancora davanti. */
+async function segnaStat(ps, campo, etichetta){
+  if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const perRullo = {};
+  ps.forEach(p=>{ perRullo[p.letter] = (perRullo[p.letter]||0) + 1; });
+  const idPerLettera = {};
+  Object.entries(S.rulli||{}).forEach(([id,r])=>{ if(r && r.lettera) idPerLettera[r.lettera]=id; });
+  let ok=0;
+  for(const L of Object.keys(perRullo)){
+    const id = idPerLettera[L];
+    if(!id) continue;
+    try{
+      const {error} = await sb.rpc("segna_stat", {p_rullo:id, p_campo:campo, p_delta:perRullo[L]});
+      if(error) throw error;
+      ok += perRullo[L];
+    }catch(_){}
+  }
+  if(ok) toast(`${ok} ${etichetta}`);
+  else toast("Non riuscito — riprova");
+}
+$("selFile").onclick    = async ()=>{ const ps=selectedPhotos(); await segnaStat(ps,"file_venduti","vendute come file"); esciDaSelezione(); };
+$("selOmaggio").onclick = async ()=>{ const ps=selectedPhotos(); await segnaStat(ps,"omaggi","segnate in omaggio"); esciDaSelezione(); };
 $("selShare").onclick=()=> { const ps=selectedPhotos(); sharePhotos(ps); logActivity(ps,"condivise"); };
 $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logActivity(ps,"esportate"); };
 /* Quante copie stampare. Il foglio si apre a ogni "manda in stampa": i tasti 1-5 mandano

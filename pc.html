@@ -458,6 +458,9 @@
       <button id="selPrint">Stampa</button>
       <button id="selExport">Esporta file</button>
       <button id="selSend">✈ Invia per email</button>
+      <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
+      <button id="selOmaggio" title="Stampe regalate al cliente">🎁 Omaggio</button>
+      <button id="selScarto" title="Stampe venute male e buttate">🗑 Scarto</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -2940,6 +2943,40 @@ function fineVendita(set){
   state.selection.clear(); updateSelBar(); paintVisible();
   if(codici.length) mostraQrVendita(codici);
 }
+/* Omaggi, scarti e file venduti si segnano ADESSO, mentre il cliente è davanti, invece
+   di ricordarseli a fine serata nel report. Il conteggio resta quello del rullo: qui si
+   somma, e nel report i numeri si possono ancora correggere a mano.
+   Le foto selezionate possono appartenere a rulli diversi: si sommano rullo per rullo. */
+async function segnaStat(set, campo, etichetta){
+  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
+  const perRullo = {};
+  set.forEach(p=>{ perRullo[p.letter] = (perRullo[p.letter]||0) + 1; });
+  for(const L of Object.keys(perRullo)){
+    const n = perRullo[L];
+    const st = state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file_venduti:0};
+    st[campo] = (st[campo]||0) + n;                       // subito a schermo, poi sul cloud
+    if(sb && cloud.rulli[L]){
+      await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: n}), "report "+campo);
+    }
+  }
+  const tot = set.length;
+  const dove = Object.keys(perRullo).sort().join(", ");
+  toastAnnulla(`${tot} ${etichetta} sul rullo ${dove}`, "Annulla", ()=> annullaStat(perRullo, campo));
+}
+async function annullaStat(perRullo, campo){
+  for(const L of Object.keys(perRullo)){
+    const n = perRullo[L];
+    const st = state.rulloStats[L] || {};
+    st[campo] = Math.max(0, (st[campo]||0) - n);
+    if(sb && cloud.rulli[L]){
+      await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: -n}), "report annulla");
+    }
+  }
+  toast("Annullato");
+}
+$("selFile").onclick    = async ()=>{ const set=selSet(); await segnaStat(set,"file_venduti","vendute come file"); fineVendita(set); };
+$("selOmaggio").onclick = async ()=>{ await segnaStat(selSet(),"omaggi","in omaggio"); };
+$("selScarto").onclick  = async ()=>{ await segnaStat(selSet(),"scarti","segnate come scarto"); };
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
@@ -4350,7 +4387,7 @@ function apriStats(){
     <tr style="color:var(--muted)">
       <th style="text-align:left;padding:6px 10px">Rullo</th>
       <th ${th}>Foto</th><th ${th}>Stampe</th><th ${th}>Omaggi</th>
-      <th ${th}>Scarti</th><th ${th}>File</th><th ${th}>Vendute</th>
+      <th ${th}>Scarti</th><th ${th}>Nulle</th><th ${th}>File</th><th ${th}>Vendute</th>
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
@@ -4359,6 +4396,7 @@ function apriStats(){
       <td ${td}>${r.foto}</td><td ${td}>${r.stampe}</td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="omaggi" value="${r.omaggi}"></td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="scarti" value="${r.scarti}"></td>
+      <td ${td} data-n="${k}">${(r.omaggi||0)+(r.scarti||0)}</td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="file_venduti" value="${r.file}"></td>
       <td ${td}><b data-v="${k}">${venduteRullo(r)}</b></td></tr>`;
   });
@@ -4366,9 +4404,12 @@ function apriStats(){
       <td style="padding:8px 10px;border-top:2px solid var(--line)">TOTALE</td>
       <td ${td}>${tot.foto}</td><td ${td} id="stTotStampe">${tot.stampe}</td>
       <td ${td} id="stTotOm">${tot.omaggi}</td><td ${td} id="stTotSc">${tot.scarti}</td>
+      <td ${td} id="stTotNulle">${tot.omaggi+tot.scarti}</td>
       <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
     <p style="color:var(--muted);font-size:12.5px;margin-top:8px">
-      Omaggi, scarti e file si scrivono a mano qui. Omaggi e scarti si tolgono solo dalle
+      Omaggi, scarti e file si segnano dai tasti durante la serata (dalla barra di selezione
+      sul PC, dai tasti del tablet) e si possono correggere a mano qui. <b>Nulle</b> = omaggi
+      + scarti, cioè le stampe uscite ma non vendute. Omaggi e scarti si tolgono solo dalle
       <b>stampe</b>; i <b>file</b> venduti senza stampa si sommano dopo:
       vendute = stampe − omaggi − scarti + file.
       Restano salvati sulla giornata e li vedono tutte le postazioni.</p>`;
@@ -4419,9 +4460,12 @@ function aggiornaVendute(){
     tO+=r.omaggi; tSc+=r.scarti; tF+=r.file; tV+=venduteRullo(r);
     const b = $("statsBody").querySelector(`b[data-v="${k}"]`);
     if(b) b.textContent = venduteRullo(r);
+    const n = $("statsBody").querySelector(`td[data-n="${k}"]`);
+    if(n) n.textContent = (r.omaggi||0)+(r.scarti||0);
   });
   const set=(id,v)=>{ const e=$(id); if(e) e.textContent=v; };
-  set("stTotOm", tO); set("stTotSc", tSc); set("stTotFile", tF); set("stTotVen", tV);
+  set("stTotOm", tO); set("stTotSc", tSc); set("stTotNulle", tO+tSc);
+  set("stTotFile", tF); set("stTotVen", tV);
 }
 $("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; apriStats(); };
 $("statsClose").onclick = ()=> $("statsDlg").close();
