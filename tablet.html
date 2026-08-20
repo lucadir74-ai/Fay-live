@@ -356,6 +356,7 @@
     <button class="sb" id="selAll">Tutte</button>
     <button class="sb" id="selNone">Nessuna</button>
     <button class="sb" id="selPrint">🖨 Manda in stampa</button>
+    <button class="sb" id="selSend">✈ Invia</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
     <button class="sb" id="selFile">📄 Solo file</button>
@@ -769,6 +770,12 @@ async function segnaStat(ps, campo, etichetta){
 }
 $("selFile").onclick    = async ()=>{ const ps=selectedPhotos(); await segnaStat(ps,"file_venduti","vendute come file"); esciDaSelezione(); };
 $("selOmaggio").onclick = async ()=>{ const ps=selectedPhotos(); await segnaStat(ps,"omaggi","segnate in omaggio"); esciDaSelezione(); };
+$("selSend").onclick=async ()=>{
+  const ps=selectedPhotos();
+  if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  await inviaConFilemail(ps, "");
+  esciDaSelezione();
+};
 $("selShare").onclick=()=> { const ps=selectedPhotos(); sharePhotos(ps); logActivity(ps,"condivise"); };
 $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logActivity(ps,"esportate"); };
 /* Quante copie stampare. Il foglio si apre a ogni "manda in stampa": i tasti 1-5 mandano
@@ -1233,9 +1240,13 @@ function activeFavs(){
   const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
   return scope.filter(p=>p.fav);
 }
+/* REGOLA UNICA: se c'e' una selezione aperta comandano le foto SELEZIONATE, i preferiti
+   restano da parte. Senza selezione i tasti in alto lavorano sui preferiti come prima. */
+function inSelezione(){ return S.selmode && S.selected.size>0; }
+function bersaglio(){ return inSelezione() ? selectedPhotos() : activeFavs(); }
 // tasti in alto: agiscono sui PREFERITI del rullo attivo
-$("btnShare").onclick = ()=> { const ps=activeFavs(); sharePhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"condivise"); };
-$("btnExport").onclick = ()=> { const ps=activeFavs(); exportPhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"esportate"); };
+$("btnShare").onclick = ()=> { const ps=bersaglio(); sharePhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"condivise"); };
+$("btnExport").onclick = ()=> { const ps=bersaglio(); exportPhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"esportate"); };
 /* INVIO DIGITALI DAL TABLET (via Filemail, come sul PC).
    Il tablet NON scarica nessuna foto: chiede solo gli indirizzi firmati e li passa alla
    funzione su Vercel, che prende i file da Supabase e li manda a Filemail. Sull'hotspot
@@ -1358,14 +1369,15 @@ async function inviaConFilemail(list, ctx){
     mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
-$("btnSend").onclick = ()=>{ const ps=activeFavs(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
+$("btnSend").onclick = ()=>{ const ps=bersaglio(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
 
 /* Manda in stampa TUTTI i preferiti del rullo attivo: finiscono nella lista "Da stampare"
    del PC, dove il venditore li ritrova al rientro in postazione. Non tocca gli originali
    ne' i preferiti: e' solo un segnale. */
 $("btnPrint").onclick = async ()=>{
-  const ps = activeFavs();
-  if(!ps.length){ toast("Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  const sel = inSelezione();
+  const ps = sel ? selectedPhotos() : activeFavs();
+  if(!ps.length){ toast(sel ? "Nessuna foto selezionata" : "Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
   if(!sb){ toast("Cloud non raggiungibile"); return; }
   const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`);
   if(!copie) return;
@@ -1387,8 +1399,8 @@ $("btnPrint").onclick = async ()=>{
 // tasti nel visore: agiscono sulla FOTO aperta
 $("vShare").onclick = ()=>{ const p=V.list[V.idx]; if(p){ sharePhotos([p]); logActivity([p],"condivise"); } };
 $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); logActivity([p],"esportate"); } };
-/* Dal visualizzatore: se ci sono preferiti nel rullo si inviano TUTTI insieme (il cliente
-   ne sceglie parecchie e le guarda una per una), altrimenti solo la foto aperta. */
+/* Dal visualizzatore si invia SOLO la foto aperta: quella che il cliente ha davanti.
+   Per mandarne piu' di una si usa la selezione (o i preferiti dal tasto in alto). */
 /* Manda in stampa dal visualizzatore: la foto aperta finisce nella lista "Da stampare" del PC. */
 $("vPrint").onclick = async ()=>{
   const p=V.list[V.idx]; if(!p) return;
@@ -1403,9 +1415,7 @@ $("vPrint").onclick = async ()=>{
 };
 $("vSend").onclick = ()=>{
   const p=V.list[V.idx]; if(!p) return;
-  const preferiti = activeFavs();
-  const lista = preferiti.length ? preferiti : [p];
-  inviaConFilemail(lista, S.letter?" nel rullo "+S.letter:"");
+  inviaConFilemail([p], "");
 };
 
 /* ---------- visore con zoom (pinch) e swipe ---------- */
