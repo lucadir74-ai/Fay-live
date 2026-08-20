@@ -2134,7 +2134,7 @@ setInterval(()=>{
   for(const p of state.photos){
     // prima le MINIATURE: senza quelle la foto non compare proprio sui tablet
     if(!p.miniUrl && (p.mini || p.preview) && !p._inThumb){ queueThumbSync(p); rimesse++; continue; }
-    if(!p.anteprimaUrl && p.preview && !p.remote && !p._inBig){ queueBigPreview(p); rimesse++; }
+    if(!p.anteprimaUrl && p.preview && !p._inBig){ queueBigPreview(p); rimesse++; }
   }
   if(rimesse) console.log("anteprime grandi rimesse in coda:", rimesse);
 }, 30000);
@@ -2187,7 +2187,12 @@ let bigActive = 0;
 const BIG_PARALLEL = 2;
 let bigDaQuando = 0;      // da quando la corsia delle grandi è in attesa
 function queueBigPreview(p){
-  if(!sb || !cloud.servizio || p.remote || p.anteprimaUrl || !p.preview) return;
+  /* DIFETTO CORRETTO: c'era anche un controllo su p.remote. Dopo un ricaricamento della
+     pagina TUTTE le foto tornano dal cloud marcate "remote", anche quelle importate qui:
+     le anteprime grandi rimaste indietro non venivano piu' rimesse in coda da nessuno e
+     il contatore "grandi" restava fermo per sempre. Per le miniature il controllo era gia'
+     stato tolto (vedi queueThumbSync); qui era rimasto. */
+  if(!sb || !cloud.servizio || p.anteprimaUrl || !p.preview) return;
   if(p._inBig) return;
   p._inBig = true; bigQueue.push(p); pumpBigQueue();
 }
