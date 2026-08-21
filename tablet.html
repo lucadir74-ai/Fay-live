@@ -2142,6 +2142,28 @@ $("invSheet").onclick = e => { if(e.target.id==="invSheet") invChiudiSheet(); };
 $("invRifai").onclick = invRifaiInvio;
 
 
+/* ---------- gesto "indietro" di Android ----------
+   La pagina del tablet si apre dalla schermata iniziale (PC / Tablet), quindi il gesto
+   indietro — quello che parte scorrendo dal bordo dello schermo — riportava lì proprio
+   mentre il cliente aveva il tablet in mano, e sembrava che la pagina si ricaricasse da
+   sola. Ora la pagina trattiene il gesto e lo usa per chiudere quello che è aperto:
+   prima il visualizzatore, poi i pannelli, poi la selezione. Se non c'è niente da
+   chiudere non succede nulla, e non si esce mai per sbaglio. */
+function segnaPassoIndietro(){ try{ history.pushState({fay:1}, ""); }catch(_){} }
+segnaPassoIndietro();
+addEventListener("popstate", ()=>{
+  segnaPassoIndietro();                       // il passo consumato si rimette subito
+  const ov = $("mailOverlay");
+  if(ov && ov.style.display && ov.style.display!=="none"){ ov.style.display="none"; return; }
+  if($("invSheet") && $("invSheet").classList.contains("on")){ invChiudiSheet(); return; }
+  if($("invDlg") && $("invDlg").classList.contains("on")){ $("invDlg").classList.remove("on"); return; }
+  if($("cpSheet") && $("cpSheet").classList.contains("open")){ $("cpSheet").classList.remove("open"); return; }
+  if($("grpSheet") && $("grpSheet").classList.contains("open")){ $("grpSheet").classList.remove("open"); return; }
+  if($("viewer") && $("viewer").classList.contains("open")){ closeViewer(); return; }
+  if(S.gruppo){ S.gruppo=null; render(); return; }         // esce dal gruppo, resta nel rullo
+  if(S.selmode){ esciDaSelezione(); return; }
+});
+
 /* ---------- codice di accesso ----------
    Chiude la porta a chi si trova il dispositivo in mano o l'indirizzo per caso. Non e' una
    cassaforte: la chiave del database resta dentro la pagina, quindi non protegge i dati da
