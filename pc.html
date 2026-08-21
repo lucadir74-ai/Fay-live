@@ -124,17 +124,17 @@
     background:rgba(6,8,12,.72);color:#fff;border:2px solid #fff;
     font-size:17px;font-weight:700;line-height:1;cursor:pointer}
   .cmpDel:hover{background:var(--danger);border-color:#fff}
-  #btnMail.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
+  #btnMail.attesa, #btnPrintQueue.attesa{border-color:var(--accent);color:var(--accent);font-weight:700;
     box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)}
   /* Il cliente ha appena inquadrato il QR e scritto la sua email: il tasto lampeggia
      per mezzo minuto, poi resta acceso finché la lista non è stata evasa. */
-  #btnMail.nuova{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+  #btnMail.nuova, #btnPrintQueue.nuova{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
     animation:mailNuova 1s ease-in-out infinite}
   @keyframes mailNuova{
     0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent)}
     50%{box-shadow:0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent)}
   }
-  @media (prefers-reduced-motion:reduce){ #btnMail.nuova{animation:none} }
+  @media (prefers-reduced-motion:reduce){ #btnMail.nuova, #btnPrintQueue.nuova{animation:none} }
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:14px;color:var(--muted);min-width:84px}
@@ -5268,10 +5268,32 @@ function printQueuePhotos(){ return state.photos.filter(p=>p.daStampare); }
    mentre il cloud sta ancora scrivendo. */
 function toccaLocale(p){ if(p) p._tsLoc = Date.now(); }
 function toccataDiRecente(p){ return p._tsLoc && (Date.now() - p._tsLoc) < 20000; }
+let pqUltimoN = null, pqLampeggio = null;
 function updatePrintQueueBadge(){
   const n=printQueuePhotos().length;
   const b=$("pqBadge");
   if(b){ b.textContent=n; b.hidden=false; b.classList.toggle("alert", n>0); }
+  /* Come il tasto "Da inviare": acceso finché c'è qualcosa da stampare, e lampeggiante
+     per mezzo minuto quando arriva una foto nuova da un tablet. Il contatore piccolo da
+     solo passava inosservato in mezzo alla serata. */
+  const t=$("btnPrintQueue");
+  if(t){
+    t.classList.toggle("attesa", n>0);
+    t.title = n ? `${n} foto in attesa di stampa` : "Nessuna foto in attesa di stampa";
+    if(pqUltimoN != null && n > pqUltimoN) accendiPrintNuova();
+    if(!n) spegniPrintNuova();
+    pqUltimoN = n;
+  }
+}
+function accendiPrintNuova(){
+  const t=$("btnPrintQueue"); if(!t) return;
+  t.classList.add("nuova");
+  clearTimeout(pqLampeggio);
+  pqLampeggio = setTimeout(()=>t.classList.remove("nuova"), 30000);
+}
+function spegniPrintNuova(){
+  clearTimeout(pqLampeggio);
+  const t=$("btnPrintQueue"); if(t) t.classList.remove("nuova");
 }
 /* Controllo periodico dal cloud: allinea questa postazione a tutte le altre, anche se il
    realtime non arriva. Va nei DUE sensi:
@@ -5311,6 +5333,7 @@ setInterval(async ()=>{
   }catch(_){}
 }, 6000);
 $("btnPrintQueue").onclick = ()=>{
+  spegniPrintNuova();
   const list=printQueuePhotos();
   const box=$("pqList");
   if(!list.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna foto in attesa di stampa.</p>'; }
