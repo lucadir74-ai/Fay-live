@@ -58,6 +58,9 @@
   .cell.isfav{outline:3px solid var(--fav);outline-offset:-3px}
   .cell.sel{outline:4px solid #4a9eff;outline-offset:-4px}
   .rtab.grp{background:#2a2118;border-color:#6b5324}
+  /* cestino: compare solo sulla scheda del gruppo che stai guardando */
+  .rtab .del{margin-left:2px;padding:2px 8px;border-radius:8px;font-size:17px;
+    background:rgba(0,0,0,.22)}
   .cell .grp{position:absolute;left:6px;top:6px;background:rgba(245,185,66,.92);color:#151109;
     font:600 12px "Segoe UI",sans-serif;padding:2px 7px;border-radius:8px;max-width:70%;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -608,8 +611,9 @@ function render(){
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
-    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G && p.letter===S.letter).length}</span></div>`).join("");
-  nav.querySelectorAll(".rtab").forEach(b=>b.onclick=()=>{
+    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G && p.letter===S.letter).length}</span>${S.gruppo===G?`<span class="del" data-del="${esc(G)}">🗑</span>`:""}</div>`).join("");
+  nav.querySelectorAll(".rtab").forEach(b=>b.onclick=(e)=>{
+    if(e.target && e.target.dataset && e.target.dataset.del !== undefined){ eliminaGruppo(e.target.dataset.del); return; }
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
     else { S.gruppo=null; S.letter=b.dataset.l||S.letter; }
     render(); $("grid").scrollTop=0;
@@ -749,6 +753,24 @@ async function assegnaGruppo(nome){
     return;
   }
   esciDaSelezione();
+}
+/* ELIMINA GRUPPO — toglie solo la cartella: le foto restano nel rullo e tornano
+   nell'elenco generale. Non cancella niente dal cloud a parte l'etichetta. */
+async function eliminaGruppo(nome){
+  const ps = S.photos.filter(p=>p.gruppo===nome && p.letter===S.letter);
+  if(!ps.length){ S.gruppo=null; render(); return; }
+  if(!confirm(`Elimino il gruppo "${nome}"?\n\nLe ${ps.length} foto NON si cancellano: restano nel rullo ${S.letter}, tornano solo nell'elenco generale.`)) return;
+  try{
+    const {error} = await sb.from("foto").update({gruppo:null}).in("id", ps.map(p=>p.id));
+    if(error) throw error;
+    ps.forEach(p=> p.gruppo = null);
+    if(S.gruppo===nome) S.gruppo = null;
+    toast(`Gruppo "${nome}" eliminato · ${ps.length} foto nel rullo ${S.letter}`);
+    render();
+  }catch(err){
+    console.warn("eliminaGruppo", err);
+    toast("Non riesco a eliminare il gruppo: " + (err.message||err));
+  }
 }
 $("selGroup").onclick = apriGruppi;
 $("grpAdd").onclick = ()=>{
