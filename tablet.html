@@ -518,6 +518,19 @@ $("giornoSel").onchange=e=>{
    più piccoli del limite e si va avanti finché una richiesta torna VUOTA — così funziona
    qualunque sia il massimo del server. */
 const BLOCCO = 500;
+/* ORDINE DEI CODICI. I codici hanno tre cifre (Z-001 … Z-999) ma oltre la 999esima foto
+   diventano quattro (Z-1000). Ordinandoli come testo, "Z-1000" finisce subito dopo
+   "Z-100" e non dopo "Z-999": le foto oltre la millesima non sparivano, si infilavano a
+   metà rullo e la griglia sembrava fermarsi a 999. Qui si ordina per NUMERO. */
+function numCodice(code){
+  const m = String(code||"").match(/(\d+)\s*$/);
+  return m ? parseInt(m[1],10) : 0;
+}
+function ordinaFoto(list){
+  return list.sort((a,b)=>
+    a.letter === b.letter ? numCodice(a.code) - numCodice(b.code)
+                          : String(a.letter).localeCompare(String(b.letter)));
+}
 async function caricaFotoDeiRulli(ids){
   const tutte = [], visti = new Set();
   let da = 0;
@@ -550,6 +563,7 @@ async function openServizio(sv){
       const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
       S.photos.push(p); S.byId.set(p.id,p);
     });
+    ordinaFoto(S.photos);
   }
   applicaFavLocali(S.photos);
   setDot(true,"Sincronizzato");
@@ -1953,6 +1967,7 @@ async function refresh(manuale){
       });
     }
 
+    ordinaFoto(nuove);
     applicaFavLocali(nuove);        // i preferiti scelti qui non si perdono con l'aggiornamento
     S.rulli = rmap; S.photos = nuove; S.byId = map;
     // tengo il rullo/gruppo che stavo guardando, se esiste ancora
