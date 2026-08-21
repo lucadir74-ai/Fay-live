@@ -3804,21 +3804,36 @@ $("btnMonitor").onclick = ()=>{
   }
   openMonitor();
 };
+/* PERCHE' LO SCHERMO PIENO NON PARTIVA DA SOLO.
+   Chrome concede lo schermo pieno solo nell'istante del clic dell'operatore ("attivazione
+   transitoria"), e chiedere prima i dettagli degli schermi con await consumava proprio
+   quell'istante: quando poi si apriva la finestra il permesso era gia' scaduto. Ora i
+   dettagli degli schermi si chiedono in anticipo, al primo clic qualsiasi nell'app, e al
+   momento di aprire il monitor sono gia' pronti: nessun await prima di window.open. */
+let schermiPronti = null, schermiChiesti = false;
+async function preparaSchermi(){
+  if(schermiPronti || schermiChiesti || !window.getScreenDetails) return;
+  schermiChiesti = true;
+  try{ schermiPronti = await window.getScreenDetails(); }
+  catch(_){ schermiChiesti = false; }      // permesso negato: si riproverà
+}
+document.addEventListener("click", preparaSchermi, true);
+addEventListener("load", ()=>{ setTimeout(preparaSchermi, 1500); });
+
 async function openMonitor(){
   const M=state.monitor;
   if(M.win && !M.win.closed){ M.win.focus(); return; }
-  // prova a piazzare la finestra direttamente sul monitor esterno, a tutto schermo
-  let feat="width=1280,height=720", autoPlaced=false;
+  // monitor esterno già individuato in anticipo: qui non si aspetta nulla
+  let feat="width=1280,height=720", autoPlaced=false, ext=null;
   try{
-    if(window.getScreenDetails){
-      const sd = await window.getScreenDetails();
-      const ext = sd.screens.find(s=>!s.isPrimary);
+    if(schermiPronti){
+      ext = schermiPronti.screens.find(s=>!s.isPrimary);
       if(ext){
         feat = `left=${ext.availLeft},top=${ext.availTop},width=${ext.availWidth},height=${ext.availHeight},fullscreen`;
         autoPlaced = true;
       }
     }
-  }catch(_){ /* permesso negato o non supportato: si va di trascinamento */ }
+  }catch(_){ /* non supportato: si va di trascinamento */ }
   const w = window.open("", "faylive_monitor", feat);
   if(!w){ toast("Popup bloccato: consenti i popup per aprire il monitor"); return; }
   /* SCHERMO PIENO. La parola "fullscreen" fra le opzioni di window.open i browser di oggi
@@ -3829,8 +3844,8 @@ async function openMonitor(){
   w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Monitor cliente</title><style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
     canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-    #hint{position:absolute;top:12px;left:12px;color:#888;font:14px "Segoe UI",sans-serif;cursor:default;
-      background:rgba(0,0,0,.55);padding:8px 12px;border-radius:8px}
+    #hint{position:absolute;bottom:12px;left:12px;color:#aaa;font:13px "Segoe UI",sans-serif;cursor:default;
+      background:rgba(0,0,0,.6);padding:6px 10px;border-radius:8px}
   </style></head><body><canvas id="c"></canvas>${autoPlaced
       ? '<div id="hint">Clicca qui per lo schermo pieno</div>'
       : '<div id="hint">Trascina questa finestra sul monitor cliente, poi clicca qui per lo schermo pieno</div>'}
@@ -3849,12 +3864,22 @@ async function openMonitor(){
       var h=d.getElementById("hint");
       if(h && d.fullscreenElement) h.remove();
     });
+    // se resta in finestra, dopo 20 secondi la scritta se ne va comunque: non deve
+    // restare lì davanti al cliente per tutta la serata
+    setTimeout(function(){ var h=d.getElementById("hint"); if(h) h.remove(); }, 20000);
     window.faylivePieno=pieno;
   })();
   <\/script></body></html>`);
   w.document.close();
-  // tentativo anche dal PC: qui il clic dell'operatore su "Monitor cliente" vale ancora
-  try{ const r=w.document.documentElement.requestFullscreen({navigationUI:"hide"}); if(r&&r.catch) r.catch(()=>{}); }catch(_){}
+  // tentativo anche dal PC, nello stesso istante del clic su "Monitor cliente"
+  try{
+    const el = w.document.documentElement;
+    const opz = ext ? {screen: ext, navigationUI:"hide"} : {navigationUI:"hide"};
+    const r = el.requestFullscreen(opz);
+    if(r && r.catch) r.catch(()=>{ try{ const r2=el.requestFullscreen(); if(r2&&r2.catch) r2.catch(()=>{}); }catch(_){} });
+  }catch(_){}
+  // se i dettagli schermo non erano ancora pronti, li preparo per la prossima apertura
+  if(!schermiPronti) preparaSchermi();
   const canvas=w.document.getElementById("c");
   M.win=w; M.canvas=canvas; M.ctx=canvas.getContext("2d");
   const fit=()=>{ canvas.width=w.innerWidth*(w.devicePixelRatio||1); canvas.height=w.innerHeight*(w.devicePixelRatio||1); repaintMonitor(); };
