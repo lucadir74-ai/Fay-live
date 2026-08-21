@@ -3796,6 +3796,8 @@ $("btnMonitor").onclick = ()=>{
   const M=state.monitor;
   if(M.win && !M.win.closed){
     M.letter = state.activeLetter || null;
+    // se qualcuno è uscito dallo schermo pieno (Esc, F11), il tasto ce lo rimette
+    try{ if(!M.win.document.fullscreenElement && M.win.faylivePieno) M.win.faylivePieno(); }catch(_){}
     startSlideshow();
     toast(M.letter ? `Sul monitor: rullo ${M.letter}` : "Sul monitor: tutti i rulli");
     return;
@@ -3819,12 +3821,40 @@ async function openMonitor(){
   }catch(_){ /* permesso negato o non supportato: si va di trascinamento */ }
   const w = window.open("", "faylive_monitor", feat);
   if(!w){ toast("Popup bloccato: consenti i popup per aprire il monitor"); return; }
+  /* SCHERMO PIENO. La parola "fullscreen" fra le opzioni di window.open i browser di oggi
+     la ignorano: la finestra restava con barra del titolo e barra di Windows in vista, e
+     bisognava ricordarsi F11 ogni sera. Qui lo schermo pieno lo chiede la finestra stessa,
+     e se il browser lo rifiuta (serve un gesto dell'operatore) basta un clic qualsiasi
+     dentro quella finestra: al primo clic o tasto ci va da sola. */
   w.document.write(`<!DOCTYPE html><html><head><title>Fay Live — Monitor cliente</title><style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
     canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-    #hint{position:absolute;top:12px;left:12px;color:#666;font:13px "Segoe UI",sans-serif;cursor:default}
-  </style></head><body><canvas id="c"></canvas>${autoPlaced? "" : '<div id="hint">Trascina questa finestra sul monitor cliente e premi F11</div>'}</body></html>`);
+    #hint{position:absolute;top:12px;left:12px;color:#888;font:14px "Segoe UI",sans-serif;cursor:default;
+      background:rgba(0,0,0,.55);padding:8px 12px;border-radius:8px}
+  </style></head><body><canvas id="c"></canvas>${autoPlaced
+      ? '<div id="hint">Clicca qui per lo schermo pieno</div>'
+      : '<div id="hint">Trascina questa finestra sul monitor cliente, poi clicca qui per lo schermo pieno</div>'}
+  <script>
+  (function(){
+    var d=document;
+    function pieno(){
+      if(d.fullscreenElement) return;
+      try{ var r=d.documentElement.requestFullscreen({navigationUI:"hide"}); if(r&&r.catch) r.catch(function(){}); }catch(e){}
+    }
+    // primo tentativo da solo; se il browser lo rifiuta, al primo clic o tasto ci va
+    setTimeout(pieno,80);
+    d.addEventListener("click",pieno);
+    d.addEventListener("keydown",pieno);
+    d.addEventListener("fullscreenchange",function(){
+      var h=d.getElementById("hint");
+      if(h && d.fullscreenElement) h.remove();
+    });
+    window.faylivePieno=pieno;
+  })();
+  <\/script></body></html>`);
   w.document.close();
+  // tentativo anche dal PC: qui il clic dell'operatore su "Monitor cliente" vale ancora
+  try{ const r=w.document.documentElement.requestFullscreen({navigationUI:"hide"}); if(r&&r.catch) r.catch(()=>{}); }catch(_){}
   const canvas=w.document.getElementById("c");
   M.win=w; M.canvas=canvas; M.ctx=canvas.getContext("2d");
   const fit=()=>{ canvas.width=w.innerWidth*(w.devicePixelRatio||1); canvas.height=w.innerHeight*(w.devicePixelRatio||1); repaintMonitor(); };
