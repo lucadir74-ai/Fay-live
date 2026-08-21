@@ -512,19 +512,25 @@ $("giornoSel").onchange=e=>{
   const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
   if(sv) openServizio(sv);
 };
-/* Supabase restituisce al massimo 1000 righe per volta: con giornate da
-   oltre 1000 foto i rulli finali sparivano. Qui leggo a blocchi finché finisce. */
-const BLOCCO = 1000;
+/* Supabase restituisce un numero massimo di righe per richiesta, e quel massimo lo decide
+   il server: chiedendone 1000 ne tornavano 999, il conto non tornava, la lettura si
+   fermava lì e le foto oltre la 999esima sparivano dai tablet. Ora si chiedono blocchi
+   più piccoli del limite e si va avanti finché una richiesta torna VUOTA — così funziona
+   qualunque sia il massimo del server. */
+const BLOCCO = 500;
 async function caricaFotoDeiRulli(ids){
-  let tutte = [], da = 0;
-  while(true){
+  const tutte = [], visti = new Set();
+  let da = 0;
+  while(da < 100000){                      // rete di sicurezza: mai un giro infinito
     const {data, error} = await sb.from("foto").select("*")
-      .in("rullo_id", ids).order("codice").range(da, da + BLOCCO - 1);
+      .in("rullo_id", ids).order("codice").order("id").range(da, da + BLOCCO - 1);
     if(error) throw error;
     const parte = data || [];
-    tutte = tutte.concat(parte);
-    if(parte.length < BLOCCO) break;
-    da += BLOCCO;
+    if(!parte.length) break;               // finite davvero
+    let nuove = 0;
+    for(const f of parte){ if(!visti.has(f.id)){ visti.add(f.id); tutte.push(f); nuove++; } }
+    if(!nuove) break;                      // stesse righe di prima: meglio fermarsi
+    da += parte.length;                    // si avanza di quante ne ha date DAVVERO
   }
   return tutte;
 }
