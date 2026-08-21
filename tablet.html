@@ -43,9 +43,16 @@
   .rtab .cnt{font-size:13px;opacity:.7}
 
   /* griglia a tocco */
-  #grid{flex:1;overflow-y:auto;padding:8px;display:grid;gap:8px;
+  #grid{position:relative;flex:1;overflow-y:auto;padding:8px;display:grid;gap:8px;
     grid-template-columns:repeat(auto-fill,minmax(110px,1fr));
     grid-auto-rows:170px;align-content:start;-webkit-overflow-scrolling:touch}
+  /* selezione a rettangolo: mentre si trascina la griglia non deve scorrere da sola */
+  body.rectmode #grid{touch-action:none}
+  #rectBox{position:fixed;z-index:45;border:2px solid var(--accent);border-radius:6px;
+    background:color-mix(in srgb, var(--accent) 18%, transparent);pointer-events:none;display:none}
+  #rectHint{position:fixed;z-index:46;left:50%;transform:translateX(-50%);bottom:170px;
+    background:rgba(0,0,0,.78);color:#fff;padding:8px 14px;border-radius:20px;font-size:14px;
+    pointer-events:none;display:none}
   .cell{position:relative;background:#000;border-radius:10px;overflow:hidden;height:170px;width:100%}
   .cell.wide{grid-column:span 2}
   .cell canvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
@@ -363,6 +370,9 @@
     </div>
   </div>
 
+  <div id="rectBox"></div>
+  <div id="rectHint"></div>
+
   <div id="selBar">
     <span class="cnt" id="selCnt">0 selezionate</span>
     <button class="sb" id="selAll">Tutte</button>
@@ -658,15 +668,27 @@ function render(){
     const cv=c.querySelector("canvas");
     const codeEl=c.querySelector(".code");
     const onTap=()=>{
+      // dopo un rettangolo il dito che si stacca genererebbe un tocco: qui si ignora,
+      // altrimenti l'ultima foto presa col riquadro si toglieva da sola
+      if(Date.now() - rectFinito < 500) return;
       if(S.selmode){ toggleSelect(p, c); }
       else openViewer(p);
     };
     cv.onclick=onTap;
     codeEl.onclick=onTap;
-    // tocco prolungato → entra in selezione con questa foto
-    let lpTimer=null;
-    const startLP=()=>{ if(S.selmode) return; lpTimer=setTimeout(()=>{ enterSelMode(p, c); lpTimer=null; }, 400); };
-    const cancelLP=()=>{ if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; } };
+    /* Tocco prolungato: a 400 ms entra in selezione con questa foto, tenendo premuto
+       ancora (900 ms) parte il RETTANGOLO — si trascina il dito per prendere tante foto
+       insieme, e avvicinandosi al bordo la griglia scorre da sola. */
+    let lpTimer=null, rectTimer=null;
+    const startLP=(e)=>{
+      const t = e && e.touches && e.touches[0];
+      if(!S.selmode) lpTimer=setTimeout(()=>{ enterSelMode(p, c); lpTimer=null; }, 400);
+      rectTimer=setTimeout(()=>{ rectTimer=null; iniziaRettangolo(t, p, c); }, 900);
+    };
+    const cancelLP=()=>{
+      if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
+      if(rectTimer && !RECT.on){ clearTimeout(rectTimer); rectTimer=null; }
+    };
     c.addEventListener("touchstart", startLP, {passive:true});
     c.addEventListener("touchmove", cancelLP, {passive:true});
     c.addEventListener("touchend", cancelLP, {passive:true});
@@ -696,6 +718,104 @@ function updateSelBar(){
   const u=$("selUngroup"); if(u) u.hidden = !S.gruppo;
 }
 function selectedPhotos(){ return [...S.selected].map(id=>S.byId.get(id)).filter(Boolean); }
+
+/* ---------- selezione a rettangolo (tocco lungo + trascinamento) ----------
+   Prendere venti foto una per una era lentissimo. Tenendo premuto più a lungo della
+   selezione normale parte un riquadro: si trascina il dito per allargarlo e, avvicinandosi
+   al bordo alto o basso, la griglia scorre da sola e continua a prendere foto. Quelle
+   uscite dallo schermo restano prese; quelle ancora in vista si tolgono restringendo. */
+let rectFinito = 0;                 // quando è finito l'ultimo rettangolo
+const RECT = { on:false, x0:0, y0:0, base:null, acc:null, celle:null, scroll:null, ultimo:null };
+function gridEl(){ return $("grid"); }
+function puntoContenuto(t){
+  const g = gridEl(), r = g.getBoundingClientRect();
+  return { x: t.clientX - r.left, y: t.clientY - r.top + g.scrollTop, cx:t.clientX, cy:t.clientY };
+}
+function iniziaRettangolo(t, p, cell){
+  if(!t) return;
+  if(!S.selmode) enterSelMode(p, cell);
+  const g = gridEl();
+  const pt = puntoContenuto(t);
+  RECT.on = true; RECT.x0 = pt.x; RECT.y0 = pt.y; RECT.ultimo = pt;
+  RECT.base = new Set(S.selected);
+  RECT.acc  = new Set([cell.dataset.id]);
+  // posizioni delle celle lette una volta sola: durante il gesto non cambiano
+  RECT.celle = [...g.querySelectorAll(".cell")].map(c=>({
+    el:c, id:c.dataset.id,
+    l:c.offsetLeft, t:c.offsetTop, r:c.offsetLeft+c.offsetWidth, b:c.offsetTop+c.offsetHeight
+  }));
+  document.body.classList.add("rectmode");
+  $("rectBox").style.display = "block";
+  $("rectHint").style.display = "block";
+  if(navigator.vibrate) navigator.vibrate([25,50,25]);
+  disegnaRettangolo();
+}
+function disegnaRettangolo(){
+  if(!RECT.on || !RECT.ultimo) return;
+  const g = gridEl(), gr = g.getBoundingClientRect();
+  const x1 = RECT.ultimo.x, y1 = RECT.ultimo.y;
+  const l = Math.min(RECT.x0, x1), r = Math.max(RECT.x0, x1);
+  const t = Math.min(RECT.y0, y1), b = Math.max(RECT.y0, y1);
+  // riquadro sullo schermo (le coordinate sono nel contenuto, qui tolgo lo scorrimento)
+  const box = $("rectBox");
+  const vt = Math.max(gr.top,  gr.top + t - g.scrollTop);
+  const vb = Math.min(gr.bottom, gr.top + b - g.scrollTop);
+  box.style.left   = (gr.left + l) + "px";
+  box.style.width  = Math.max(0, r - l) + "px";
+  box.style.top    = vt + "px";
+  box.style.height = Math.max(0, vb - vt) + "px";
+  // chi sta dentro entra; chi è ancora in vista e ne esce, esce
+  const vistaT = g.scrollTop, vistaB = g.scrollTop + g.clientHeight;
+  for(const c of RECT.celle){
+    const dentro = !(c.r < l || c.l > r || c.b < t || c.t > b);
+    if(dentro) RECT.acc.add(c.id);
+    else if(c.b > vistaT && c.t < vistaB) RECT.acc.delete(c.id);
+  }
+  S.selected = new Set([...RECT.base, ...RECT.acc]);
+  for(const c of RECT.celle) c.el.classList.toggle("sel", S.selected.has(c.id));
+  updateSelBar();
+  $("rectHint").textContent = `${S.selected.size} selezionate · stacca il dito per confermare`;
+}
+function scorriSeVicinoAlBordo(cy){
+  const g = gridEl(), gr = g.getBoundingClientRect();
+  let passo = 0;
+  if(cy < gr.top + 90)        passo = -Math.min(26, Math.round((gr.top + 90 - cy)/3) + 6);
+  else if(cy > gr.bottom - 90) passo =  Math.min(26, Math.round((cy - gr.bottom + 90)/3) + 6);
+  if(!passo){ if(RECT.scroll){ clearInterval(RECT.scroll); RECT.scroll=null; } return; }
+  if(RECT.scroll) return;
+  RECT.scroll = setInterval(()=>{
+    if(!RECT.on){ clearInterval(RECT.scroll); RECT.scroll=null; return; }
+    const prima = g.scrollTop;
+    g.scrollTop += passo;
+    if(g.scrollTop === prima){ clearInterval(RECT.scroll); RECT.scroll=null; return; }
+    // il dito è fermo ma il contenuto scorre: l'angolo mobile segue lo scorrimento
+    if(RECT.ultimo){ RECT.ultimo.y += (g.scrollTop - prima); disegnaRettangolo(); }
+  }, 60);
+}
+function chiudiRettangolo(){
+  if(!RECT.on) return;
+  RECT.on = false; rectFinito = Date.now();
+  if(RECT.scroll){ clearInterval(RECT.scroll); RECT.scroll=null; }
+  document.body.classList.remove("rectmode");
+  $("rectBox").style.display = "none";
+  $("rectHint").style.display = "none";
+  RECT.celle = null;
+  toast(`${S.selected.size} foto selezionate`);
+  updateSelBar();
+}
+(function agganciaRettangolo(){
+  const g = gridEl(); if(!g) return;
+  g.addEventListener("touchmove", e=>{
+    if(!RECT.on) return;
+    e.preventDefault();                       // la griglia non scorre col dito: comanda il riquadro
+    const t = e.touches[0]; if(!t) return;
+    RECT.ultimo = puntoContenuto(t);
+    disegnaRettangolo();
+    scorriSeVicinoAlBordo(t.clientY);
+  }, {passive:false});
+  g.addEventListener("touchend", chiudiRettangolo, {passive:true});
+  g.addEventListener("touchcancel", chiudiRettangolo, {passive:true});
+})();
 
 /* Uscita dalla selezione: le spunte vanno tolte a mano dalle celle, perché render()
    riusa la griglia già disegnata quando rullo, gruppo e filtri non sono cambiati e
