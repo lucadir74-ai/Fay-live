@@ -178,6 +178,10 @@
   kbd{font-family:var(--mono);background:var(--surface2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px}
   #shortcuts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;color:var(--muted)}
   dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:460px}
+  /* Scelta copie: piccola e vicina al tasto Stampa, in alto a destra. Al centro dello
+     schermo era lontanissima dal tasto appena premuto e copriva la foto. */
+  #copDlg{max-width:300px;padding:14px;margin:0;position:fixed;right:18px;top:96px;left:auto}
+  #copDlg::backdrop{background:rgba(0,0,0,.35)}
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
   #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
   #statsDlg #statsBody{max-height:76vh}
@@ -647,12 +651,11 @@
 </dialog>
 
 <dialog id="copDlg">
-  <h3 style="margin-bottom:6px">Quante copie per foto?</h3>
-  <p class="hint" style="margin-bottom:12px">Imposta le copie QUI, non nella finestra di Windows:
-  così escono già i fogli giusti e il contatore delle stampe è corretto.</p>
-  <div id="copBox" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
-  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
-    <button id="copCancel">Annulla</button>
+  <h3 style="margin-bottom:4px;font-size:16px">Quante copie?</h3>
+  <p class="hint" style="margin-bottom:10px;font-size:12px">Impostale qui, non nella finestra di Windows.</p>
+  <div id="copBox" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button id="copCancel" style="padding:6px 12px;font-size:13px">Annulla</button>
   </div>
 </dialog>
 
@@ -3286,18 +3289,20 @@ function chiediCopie(preimpostato){
       for(let i=1;i<=5;i++){
         const b=document.createElement("button");
         b.textContent=i;
-        b.style.cssText="min-width:56px;font-size:18px;font-weight:700"+(i===n?";outline:2px solid var(--accent)":"");
+        b.style.cssText="min-width:42px;padding:8px 0;font-size:16px;font-weight:700"+(i===n?";outline:2px solid var(--accent)":"");
         b.onclick=()=>{ dlg.close(); res(i); };
         box.append(b);
       }
       const meno=document.createElement("button"); meno.textContent="−";
+      meno.style.cssText="min-width:34px;padding:8px 0;font-size:16px";
       meno.onclick=()=>{ n=Math.max(1,n-1); disegna(); };
       const val=document.createElement("span");
-      val.textContent=n; val.style.cssText="min-width:40px;text-align:center;font-size:20px;font-weight:700";
+      val.textContent=n; val.style.cssText="min-width:30px;text-align:center;font-size:18px;font-weight:700";
       const piu=document.createElement("button"); piu.textContent="+";
+      piu.style.cssText="min-width:34px;padding:8px 0;font-size:16px";
       piu.onclick=()=>{ n=Math.min(20,n+1); disegna(); };
       const ok=document.createElement("button"); ok.textContent="Stampa "+n;
-      ok.style.cssText="background:var(--accent);color:#000;font-weight:700";
+      ok.style.cssText="background:var(--accent);color:#000;font-weight:700;padding:8px 14px;font-size:14px";
       ok.onclick=()=>{ dlg.close(); res(n); };
       box.append(meno,val,piu,ok);
     };
