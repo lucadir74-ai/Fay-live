@@ -872,10 +872,15 @@ function nomeTablet(){
 }
 async function logActivity(list, azione, extra){
   if(!sb || !S.servizio || !list.length) return;
+  /* Il rullo va preso dalle FOTO, non dalla scheda aperta in quel momento: selezionando
+     nel rullo E e passando poi alla scheda Z, l'invio finiva registrato sotto Z. Se la
+     selezione tocca più rulli si scrivono tutti (es. "E/G"). */
+  const lettere = [...new Set(list.map(p=>p && p.letter).filter(Boolean))].sort();
+  const rullo = lettere.length ? lettere.join("/") : (S.letter || "");
   try{
     await sb.from("attivita").insert({
       servizio_id: S.servizio.id,
-      rullo_lettera: S.letter || list[0].letter || "",
+      rullo_lettera: rullo,
       codici: list.map(p=>p.code).join(", "),
       azione, quante: list.length,
       postazione: nomeTablet(),
