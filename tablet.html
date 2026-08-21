@@ -125,7 +125,10 @@
   /* visore a schermo pieno con zoom e swipe */
   #viewer{position:fixed;inset:0;background:#000;display:none;z-index:50;touch-action:none}
   #viewer.open{display:block}
-  #viewer canvas{position:absolute;inset:0;width:100%;height:100%}
+  #viewer canvas{position:absolute;inset:0;width:100%;height:100%;will-change:transform}
+  /* la foto segue il dito e poi scivola via: transizione corta, niente effetti pesanti */
+  #viewer canvas.anim{transition:transform .16s ease-out, opacity .16s ease-out}
+  @media (prefers-reduced-motion:reduce){ #viewer canvas.anim{transition:none} }
   #vBar{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:12px;
     padding:14px;background:linear-gradient(rgba(0,0,0,.6),transparent);z-index:2}
   #vCode{font-weight:700;font-size:18px;color:#fff;font-family:ui-monospace,monospace;
@@ -1724,6 +1727,9 @@ async function openViewer(p){
   V.list = visible(); V.idx = V.list.findIndex(x=>x.id===p.id);
   $("viewer").classList.add("open");
   V.canvas=$("vCanvas"); V.ctx=V.canvas.getContext("2d");
+  V.canvas.classList.remove("anim");
+  V.canvas.style.transform="translateX(0)"; V.canvas.style.opacity="1";
+  animando=false;
   sizeCanvas();
   await showCurrent();
 }
@@ -1830,6 +1836,7 @@ viewer.addEventListener("touchmove",e=>{
   } else if(e.touches.length===1 && touchStart){
     const dx=e.touches[0].clientX-touchStart.x, dy=e.touches[0].clientY-touchStart.y;
     if(V.scale>1){ V.tx=panStart.tx+dx; V.ty=panStart.ty+dy; draw(); }
+    else if(Math.abs(dx)>Math.abs(dy)) trascinaFoto(dx);   // segue il dito
   }
 },{passive:false});
 viewer.addEventListener("touchend",e=>{
@@ -1837,14 +1844,55 @@ viewer.addEventListener("touchend",e=>{
   if(touchStart && V.scale<=1.05){
     const dx=(e.changedTouches[0].clientX-touchStart.x);
     const dt=Date.now()-touchStart.t;
-    if(Math.abs(dx)>60 && dt<600){
-      if(dx<0 && V.idx<V.list.length-1){ V.idx++; showCurrent(); }
-      else if(dx>0 && V.idx>0){ V.idx--; showCurrent(); }
+    if(Math.abs(dx)>60 && dt<600 &&
+       ((dx<0 && V.idx<V.list.length-1) || (dx>0 && V.idx>0))){
+      cambiaFotoAnimata(dx<0 ? 1 : -1);
+    }else{
+      tornaAlPosto();                     // scorrimento troppo corto: la foto rimbalza indietro
     }
   }
   touchStart=null;
 },{passive:false});
 function dist(t){ const a=t[0], b=t[1]; return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+
+/* ---------- scorrimento animato fra le foto ----------
+   Tutto sul canvas con una trasformazione CSS: la foto segue il dito, esce di lato e la
+   successiva entra dall'altro. Nessun disegno in più, quindi non pesa sui tablet. */
+let animando = false;
+function trascinaFoto(dx){
+  if(animando || !V.canvas) return;
+  V.canvas.classList.remove("anim");                 // mentre il dito è giù nessuna inerzia
+  const largo = V.canvas.clientWidth || 1;
+  const bordo = (dx>0 && V.idx===0) || (dx<0 && V.idx===V.list.length-1);
+  const q = bordo ? dx*0.25 : dx;                    // primo/ultimo: resiste, si capisce che è finita
+  V.canvas.style.transform = `translateX(${q}px)`;
+  V.canvas.style.opacity = String(Math.max(.55, 1 - Math.abs(q)/(largo*1.6)));
+}
+function tornaAlPosto(){
+  if(!V.canvas) return;
+  V.canvas.classList.add("anim");
+  V.canvas.style.transform = "translateX(0)";
+  V.canvas.style.opacity = "1";
+}
+async function cambiaFotoAnimata(verso){            // +1 avanti, -1 indietro
+  const c = V.canvas; if(!c) return;
+  if(animando){ V.idx += verso; await showCurrent(); return; }
+  animando = true;
+  const largo = c.clientWidth || 300;
+  c.classList.add("anim");
+  c.style.transform = `translateX(${-verso*largo}px)`;   // esce dal lato dello scorrimento
+  c.style.opacity = "0";
+  await new Promise(r=>setTimeout(r,160));
+  V.idx += verso;
+  await showCurrent();                                    // la nuova foto è già disegnata
+  c.classList.remove("anim");                             // salto sull'altro lato, senza animazione
+  c.style.transform = `translateX(${verso*largo}px)`;
+  void c.offsetWidth;                                     // forza il browser a prenderne atto
+  c.classList.add("anim");
+  c.style.transform = "translateX(0)";
+  c.style.opacity = "1";
+  setTimeout(()=>{ animando = false; }, 170);
+}
 
 /* ---------- aggiornamento (manuale e automatico) ---------- */
 let opBusy = 0;      // >0 mentre sto condividendo/esportando: non aggiorno sotto i piedi
