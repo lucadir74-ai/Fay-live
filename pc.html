@@ -2139,13 +2139,27 @@ setInterval(()=>{
      anteprime", e nel frattempo quelle foto si aprivano sgranate su tablet e PC. */
   rigeneraDaDisco();
 
-  let rimesse = 0;
+  let rimesse = 0; const ferme = [];
   for(const p of state.photos){
     // prima le MINIATURE: senza quelle la foto non compare proprio sui tablet
     if(!p.miniUrl && (p.mini || p.preview) && !p._inThumb){ queueThumbSync(p); rimesse++; continue; }
-    if(!p.anteprimaUrl && p.preview && !p._inBig){ queueBigPreview(p); rimesse++; }
+    if(!p.anteprimaUrl && p.preview && !p._inBig){ queueBigPreview(p); rimesse++; continue; }
+    /* Foto senza anteprima grande, senza copia in memoria e senza file agganciato: qui il
+       contatore "grandi" si ferma e non riparte da solo. Succede dopo una ricarica della
+       pagina, che fa perdere il collegamento ai file su disco. */
+    if(!p.anteprimaUrl && !p.preview && !p.file && !p.arch) ferme.push(p);
   }
   if(rimesse) console.log("anteprime grandi rimesse in coda:", rimesse);
+  bloccoGrandi = ferme.length;
+  if(ferme.length){
+    // 1) quasi sempre l'anteprima c'è già sul cloud e qui non lo sappiamo: si rilegge
+    ricontrollaAnteprimeCloud(ferme).then(adottate=>{
+      // 2) se restano davvero senza, si riaggancia l'archivio e si rigenera da disco
+      if(adottate < ferme.length && state.archive && !relinkInCorso && Date.now()-ultimoRelink > 60000){
+        ricollegaArchivio(true).then(n=>{ if(n) toast(`Ricollegati ${n} originali: riprendo le anteprime`); });
+      }
+    });
+  }
 }, 30000);
 
 // Carica la MINIATURA (piccola) + riga foto: è quello che serve per vedere la griglia
@@ -2195,6 +2209,7 @@ const bigQueue = [];
 let bigActive = 0;
 const BIG_PARALLEL = 2;
 let bigDaQuando = 0;      // da quando la corsia delle grandi è in attesa
+let bloccoGrandi = 0;     // anteprime grandi ferme perché non c'è né copia in memoria né file su disco
 function queueBigPreview(p){
   /* DIFETTO CORRETTO: c'era anche un controllo su p.remote. Dopo un ricaricamento della
      pagina TUTTE le foto tornano dal cloud marcate "remote", anche quelle importate qui:
@@ -5090,7 +5105,8 @@ function updateThumbCloud(){
   const onCloud=state.photos.filter(p=>p.miniUrl || p.anteprimaUrl).length;
   if(!tot){ el.textContent="0"; el.style.color=""; return; }
   el.textContent = onCloud+"/"+tot + (onCloud<tot? " ⚠" : " ✓") +
-                   (grandiMancanti ? `  ·  grandi: ${tot-grandiMancanti}/${tot}` : "");
+                   (grandiMancanti ? `  ·  grandi: ${tot-grandiMancanti}/${tot}`
+                     + (bloccoGrandi ? ` (${bloccoGrandi} in attesa dall'altra postazione)` : "") : "");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
   el.title = spiegaAnteprimeMancanti(onCloud, tot);
 }
@@ -5175,6 +5191,44 @@ async function addRemotePhoto(f, letter){
   if(blob){ try{ p.thumb=await blobToThumb(blob); }catch(_){}}
   state.photos.push(p); state.byCode.set(p.code,p);
 }
+/* PERCHE' IL CONTATORE SI FERMAVA FINCHE' NON SI RICARICAVA LA PAGINA.
+   Una foto importata da un'altra postazione arriva qui subito, ma la sua anteprima grande
+   sale sul cloud parecchio dopo. Il controllo periodico scaricava solo le foto NUOVE e il
+   realtime copiava solo stampe/esportata/da_stampare: l'indirizzo dell'anteprima comparso
+   nel frattempo non lo leggeva più nessuno, e la foto restava "senza grande" per sempre.
+   Ricaricare la pagina rileggeva tutto da zero, e per questo sembrava risolvere. */
+function adottaUrlDalCloud(p, f){
+  if(!p || !f) return false;
+  const srv = cloud.servizio ? String(cloud.servizio.id) : "";
+  const stessaGiornata = u => !srv || String(u).includes(srv);   // mai indirizzi di ieri
+  let cambiato = false;
+  if(f.mini_url && !p.miniUrl && stessaGiornata(f.mini_url)){ p.miniUrl = f.mini_url; cambiato = true; }
+  if(f.anteprima_url && !p.anteprimaUrl && stessaGiornata(f.anteprima_url)){ p.anteprimaUrl = f.anteprima_url; cambiato = true; }
+  if(f.originale_url && !p.origUploaded && stessaGiornata(f.originale_url)){
+    p.origUploaded = true; p.origReadyCloud = true; cambiato = true;
+  }
+  return cambiato;
+}
+/* Rilettura mirata: solo le foto rimaste senza anteprima grande, a blocchi, non più di
+   una volta ogni 20 secondi. E' quello che prima faceva solo il ricaricamento pagina. */
+let ultimoRicontrollo = 0;
+async function ricontrollaAnteprimeCloud(lista){
+  if(!sb || !cloud.servizio || !lista.length) return 0;
+  if(Date.now() - ultimoRicontrollo < 20000) return 0;
+  ultimoRicontrollo = Date.now();
+  const perId = new Map(state.photos.filter(x=>x.dbId).map(x=>[x.dbId, x]));
+  const ids = lista.map(p=>p.dbId).filter(Boolean);
+  let adottate = 0;
+  for(let i=0;i<ids.length;i+=200){
+    try{
+      const {data} = await sb.from("foto").select("id,mini_url,anteprima_url,originale_url")
+        .in("id", ids.slice(i,i+200));
+      (data||[]).forEach(f=>{ if(adottaUrlDalCloud(perId.get(f.id), f)) adottate++; });
+    }catch(err){ console.warn("ricontrollaAnteprimeCloud", err); break; }
+  }
+  if(adottate){ updateThumbCloud(); paintVisible(); console.log("anteprime ritrovate sul cloud:", adottate); }
+  return adottate;
+}
 /* La griglia mostra le foto nell'ordine in cui entrano in memoria. Quelle che arrivano dal cloud
    (realtime o sincronizzazione) non arrivano in ordine di codice, perché le anteprime finiscono
    di caricarsi in ordine sparso: senza questo riordino su PC2 il rullo partiva da metà. */
@@ -5208,6 +5262,8 @@ function subscribeRealtime(){
       if(p){
         p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare;
         p.copie=f.copie||1;                       // quante copie ha chiesto il tablet
+        // anteprima o originale appena caricati da un'altra postazione: si adottano subito
+        if(adottaUrlDalCloud(p, f)) updateThumbCloud();
         renderTabs(); paintVisible();
         if(f.richiesta_originale && !p.origUploaded){
           if(p.file || p.arch){
