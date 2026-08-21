@@ -374,6 +374,7 @@
     <button class="sb" id="selFile">📄 Solo file</button>
     <button class="sb" id="selOmaggio">🎁 Omaggio</button>
     <button class="sb" id="selGroup">📁 Gruppo</button>
+    <button class="sb" id="selUngroup" hidden>📁− Togli dal gruppo</button>
     <button class="sb" id="selDone">✕ Chiudi selezione</button>
   </div>
 
@@ -691,6 +692,8 @@ function updateSelBar(){
   const n=S.selected.size;
   const el=$("selCnt"); if(el) el.textContent = n ? (n+" selezionate") : "nessuna selezionata";
   const b=$("selNone"); if(b){ b.disabled = !n; b.style.opacity = n ? "1" : ".45"; }
+  // "Togli dal gruppo" ha senso solo mentre guardi dentro un gruppo
+  const u=$("selUngroup"); if(u) u.hidden = !S.gruppo;
 }
 function selectedPhotos(){ return [...S.selected].map(id=>S.byId.get(id)).filter(Boolean); }
 
@@ -745,8 +748,10 @@ async function assegnaGruppo(nome){
     const {error} = await sb.from("foto").update({gruppo: nome}).in("id", ids);
     if(error) throw error;
     ps.forEach(p=> p.gruppo = nome);
-    toast((nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo`)
+    toast((nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo · restano nel rullo ${S.letter}`)
           + (escluse ? ` · ${escluse} di altri rulli non toccate` : ""));
+    // se stavo guardando un gruppo e si è svuotato, torno all'elenco del rullo
+    if(S.gruppo && !S.photos.some(p=>p.gruppo===S.gruppo && p.letter===S.letter)) S.gruppo = null;
   }catch(err){
     console.warn("assegnaGruppo", err);
     toast("Non riesco a salvare il gruppo: " + (err.message||err));
@@ -773,6 +778,12 @@ async function eliminaGruppo(nome){
   }
 }
 $("selGroup").onclick = apriGruppi;
+/* Scorciatoia: dentro un gruppo, le foto selezionate escono dalla cartella con un tocco
+   solo (stessa cosa del tasto "Togli dal gruppo" nel pannello, senza aprirlo). */
+$("selUngroup").onclick = ()=>{
+  if(!selectedPhotos().length){ toast("Nessuna foto selezionata"); return; }
+  assegnaGruppo(null);
+};
 $("grpAdd").onclick = ()=>{
   const n = $("grpName").value.trim();
   if(!n){ toast("Scrivi un nome"); return; }
