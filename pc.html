@@ -3404,9 +3404,9 @@ async function doPrint(set){
   let stampaFatta = false, registrata = false;
 
   /* Il conteggio scatta quando la finestra di stampa di Windows si CHIUDE, cioè quando
-     la stampa è partita davvero — non appena si preme Stampa qui dentro. Il browser però
-     non dice se l'operatore ha premuto Stampa o Annulla: per quello resta un tasto
-     "Non è uscita" nel messaggio, che rimette il contatore e la lista com'erano. */
+     la stampa è partita davvero — non appena si preme Stampa qui dentro. Il tasto
+     "Non è uscita" nel messaggio è stato TOLTO (21/08): non serviva e restava lì davanti.
+     Per togliere una stampa dal conto c'è il tasto ➖ Stampa nella barra di selezione. */
   const registraStampa = ()=>{
     if(registrata) return; registrata = true;
 
@@ -3417,7 +3417,6 @@ async function doPrint(set){
        spegne qui, così vale per QUALSIASI modo di stampare — dalla lista, dalla selezione
        nella griglia o dalla foto aperta — e non solo dal tasto della lista. */
     const eranoDaStampare = set.filter(p=>p.daStampare);
-    const copieRichieste = new Map(eranoDaStampare.map(p=>[p, p.copie||1]));
     eranoDaStampare.forEach(p=>{
       p.daStampare = false; p.copie = 1; toccaLocale(p);   // richiesta servita: si riparte da 1 copia
       if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"richiesta stampa servita");
@@ -3428,23 +3427,10 @@ async function doPrint(set){
     renderTabs(); paintVisible(); refreshLbStatus();
     set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
 
-    // rimette tutto com'era: serve quando nella finestra di Windows si è premuto Annulla
-    const disfa = ()=>{
-      set.forEach(p=>{ p.prints = Math.max(0, p.prints - copieDi.get(p)); toccaLocale(p); });
-      eranoDaStampare.forEach(p=>{
-        p.daStampare = true; p.copie = copieRichieste.get(p) || 1; toccaLocale(p);
-        if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:true, copie:p.copie}).eq("id",p.dbId),"stampa annullata");
-      });
-      set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
-      updatePrintQueueBadge(); renderTabs(); paintVisible(); refreshLbStatus();
-      toast("Stampa annullata: contatore e lista rimessi a posto");
-    };
-
     if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
-    else toastAnnulla(set.length===1
+    else toast(set.length===1
         ? `Stampata ${set[0].code}` + (fogli>1? ` · ${fogli} copie`:"")
-        : `Stampate ${set.length} foto` + (fogli>set.length? ` · ${fogli} fogli`:""),
-        "Non è uscita", disfa, 45000);
+        : `Stampate ${set.length} foto` + (fogli>set.length? ` · ${fogli} fogli`:""));
     if(typeof resetSearch==="function") resetSearch();   // casella e conteggio puliti per il cliente dopo
   };
 
