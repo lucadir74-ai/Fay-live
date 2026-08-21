@@ -2898,8 +2898,13 @@ function paintVisible(){
     if(!el){
       el=document.createElement("div"); el.className="cell";
       el.style.width=CELL+"px"; el.style.height=CELL+"px";
-      el.onclick=()=>{ state.focusIdx=i; toggleSel(p); paintVisible(); };
-      el.ondblclick=()=>{ state.focusIdx=i; openLightbox(i); };
+      /* Un doppio clic manda al browser DUE eventi di clic prima del doppio: la foto
+         veniva selezionata (o deselezionata) solo per aprirla, e nel visualizzatore
+         compariva "♥ Segnata" senza che nessuno l'avesse voluta. Ora il secondo clic
+         non tocca la selezione, e il doppio clic annulla anche il primo: aprire una
+         foto lascia la selezione esattamente com'era. */
+      el.onclick=(e)=>{ state.focusIdx=i; if(e && e.detail>1) return; toggleSel(p); paintVisible(); };
+      el.ondblclick=()=>{ state.focusIdx=i; toggleSel(p); paintVisible(); openLightbox(i); };
       el.oncontextmenu=(e)=>{ e.preventDefault(); state.focusIdx=i; openLightbox(i); };
       spacer.append(el); cellPool.set(i,el);
     }
