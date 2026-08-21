@@ -237,6 +237,14 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
 <body>
+<div id="gate" style="position:fixed;inset:0;z-index:99999;background:#111;display:none;
+     align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px;text-align:center">
+  <div style="font-size:26px;font-weight:800">Fay Live</div>
+  <div id="gateMsg" style="opacity:.8;max-width:420px">Inserisci il codice di accesso</div>
+  <input id="gateInput" type="password" inputmode="numeric" autocomplete="off"
+         style="font-size:26px;padding:14px 18px;border-radius:12px;text-align:center;width:260px;max-width:80vw">
+  <button id="gateOk" style="font-size:18px;font-weight:700;padding:12px 28px;border-radius:12px">Entra</button>
+</div>
 <div id="archAlert" hidden>
   <span>⛔</span>
   <span id="archAlertMsg">Archivio non raggiungibile: gli originali non vengono salvati.</span>
@@ -269,6 +277,7 @@
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
       <button id="btnDiagThumb" title="Dice perché le miniature non compaiono e prova a rigenerarle subito">Diagnosi miniature</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
+      <button id="btnCodice" title="Codice che serve per aprire Fay Live su PC e tablet">Codice di accesso…</button>
       <hr>
       <button id="btnClearDay">Svuota giornata</button>
       <button id="btnClearAll" title="Svuota dal cloud tutte le giornate di questa sede, in un colpo solo">Svuota tutte le giornate</button>
@@ -6001,8 +6010,81 @@ async function cleanupOld(){
 // stato connessione del browser
 addEventListener("offline", ()=>{ if(cloud.sede) setSync("offline"); });
 
-// avvio: popola la tendina sedi; l'app è già utilizzabile
-loadSedi().then(ripristinaUltimaScelta);
+
+/* ---------- codice di accesso ----------
+   Chiude la porta a chi si trova il dispositivo in mano o l'indirizzo per caso. Non e' una
+   cassaforte: la chiave del database resta dentro la pagina, quindi non protegge i dati da
+   chi sa dove guardare (per quello servirebbe un vero accesso su Supabase).
+   Il codice sta sul cloud, si cambia dal PC e vale per tutti i dispositivi.
+   Regole volute: si chiede UNA volta per dispositivo; se il codice viene cambiato dal PC,
+   tutti lo devono reinserire; senza linea, un dispositivo gia' sbloccato entra lo stesso,
+   perche' bloccare una vendita per un problema di rete sarebbe peggio del problema. */
+const COD_KEY = "faylive_codice_ok";
+async function codiceDalCloud(){
+  if(!sb) return null;
+  try{
+    const {data} = await sb.from("impostazioni").select("valore").eq("chiave","codice_accesso").maybeSingle();
+    return data ? (data.valore || "") : "";
+  }catch(_){ return null; }   // null = non si sa (linea assente)
+}
+function apriPorta(){ const g=document.getElementById("gate"); if(g) g.style.display="none"; }
+function chiediCodice(atteso){
+  return new Promise(res=>{
+    const g=document.getElementById("gate"), inp=document.getElementById("gateInput"),
+          ok=document.getElementById("gateOk"), msg=document.getElementById("gateMsg");
+    g.style.display="flex";
+    setTimeout(()=>inp.focus(), 100);
+    const prova = ()=>{
+      if(inp.value === atteso){
+        try{ localStorage.setItem(COD_KEY, inp.value); }catch(_){}
+        apriPorta(); res(true);
+      }else{
+        msg.textContent = "Codice errato";
+        msg.style.color = "#ff8080";
+        inp.value=""; inp.focus();
+      }
+    };
+    ok.onclick = prova;
+    inp.onkeydown = e=>{ if(e.key==="Enter") prova(); };
+  });
+}
+async function controllaAccesso(){
+  const g=document.getElementById("gate");
+  if(g) g.style.display="flex";                 // chiuso finche' non si sa
+  const attuale = await codiceDalCloud();
+  let salvato = null;
+  try{ salvato = localStorage.getItem(COD_KEY); }catch(_){}
+  if(attuale === null){                          // linea assente
+    if(salvato){ apriPorta(); return true; }     // gia' sbloccato prima: si entra
+    const m=document.getElementById("gateMsg");
+    if(m){ m.textContent = "Serve la connessione per il primo accesso su questo dispositivo"; m.style.color="#ff8080"; }
+    return false;
+  }
+  if(!attuale){ apriPorta(); return true; }      // nessun codice impostato: aperto
+  if(salvato === attuale){ apriPorta(); return true; }
+  await chiediCodice(attuale);
+  return true;
+}
+
+/* Il codice si cambia SOLO dal PC. Vale subito per tutti: gli altri dispositivi lo
+   ritrovano diverso da quello che avevano salvato e lo richiedono. */
+$("btnCodice").onclick = async ()=>{
+  if(!sb){ toast("Serve la connessione per cambiare il codice"); return; }
+  const attuale = await codiceDalCloud();
+  const n = prompt("Codice di accesso a Fay Live (PC e tablet).\nLascia vuoto per togliere il codice.", attuale || "");
+  if(n === null) return;
+  const val = String(n).trim();
+  try{
+    const {error} = await sb.from("impostazioni")
+      .upsert({chiave:"codice_accesso", valore: val}, {onConflict:"chiave"});
+    if(error) throw error;
+    try{ localStorage.setItem(COD_KEY, val); }catch(_){}
+    toast(val ? "Codice aggiornato: gli altri dispositivi lo chiederanno" : "Codice tolto");
+  }catch(err){ toast("Non riesco a salvare il codice: "+((err&&err.message)||err)); }
+};
+
+// avvio: prima la porta, poi l'app
+controllaAccesso().then(()=> loadSedi().then(ripristinaUltimaScelta));
 if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
 
 </script>

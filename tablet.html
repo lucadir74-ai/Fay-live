@@ -214,6 +214,14 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+<div id="gate" style="position:fixed;inset:0;z-index:99999;background:#111;display:none;
+     align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px;text-align:center">
+  <div style="font-size:26px;font-weight:800">Fay Live</div>
+  <div id="gateMsg" style="opacity:.8;max-width:420px">Inserisci il codice di accesso</div>
+  <input id="gateInput" type="password" inputmode="numeric" autocomplete="off"
+         style="font-size:26px;padding:14px 18px;border-radius:12px;text-align:center;width:260px;max-width:80vw">
+  <button id="gateOk" style="font-size:18px;font-weight:700;padding:12px 28px;border-radius:12px">Entra</button>
+</div>
   <header>
     <h1>Fay <span>Live</span></h1>
     <select id="sedeSel"><option value="">Sede…</option></select>
@@ -2054,8 +2062,64 @@ $("invAnnulla").onclick = invChiudiSheet;
 $("invSheet").onclick = e => { if(e.target.id==="invSheet") invChiudiSheet(); };
 $("invRifai").onclick = invRifaiInvio;
 
-/* avvio */
-loadSedi();
+
+/* ---------- codice di accesso ----------
+   Chiude la porta a chi si trova il dispositivo in mano o l'indirizzo per caso. Non e' una
+   cassaforte: la chiave del database resta dentro la pagina, quindi non protegge i dati da
+   chi sa dove guardare (per quello servirebbe un vero accesso su Supabase).
+   Il codice sta sul cloud, si cambia dal PC e vale per tutti i dispositivi.
+   Regole volute: si chiede UNA volta per dispositivo; se il codice viene cambiato dal PC,
+   tutti lo devono reinserire; senza linea, un dispositivo gia' sbloccato entra lo stesso,
+   perche' bloccare una vendita per un problema di rete sarebbe peggio del problema. */
+const COD_KEY = "faylive_codice_ok";
+async function codiceDalCloud(){
+  if(!sb) return null;
+  try{
+    const {data} = await sb.from("impostazioni").select("valore").eq("chiave","codice_accesso").maybeSingle();
+    return data ? (data.valore || "") : "";
+  }catch(_){ return null; }   // null = non si sa (linea assente)
+}
+function apriPorta(){ const g=document.getElementById("gate"); if(g) g.style.display="none"; }
+function chiediCodice(atteso){
+  return new Promise(res=>{
+    const g=document.getElementById("gate"), inp=document.getElementById("gateInput"),
+          ok=document.getElementById("gateOk"), msg=document.getElementById("gateMsg");
+    g.style.display="flex";
+    setTimeout(()=>inp.focus(), 100);
+    const prova = ()=>{
+      if(inp.value === atteso){
+        try{ localStorage.setItem(COD_KEY, inp.value); }catch(_){}
+        apriPorta(); res(true);
+      }else{
+        msg.textContent = "Codice errato";
+        msg.style.color = "#ff8080";
+        inp.value=""; inp.focus();
+      }
+    };
+    ok.onclick = prova;
+    inp.onkeydown = e=>{ if(e.key==="Enter") prova(); };
+  });
+}
+async function controllaAccesso(){
+  const g=document.getElementById("gate");
+  if(g) g.style.display="flex";                 // chiuso finche' non si sa
+  const attuale = await codiceDalCloud();
+  let salvato = null;
+  try{ salvato = localStorage.getItem(COD_KEY); }catch(_){}
+  if(attuale === null){                          // linea assente
+    if(salvato){ apriPorta(); return true; }     // gia' sbloccato prima: si entra
+    const m=document.getElementById("gateMsg");
+    if(m){ m.textContent = "Serve la connessione per il primo accesso su questo dispositivo"; m.style.color="#ff8080"; }
+    return false;
+  }
+  if(!attuale){ apriPorta(); return true; }      // nessun codice impostato: aperto
+  if(salvato === attuale){ apriPorta(); return true; }
+  await chiediCodice(attuale);
+  return true;
+}
+
+/* avvio: prima la porta, poi l'app. Il codice si cambia dal PC. */
+controllaAccesso().then(()=> loadSedi());
 if(!sb) setDot(false,"Cloud non disponibile");
 </script>
 </body>
