@@ -104,6 +104,10 @@
   .cell.sel .selcheck{display:flex}
   /* punto di partenza della selezione a intervallo: spunta e bordo verdi */
   .cell.ancora{outline:4px solid #35d07f;outline-offset:-4px}
+  /* Foto il cui originale non e' ancora sul cloud: non e' inviabile finche' PC1 non lo
+     carica. Si segna la foto, non solo il totale, altrimenti si sa quante ma non quali. */
+  .cell .orig{position:absolute;right:5px;bottom:5px;background:rgba(11,14,20,.85);
+    color:#ffb84d;font-size:15px;line-height:1;padding:4px 6px;border-radius:7px;pointer-events:none}
   .cell.ancora .selcheck{display:flex;background:#35d07f;color:#06240f}
   body.selmode .cell .fav{display:none}
   body.selmode #grid{touch-action:pan-y;padding-bottom:150px}   /* la barra copre il fondo: lascio spazio */
@@ -662,7 +666,7 @@ function render(){
   // se la griglia è identica a quella già disegnata, non la rifaccio: il controllo automatico
   // ogni 25 secondi ricostruiva tutto e faceva ridisegnare le anteprime da capo
   const firma = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0")+"|"+
-                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")).join(",");
+                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")+(haOriginale(p)?"o":"-")).join(",");
   if(firma===lastGrid && g.childElementCount){ updateSelBar(); return; }
   lastGrid = firma;
   resetLazy();
@@ -671,6 +675,7 @@ function render(){
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
       ${(p.gruppo && S.letter)?`<span class="grp">${esc(p.gruppo)}</span>`:""}
+      ${haOriginale(p)?"":`<span class="orig">⏳</span>`}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`).join("");
