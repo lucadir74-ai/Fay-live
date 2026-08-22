@@ -4582,6 +4582,60 @@ function mb(bytes){
   if(bytes >= 1024*1024*1024) return (bytes/1024/1024/1024).toFixed(2)+" GB";
   return Math.round(bytes/1024/1024)+" MB";
 }
+/* SPAZIO DAVVERO OCCUPATO SUL CLOUD.
+   La proiezione qui sotto è un calcolo a tavolino (~2 MB a foto): dice come andrà, non
+   come sta andando. Questo invece va a leggere lo storage e somma il peso reale di ogni
+   file nei due bucket, cartella per cartella (una cartella per giornata). Non è
+   istantaneo — con una stagione dentro sono decine di migliaia di file — quindi si
+   avvia a richiesta e non ogni volta che si apre il report. */
+async function elencaGiornateStorage(bucket){
+  const out=[], passo=1000;
+  for(let off=0; off<20000; off+=passo){
+    let r;
+    try{ r = await sb.storage.from(bucket).list("", {limit:passo, offset:off}); }catch(_){ break; }
+    const d = r && r.data;
+    if(!d || !d.length) break;
+    // le cartelle arrivano senza id e senza metadata: sono le giornate
+    out.push(...d.filter(x=>x.name && x.name!==".emptyFolderPlaceholder" && !x.id));
+    if(d.length < passo) break;
+  }
+  return out.map(x=>x.name);
+}
+async function misuraBucket(bucket, avanza){
+  let byte=0, n=0;
+  const giornate = await elencaGiornateStorage(bucket);
+  for(let i=0;i<giornate.length;i++){
+    const files = await listaTuttiIFile(bucket, giornate[i]);
+    files.forEach(f=>{ byte += (f.metadata && f.metadata.size) || 0; n++; });
+    if(avanza) avanza(bucket, i+1, giornate.length, byte, n);
+  }
+  return {byte, n, giornate:giornate.length};
+}
+async function misuraSpazioCloud(avanza){
+  const orig = await misuraBucket("originali", avanza);
+  const ante = await misuraBucket("anteprime", avanza);
+  const dati = { ts:Date.now(), orig, ante, byte: orig.byte + ante.byte };
+  state.spazioCloud = dati;
+  return dati;
+}
+function scriviSpazioReale(){
+  const box = $("spazioReale"); if(!box) return;
+  const d = state.spazioCloud; if(!d) return;
+  const liberi = Math.max(0, LIMITE_PRO - d.byte);
+  const perc = Math.min(100, Math.round(d.byte*100/LIMITE_PRO));
+  const colore = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
+  const ora = new Date(d.ts).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+  box.innerHTML = `
+    <div style="font-size:15px">Occupati <b style="color:${colore}">${mb(d.byte)}</b> su 100 GB
+      · <b style="color:var(--ok)">liberi ${mb(liberi)}</b></div>
+    <div style="height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:8px 0">
+      <div style="height:100%;width:${perc}%;background:${colore}"></div>
+    </div>
+    <div style="color:var(--muted);font-size:12px">
+      originali ${mb(d.orig.byte)} (${d.orig.n} file) · anteprime e miniature ${mb(d.ante.byte)} (${d.ante.n} file)
+      · ${d.orig.giornate} cartelle · misurato alle ${ora}
+    </div>`;
+}
 function datiReport(){
   const righe = {};
   for(const p of state.photos){
@@ -4681,7 +4735,29 @@ function apriStats(){
   if(perc>90) h += `<p style="color:var(--danger);font-size:12.5px;margin-top:8px">
     ⚠ A questo ritmo lo spazio non basta: riduci i giorni di conservazione degli originali.</p>`;
 
+  h += `<h4 style="margin:18px 0 8px">Quanto spazio è rimasto adesso</h4>
+    <div id="spazioReale" style="font-size:13px;line-height:1.9;color:var(--muted)">
+      Non ancora misurato.</div>
+    <button id="btnMisuraSpazio" style="margin-top:8px">Misura lo spazio occupato</button>`;
+
   $("statsBody").innerHTML = h;
+  if(state.spazioCloud) scriviSpazioReale();
+  $("btnMisuraSpazio").onclick = async (ev)=>{
+    if(!sb){ $("spazioReale").textContent = "Cloud non raggiungibile."; return; }
+    const b = ev.target; b.disabled = true;
+    const box = $("spazioReale");
+    box.textContent = "Sto contando i file sul cloud…";
+    try{
+      await misuraSpazioCloud((bucket, fatte, tot, byte)=>{
+        box.textContent = `Sto contando: ${bucket} — cartella ${fatte} di ${tot} · ${mb(byte)}`;
+      });
+      scriviSpazioReale();
+    }catch(err){
+      console.warn("misura spazio", err);
+      box.innerHTML = '<span style="color:var(--danger)">Non sono riuscito a leggere lo storage: '+
+                      String(err && err.message || err)+'</span>';
+    }finally{ b.disabled = false; b.textContent = "Ricalcola"; }
+  };
 
   // i due campi si salvano da soli e ricalcolano le vendute
   $("statsBody").querySelectorAll("input[data-l]").forEach(el=>{
