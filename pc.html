@@ -192,7 +192,11 @@
   #pqDlg #pqList{flex:1}
   #copDlg::backdrop{background:rgba(0,0,0,.35)}
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
-  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
+  /* UNA sola barra di scorrimento: il riquadro interno aveva la sua e il dialogo, cresciuto
+     con le sezioni nuove, si era messo a scorrere a sua volta. Ora scorre solo il corpo. */
+  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw);
+    max-height:90vh;overflow:hidden;display:flex;flex-direction:column}
+  #statsDlg #statsBody{flex:1;min-height:0;overflow:auto}
   #statsDlg #statsBody{max-height:76vh}
   #statsDlg table{width:100%}
   dialog::backdrop{background:rgba(6,8,12,.7)}
@@ -602,7 +606,7 @@
 <dialog id="statsDlg">
   <h3 style="margin-bottom:4px">Report giornata</h3>
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
-  <div id="statsBody" style="max-height:76vh;overflow:auto"></div>
+  <div id="statsBody"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
