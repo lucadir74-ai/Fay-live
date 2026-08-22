@@ -100,7 +100,11 @@
   #compare.open{display:flex}
   #cmpTop{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
   #cmpGrid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:14px 16px;align-content:start}
-  .cmp{position:relative;border-radius:10px;overflow:hidden;background:#000;cursor:pointer;aspect-ratio:3/2}
+  .cmp{position:relative;border-radius:10px;overflow:hidden;background:#000;cursor:pointer;aspect-ratio:3/2;min-width:0;min-height:0}
+  /* Fino a 16 foto la vista insieme sta tutta in una schermata: le caselle si dividono
+     lo spazio invece di tenere una forma fissa e traboccare l'una sull'altra. */
+  #cmpGrid.fisso{overflow:hidden}
+  #cmpGrid.fisso .cmp{aspect-ratio:auto;height:100%;width:100%}
   .cmp img{width:100%;height:100%;object-fit:contain}
   .cmp .code{position:absolute;left:8px;bottom:8px;font-family:var(--mono);font-size:13px;font-weight:700;background:rgba(11,14,20,.82);color:var(--accent);padding:2px 8px;border-radius:5px;letter-spacing:.5px}
 
@@ -3193,6 +3197,22 @@ function openCompare(){
   if(!set.length){ closeCompare(); toast("Nessuna foto selezionata"); return; }
   $("cmpCount").textContent = set.length+" foto selezionate";
   const g=$("cmpGrid"); g.innerHTML="";
+  /* Quante caselle per riga: prima erano larghe almeno 300px comunque, quindi con nove
+     foto verticali le righe superavano l'altezza dello schermo e le immagini finivano
+     una sull'altra. Ora la griglia si adatta al numero di foto e riempie la schermata. */
+  const n = set.length;
+  if(n <= 16){
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+    g.classList.add("fisso");
+    g.style.gridTemplateColumns = "repeat("+cols+",1fr)";
+    g.style.gridTemplateRows = "repeat("+rows+",1fr)";
+  }else{
+    // tantissime foto: si torna a scorrere, altrimenti diventerebbero francobolli
+    g.classList.remove("fisso");
+    g.style.gridTemplateColumns = "";
+    g.style.gridTemplateRows = "";
+  }
   set.forEach((p,i)=>{
     const d=document.createElement("div"); d.className="cmp";
     const img=document.createElement("img");
