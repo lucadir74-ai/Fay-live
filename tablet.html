@@ -160,6 +160,16 @@
     border-radius:10px;padding:10px 16px;font-size:15px;min-height:44px;font-family:inherit}
   #selBar .sb.act{border-color:var(--accent);color:var(--accent)}
 
+  /* Un indirizzo per etichetta: appena si batte lo spazio quello appena scritto si
+     chiude e dice subito se è scritto bene, senza aspettare il tocco su Invia. */
+  #mailChips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  #mailChips:empty{margin-top:0}
+  #mailChips .chip{padding:7px 11px;border-radius:9px;font-size:15px;border:1px solid;
+    max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mailChips .chip.ok{color:var(--ok);border-color:var(--ok);font-weight:700}
+  #mailChips .chip.ko{color:#ff8080;border-color:#ff8080;text-decoration:underline;font-weight:700}
+  #mailChips .chip.corso{color:var(--muted);border-color:var(--line)}
+
   #empty{margin:auto;color:var(--muted);text-align:center;padding:40px;font-size:16px}
 
   /* visore a schermo pieno con zoom e swipe */
@@ -306,7 +316,8 @@
       <input id="mailInput" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"
              placeholder="nome@email.com"
              style="width:100%;box-sizing:border-box;font-size:22px;padding:16px 14px;border-radius:12px;border:1px solid #3a3f47;background:#0c0e11;color:#fff">
-      <div id="mailErrore" style="color:#ff8080;font-size:14px;height:20px;margin-top:6px"></div>
+      <div id="mailChips"></div>
+      <div id="mailErrore" style="color:#ff8080;font-size:14px;min-height:20px;margin-top:6px"></div>
       <div style="display:flex;gap:12px;margin-top:14px">
         <button id="mailAnnulla" style="flex:1;font-size:18px;padding:16px;border-radius:12px;border:1px solid #3a3f47;background:transparent;color:#ddd">Annulla</button>
         <button id="mailOk" style="flex:2;font-size:18px;padding:16px;border-radius:12px;border:0;background:#2f7d4f;color:#fff;font-weight:700">Invia le foto</button>
@@ -1614,20 +1625,51 @@ $("btnExport").onclick = ()=> { const ps=bersaglio(); exportPhotos(ps, S.letter?
    Il tablet NON scarica nessuna foto: chiede solo gli indirizzi firmati e li passa alla
    funzione su Vercel, che prende i file da Supabase e li manda a Filemail. Sull'hotspot
    viaggiano poche centinaia di byte invece di decine di MB. */
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+/* Gli indirizzi si separano con uno spazio (o virgola). L'ultimo pezzo, finché non si
+   batte lo spazio, si sta ancora scrivendo: resta grigio e non viene dato per sbagliato. */
+function indirizziScritti(testo){
+  const pezzi = String(testo||"").split(/[\s,;]+/).filter(Boolean);
+  const inCorso = !/[\s,;]$/.test(String(testo||""));
+  return pezzi.map((e,i)=>({ testo:e, ultimo: inCorso && i===pezzi.length-1, ok: EMAIL_OK.test(e) }));
+}
+function aggiornaChipsEmail(){
+  const box=$("mailChips"); if(!box) return;
+  const voci = indirizziScritti($("mailInput").value);
+  box.innerHTML = voci.map(v=>{
+    const cl = (v.ultimo && !v.ok) ? "corso" : (v.ok ? "ok" : "ko");
+    const seg = cl==="ok" ? "✓ " : (cl==="ko" ? "✗ " : "");
+    return `<span class="chip ${cl}">${seg}${esc(v.testo)}</span>`;
+  }).join("");
+  const buoni = voci.filter(v=>v.ok).length;
+  const b=$("mailOk");
+  if(b && b.textContent!=="Chiudi")
+    b.textContent = buoni>1 ? `Invia a ${buoni} indirizzi` : "Invia le foto";
+}
 function chiediEmail(quante){
   return new Promise(res=>{
     const ov=$("mailOverlay"), inp=$("mailInput"), err=$("mailErrore");
-    $("mailSotto").textContent = `${quante} foto — scrivi la tua email, ti arriva un link per scaricarle.`;
+    $("mailSotto").textContent = `${quante} foto — scrivi l'email e tocca Invia. Per più persone, separa gli indirizzi con uno spazio.`;
     inp.value=""; err.textContent=""; ov.style.display="flex";
+    $("mailChips").style.display=""; aggiornaChipsEmail();
     setTimeout(()=>inp.focus(),50);
-    const chiudi=v=>{ ov.style.display="none"; inp.onkeydown=null; res(v); };
+    const chiudi=v=>{ ov.style.display="none"; inp.onkeydown=null; inp.oninput=null; res(v); };
+    inp.oninput = aggiornaChipsEmail;
     $("mailAnnulla").onclick=()=>chiudi(null);
     $("mailOk").onclick=()=>{
-      const v=inp.value.trim();
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)){ err.textContent="Controlla l'indirizzo email"; return; }
-      chiudi(v);
+      const voci = indirizziScritti(inp.value);
+      const sbagliati = voci.filter(v=>!v.ok).map(v=>v.testo);
+      if(!voci.length){ err.textContent="Scrivi almeno un indirizzo"; return; }
+      if(sbagliati.length){
+        err.textContent = sbagliati.length===1 ? `Controlla l'indirizzo: ${sbagliati[0]}`
+                                               : `Controlla questi indirizzi: ${sbagliati.join(", ")}`;
+        return;
+      }
+      // stesso indirizzo scritto due volte: si manda una volta sola
+      const lista = [...new Set(voci.map(v=>v.testo.toLowerCase()))];
+      chiudi(lista.join(", "));
     };
-    inp.onkeydown=e=>{ if(e.key==="Enter") $("mailOk").click(); };
+    inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); $("mailOk").click(); } };
   });
 }
 
@@ -1640,6 +1682,7 @@ function mostraAttesa(testo){
   $("mailSotto").style.whiteSpace="pre-line";
   $("mailSotto").textContent=testo;
   $("mailInput").style.display="none";
+  $("mailChips").style.display="none";
   $("mailErrore").textContent="";
   $("mailCopia").hidden=true;
   $("mailAnnulla").style.display="none";
@@ -1655,6 +1698,7 @@ function mostraAvanzamento(fatte, totali){
   $("mailSotto").style.whiteSpace="pre-line";
   $("mailSotto").textContent = `${fatte} di ${totali} foto\nNon chiudere la pagina.`;
   $("mailInput").style.display="none";
+  $("mailChips").style.display="none";
   $("mailErrore").textContent="";
   $("mailCopia").hidden=true;
   $("mailAnnulla").style.display="none";
@@ -1702,6 +1746,7 @@ function mostraEsito(testo, titolo){
   $("mailSotto").textContent=testo;
   $("mailSotto").style.whiteSpace="pre-line";
   $("mailInput").style.display="none";
+  $("mailChips").style.display="none";
   $("mailErrore").textContent="";
   $("mailAnnulla").style.display="none";
   $("mailOk").style.display="";        // durante l'avanzamento era nascosto
@@ -1719,6 +1764,7 @@ function mostraEsito(testo, titolo){
     // rimetto la finestra com'era, pronta per il prossimo cliente
     $("mailTitolo").textContent="Ricevi le tue foto";
     $("mailInput").style.display="";
+    $("mailChips").style.display="";
     $("mailAnnulla").style.display="";
     $("mailOk").textContent="Invia le foto";
   };
