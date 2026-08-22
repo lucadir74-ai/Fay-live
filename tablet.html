@@ -33,6 +33,20 @@
   .favtoggle.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* elenco verticale delle cartelle, si apre sotto la scheda 📁 */
+  .rtab .frecc{font-size:13px;opacity:.8}
+  #grpMenu{position:fixed;z-index:45;min-width:250px;max-width:min(420px,92vw);max-height:60vh;
+    overflow-y:auto;background:var(--surface);border:1px solid var(--accent);border-radius:14px;
+    padding:8px;box-shadow:0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:6px}
+  #grpMenu[hidden]{display:none}
+  #grpMenu .gr{display:flex;align-items:center;gap:10px;background:var(--surface2);
+    border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:17px;min-height:52px}
+  #grpMenu .gr.on{border-color:var(--accent);color:var(--accent)}
+  #grpMenu .gr .nome{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #grpMenu .gr .cnt{font-size:13px;color:var(--muted)}
+  #grpMenu .gr .del{padding:4px 8px;font-size:17px}
+  #grpMenu .esci{justify-content:center;color:var(--muted)}
+
   /* riga dei tasti principali, sopra la griglia */
   #azioni{display:flex;gap:10px;padding:10px 14px;background:var(--surface);
     border-bottom:1px solid var(--line);flex-shrink:0}
@@ -267,6 +281,7 @@
   </header>
 
   <nav id="tabs" hidden></nav>
+  <div id="grpMenu" hidden></div>
 
   <!-- I tre tasti che si usano davvero durante la vendita: vicini tra loro, grandi e
        a colpo d'occhio distinguibili, subito sopra le foto invece che persi in alto
@@ -673,14 +688,16 @@ function render(){
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
-    gruppi().map(G=>{
-      const ps = S.photos.filter(p=>p.gruppo===G);
-      const rulli = [...new Set(ps.map(p=>p.letter))].sort();
-      // se la cartella pesca da più rulli lo dice: "📁 Tavolo 12  8 · E G"
-      const daRulli = rulli.length>1 ? ` <span class="cnt">${rulli.join(" ")}</span>` : "";
-      return `<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${ps.length}</span>${daRulli}${S.gruppo===G?`<span class="del" data-del="${esc(G)}">🗑</span>`:""}</div>`;
-    }).join("");
+    /* UNA scheda sola per tutte le cartelle: con tre o quattro gruppi le schede
+       mangiavano la riga e i rulli finivano fuori vista. L'elenco si apre in verticale. */
+    (gruppi().length ? (()=>{
+      const gs = gruppi();
+      const nome = S.gruppo ? esc(S.gruppo) : "Gruppi";
+      const n = S.gruppo ? S.photos.filter(p=>p.gruppo===S.gruppo).length : gs.length;
+      return `<div class="rtab grp ${S.gruppo?'on':''}" data-gmenu="1">📁 ${nome} <span class="cnt">${n}</span> <span class="frecc">▾</span></div>`;
+    })() : "");
   nav.querySelectorAll(".rtab").forEach(b=>b.onclick=(e)=>{
+    if(b.dataset.gmenu !== undefined){ apriMenuGruppi(b); return; }
     if(e.target && e.target.dataset && e.target.dataset.del !== undefined){ eliminaGruppo(e.target.dataset.del); return; }
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
     else { S.gruppo=null; S.letter=b.dataset.l||S.letter; }
@@ -877,6 +894,47 @@ $("selNone").onclick=()=>{
   document.querySelectorAll("#grid .cell.sel").forEach(c=>c.classList.remove("sel"));
   updateSelBar();
 };
+/* ---------- elenco delle cartelle in verticale ---------- */
+function chiudiMenuGruppi(){ const m=$("grpMenu"); if(m) m.hidden = true; }
+function apriMenuGruppi(anchor){
+  const m = $("grpMenu");
+  if(!m.hidden){ chiudiMenuGruppi(); return; }        // secondo tocco: si richiude
+  const esc = t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+  const gs = gruppi();
+  m.innerHTML =
+    (S.gruppo ? `<div class="gr esci" data-esci="1">↩ Esci dalla cartella</div>` : "") +
+    gs.map(G=>{
+      const ps = S.photos.filter(p=>p.gruppo===G);
+      const rulli = [...new Set(ps.map(p=>p.letter))].sort();
+      return `<div class="gr ${S.gruppo===G?'on':''}" data-g="${esc(G)}">
+        <span class="nome">📁 ${esc(G)}</span>
+        <span class="cnt">${ps.length} · ${rulli.join(" ")}</span>
+        <span class="del" data-del="${esc(G)}">🗑</span>
+      </div>`;
+    }).join("");
+  // ancorato sotto la scheda, senza uscire dal bordo destro dello schermo
+  const r = anchor.getBoundingClientRect();
+  m.hidden = false;
+  const w = m.offsetWidth;
+  m.style.top  = Math.round(r.bottom + 6) + "px";
+  m.style.left = Math.round(Math.max(8, Math.min(r.left, innerWidth - w - 8))) + "px";
+
+  m.querySelectorAll(".gr").forEach(el=>{
+    el.onclick = ev=>{
+      if(ev.target && ev.target.dataset && ev.target.dataset.del !== undefined){
+        chiudiMenuGruppi(); eliminaGruppo(ev.target.dataset.del); return;
+      }
+      chiudiMenuGruppi();
+      S.gruppo = el.dataset.esci !== undefined ? null : el.dataset.g;
+      render(); $("grid").scrollTop = 0;
+      if(!magazzinoAttivo) riempiMagazzino();
+    };
+  });
+}
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#grpMenu,.rtab.grp")) chiudiMenuGruppi();
+}, true);
+
 /* ---------- gruppi (sotto-cartelle della giornata) ---------- */
 function apriGruppi(){
   const ps=selectedPhotos();
@@ -2515,6 +2573,7 @@ addEventListener("popstate", ()=>{
   segnaPassoIndietro();                       // il passo consumato si rimette subito
   const ov = $("mailOverlay");
   if(ov && ov.style.display && ov.style.display!=="none"){ ov.style.display="none"; return; }
+  if($("grpMenu") && !$("grpMenu").hidden){ chiudiMenuGruppi(); return; }
   if($("invSheet") && $("invSheet").classList.contains("on")){ invChiudiSheet(); return; }
   if($("invDlg") && $("invDlg").classList.contains("on")){ $("invDlg").classList.remove("on"); return; }
   if($("cpSheet") && $("cpSheet").classList.contains("open")){ $("cpSheet").classList.remove("open"); return; }
