@@ -1472,6 +1472,54 @@ function chiediEmail(quante){
   });
 }
 
+/* Avanzamento a schermo durante l'invio: con 60 foto l'attesa è lunga e senza un numero
+   che sale sembra bloccato. Riusa la stessa finestra dell'email, senza tasti. */
+function mostraAvanzamento(fatte, totali){
+  const ov=$("mailOverlay");
+  $("mailTitolo").textContent="Invio in corso…";
+  $("mailSotto").style.whiteSpace="pre-line";
+  $("mailSotto").textContent = `${fatte} di ${totali} foto\nNon chiudere la pagina.`;
+  $("mailInput").style.display="none";
+  $("mailErrore").textContent="";
+  $("mailCopia").hidden=true;
+  $("mailAnnulla").style.display="none";
+  $("mailOk").style.display="none";
+  ov.style.display="flex";
+}
+
+/* Una chiamata al server con un tetto di attesa e messaggi in italiano al posto dei
+   codici. Il 504 non è un guasto: è la funzione su Vercel che viene troncata quando
+   ci mette troppo — va detto in modo che l'operatore sappia cosa fare. */
+async function chiamataInvio(indirizzo, corpo, scadenzaMs){
+  const ac=new AbortController();
+  const t=setTimeout(()=>ac.abort(), scadenzaMs||70000);
+  let r;
+  try{
+    r = await fetch(indirizzo,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(corpo), signal: ac.signal
+    });
+  }catch(err){
+    if(err && err.name==="AbortError")
+      throw new Error("Il server non ha risposto in tempo. Controlla la linea e riprova.");
+    throw new Error("Non riesco a contattare il server di invio: controlla la connessione.");
+  }finally{ clearTimeout(t); }
+
+  const grezzo = await r.text();
+  let out={}; try{ out=JSON.parse(grezzo); }catch(_){}
+  if(r.ok && out.ok) return out;
+
+  console.warn("invio", indirizzo, r.status, grezzo);
+  const dettaglio = out.dettaglio || out.errore || (grezzo||"").slice(0,200);
+  if(r.status===504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(grezzo))
+    throw new Error("L'invio ha superato il tempo massimo del server.\nRiprova: le foto già caricate non si perdono. Se insiste, mandale da PC1.");
+  if(r.status===502)
+    throw new Error("Filemail non ha risposto come previsto.\n\n"+dettaglio);
+  if(r.status===413)
+    throw new Error("Gruppo di foto troppo pesante per una volta sola. Riprova.");
+  throw new Error(`Il server ha risposto ${r.status}.\n\n`+(dettaglio||"nessun dettaglio"));
+}
+
 /* Conferma ben visibile: il toast sparisce da solo e in mezzo al lavoro non lo si vede. */
 function mostraEsito(testo, titolo){
   const ov=$("mailOverlay");
@@ -1481,6 +1529,7 @@ function mostraEsito(testo, titolo){
   $("mailInput").style.display="none";
   $("mailErrore").textContent="";
   $("mailAnnulla").style.display="none";
+  $("mailOk").style.display="";        // durante l'avanzamento era nascosto
   $("mailOk").textContent="Chiudi";
   const cp=$("mailCopia");
   cp.hidden=false;
@@ -1628,7 +1677,9 @@ async function inviaConFilemail(list, ctx, opz){
     const p = vivo(pRaw);
     if(!p.origPath){ mancanti.push(p.code); continue; }
     try{
-      const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 900);
+      /* 1 ora invece di 15 minuti: con 60 foto l'invio dura parecchio e gli indirizzi
+         firmati per primi rischiavano di scadere prima di essere usati. */
+      const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 3600);
       if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
       files.push({nome:p.code+".jpg", url:data.signedUrl});
     }catch(_){ mancanti.push(p.code); }
@@ -1654,39 +1705,58 @@ async function inviaConFilemail(list, ctx, opz){
             servizioId: S.servizio ? S.servizio.id : null,
             giorno: (S.servizio && S.servizio.data_servizio) || "",
             codici: list.map(p=>p.code), motivo:"invio in corso" });
-  toast(`Invio ${files.length} foto a ${email}…`);
+  /* L'invio è spezzato in tre: si apre il trasferimento, si caricano le foto a gruppetti
+     di 6 (una chiamata breve ciascuno) e si chiude. Prima era una chiamata sola che
+     faceva tutto: oltre le ~20 foto sforava i 60 secondi di Vercel e tornava un 504
+     senza che partisse niente. Per la fotografa non cambia nulla: un tocco solo,
+     con il contatore che sale. */
+  const A_GRUPPETTO = 6;
+  mostraAvanzamento(0, files.length);
   try{
-    const r=await fetch("/api/invia",{
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ email, files,
-        oggetto:"Le tue foto — Frame About You",
-        messaggio:"Grazie per la serata! Ecco le tue foto." })
-    });
-    const testoGrezzo = await r.text();
-    let out={}; try{ out=JSON.parse(testoGrezzo); }catch(_){}
-    if(!r.ok || !out.ok){
-      console.warn("filemail", r.status, testoGrezzo);
-      const dettaglio = out.dettaglio || out.errore || (testoGrezzo||"").slice(0,300) || "nessuna risposta dal server";
-      salvaKO({ id:koId, ts:Date.now(), email,
-                servizioId: S.servizio ? S.servizio.id : null,
-                giorno: (S.servizio && S.servizio.data_servizio) || "",
-                codici: list.map(p=>p.code), motivo:"il server ha risposto "+r.status });
-      logTecnico(list, "invio", {esito:"errore", dettaglio:`${email} — HTTP ${r.status}: ${String(dettaglio).slice(0,200)}`});
-      mostraEsito(`Il server ha risposto ${r.status}.\n\n${dettaglio}`, "Invio non riuscito");
-      return;
+    const apertura = await chiamataInvio("/api/invia-apri", {
+      email,
+      oggetto:"Le tue foto — Frame About You",
+      messaggio:"Grazie per la serata! Ecco le tue foto."
+    }, 30000);
+
+    const caricate=[], saltate=[];
+    for(let i=0; i<files.length; i+=A_GRUPPETTO){
+      const gruppetto = files.slice(i, i+A_GRUPPETTO);
+      const esito = await chiamataInvio("/api/invia-pezzo", {
+        transferid: apertura.transferid,
+        transferkey: apertura.transferkey,
+        transferurl: apertura.transferurl,
+        files: gruppetto
+      }, 70000);
+      caricate.push(...(esito.caricate||[]));
+      (esito.saltate||[]).forEach(s=>saltate.push(s.nome));
+      mostraAvanzamento(caricate.length, files.length);
     }
+
+    if(!caricate.length)
+      throw new Error("Nessuna foto è arrivata a destinazione.\nControlla che gli originali siano sul cloud e riprova.");
+
+    await chiamataInvio("/api/invia-chiudi", {
+      transferid: apertura.transferid,
+      transferkey: apertura.transferkey,
+      logintoken: apertura.logintoken
+    }, 30000);
+
     rimuoviKO(koId);                 // il server ha confermato: non e' piu' in sospeso
     logActivity(list,"inviate");
-    logTecnico(list, "invio", {dettaglio:`${files.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
-    mostraEsito(`Inviate ${out.inviate||files.length} foto a ${email}.\nIl cliente riceve un link valido 7 giorni.`);
+    logTecnico(list, "invio", {dettaglio:`${caricate.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
+    mostraEsito(`Inviate ${caricate.length} foto a ${email}.`+
+                (saltate.length?`\n${saltate.length} non sono passate: ${saltate.join(", ")}`:"")+
+                `\nIl cliente riceve un link valido 7 giorni.`);
   }catch(err){
     console.warn("filemail", err);
+    const spiega = (err && err.message) ? err.message : String(err);
     salvaKO({ id:koId, ts:Date.now(), email,
               servizioId: S.servizio ? S.servizio.id : null,
               giorno: (S.servizio && S.servizio.data_servizio) || "",
-              codici: list.map(p=>p.code), motivo:"linea assente o server irraggiungibile" });
-    logTecnico(list, "invio", {esito:"errore", dettaglio:`${email} — server irraggiungibile: `+((err&&err.message)||err)});
-    mostraEsito("Non sono riuscito a contattare il server di invio.\n\n"+(err && err.message ? err.message : err), "Invio non riuscito");
+              codici: list.map(p=>p.code), motivo: spiega.split("\n")[0] });
+    logTecnico(list, "invio", {esito:"errore", dettaglio:`${email} — `+spiega.slice(0,200)});
+    mostraEsito(spiega+"\n\nL'invio resta nel Registro: da lì puoi rispedirlo.", "Invio non riuscito");
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
 $("btnSend").onclick = ()=>{ const ps=bersaglio(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
@@ -2217,30 +2287,44 @@ async function invRifaiInvio(){
   const nomi = files.map(f=>f.nome.replace(/\.jpg$/i,""));
   try{
     await tieniSchermoAcceso();
-    const r = await fetch("/api/invia", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ email, files,
-        oggetto:"Le tue foto — Frame About You",
-        messaggio:"Grazie per la serata! Ecco le tue foto." })
-    });
-    const grezzo = await r.text();
-    let out={}; try{ out=JSON.parse(grezzo); }catch(_){}
-    if(!r.ok || !out.ok){
-      const perche = out.dettaglio || out.errore || (grezzo||"").slice(0,200) || "nessuna risposta dal server";
-      await invRegistra(a, nomi, files.length, email, "errore", perche);
-      invEsito("Invio non riuscito: "+perche, false);
-    }else{
-      await invRegistra(a, nomi, out.inviate||files.length, email, "ok",
-        mancanti.length ? mancanti.length+" foto non piu' sul cloud" : "");
-      invEsito("Inviate "+(out.inviate||files.length)+" foto a "+email+"."
-        + (mancanti.length ? "\n"+mancanti.length+" foto non erano piu' sul cloud e non sono partite." : ""), true);
-      toast("Foto inviate a "+email);
-      setTimeout(invChiudiSheet, 1600);
+    /* Stessa strada dell'invio normale: a gruppetti, per non sforare il tempo del
+       server quando il cliente da recuperare aveva scelto molte foto. */
+    const apertura = await chiamataInvio("/api/invia-apri", {
+      email,
+      oggetto:"Le tue foto — Frame About You",
+      messaggio:"Grazie per la serata! Ecco le tue foto."
+    }, 30000);
+
+    const caricate=[];
+    for(let i=0; i<files.length; i+=6){
+      const esito = await chiamataInvio("/api/invia-pezzo", {
+        transferid: apertura.transferid,
+        transferkey: apertura.transferkey,
+        transferurl: apertura.transferurl,
+        files: files.slice(i, i+6)
+      }, 70000);
+      caricate.push(...(esito.caricate||[]));
+      invEsito("Invio "+caricate.length+" di "+files.length+" foto a "+email+"…", true);
     }
+    if(!caricate.length) throw new Error("Nessuna foto è arrivata a destinazione.");
+
+    await chiamataInvio("/api/invia-chiudi", {
+      transferid: apertura.transferid,
+      transferkey: apertura.transferkey,
+      logintoken: apertura.logintoken
+    }, 30000);
+
+    await invRegistra(a, nomi, caricate.length, email, "ok",
+      mancanti.length ? mancanti.length+" foto non piu' sul cloud" : "");
+    invEsito("Inviate "+caricate.length+" foto a "+email+"."
+      + (mancanti.length ? "\n"+mancanti.length+" foto non erano piu' sul cloud e non sono partite." : ""), true);
+    toast("Foto inviate a "+email);
+    setTimeout(invChiudiSheet, 1600);
   }catch(err){
     console.warn("reinvio", err);
-    await invRegistra(a, nomi, files.length, email, "errore", "server irraggiungibile");
-    invEsito("Non sono riuscito a contattare il server di invio: controlla la connessione.", false);
+    const perche = (err && err.message) ? err.message : String(err);
+    await invRegistra(a, nomi, files.length, email, "errore", perche.slice(0,180));
+    invEsito("Invio non riuscito: "+perche, false);
   }finally{
     rilasciaSchermo();
     b.disabled = false; b.textContent = "Invia di nuovo";
