@@ -3910,10 +3910,11 @@ async function openMonitor(){
   startSlideshow();
 }
 function setMonState(mode){
-  const M=state.monitor; M.mode=mode;
+  const M=state.monitor;
+  if(mode!==M.mode) M.since = Date.now();   // da quanto tempo il monitor è fermo su questa cosa
+  M.mode=mode;
   $("monDot").classList.toggle("on", mode!=="off");
-  const rl = state.monitor.letter ? ` (rullo ${state.monitor.letter})` : "";
-  $("monLabel").textContent = mode==="off"? "Monitor cliente chiuso" : mode==="slideshow"? "Monitor: slideshow"+rl : mode==="mosaic"? "Monitor: selezione affiancata" : "Monitor: presentazione";
+  aggiornaEtichettaMonitor();
   $("stMode").textContent = mode==="present" ? "Presentazione — frecce per navigare, invio o Esc per tornare allo slideshow" : mode==="mosaic" ? "Selezione affiancata sul monitor — invio o Esc per riprendere lo slideshow" : "";
   const b = $("btnMonitor"), x = $("btnMonClose");
   const tab = state.activeLetter ? "rullo "+state.activeLetter : "tutti i rulli";
@@ -3924,6 +3925,46 @@ function setMonState(mode){
   }
   if(x) x.hidden = (mode==="off");
 }
+/* COSA STA VEDENDO IL CLIENTE, scritto per esteso.
+   Una foto mandata sul monitor ci resta finché non si torna allo slideshow: se ci si
+   distrae, il monitor mostra per mezz'ora la foto di un tavolo che se n'è andato. La
+   voce Monitor della barra di stato ora dice il codice esatto e da quanto tempo è lì,
+   diventa arancione e poi rossa, e si può cliccare per far ripartire lo slideshow. */
+function aggiornaEtichettaMonitor(){
+  const M=state.monitor, el=$("monLabel"); if(!el) return;
+  const rl = M.letter ? ` (rullo ${M.letter})` : "";
+  const min = M.since ? Math.floor((Date.now()-M.since)/60000) : 0;
+  const da  = min>=1 ? ` · da ${min} min` : "";
+  let txt, ferma=false;
+  if(M.mode==="off") txt = "Monitor cliente chiuso";
+  else if(M.mode==="slideshow") txt = "Monitor: slideshow"+rl;
+  else if(M.mode==="mosaic"){
+    const set = M._staticSet || [];
+    const codici = set.slice(0,4).map(p=>p.code).join(", ") + (set.length>4 ? ` +${set.length-4}` : "");
+    txt = `⏸ Monitor fermo su ${set.length} foto affiancate${codici? " — "+codici : ""}${da} · Esc per riprendere`;
+    ferma = true;
+  } else {
+    const set = M.present || [];
+    const p = set[M.pIdx||0] || set[0];
+    const pos = set.length>1 ? ` (${(M.pIdx||0)+1}/${set.length})` : "";
+    txt = `⏸ Monitor fermo su ${p? p.code : "una foto"}${pos}${da} · Esc per riprendere`;
+    ferma = true;
+  }
+  el.textContent = txt;
+  el.style.color = ferma ? (min>=2 ? "var(--danger)" : "var(--accent)") : "";
+  el.style.fontWeight = ferma ? "700" : "";
+  const box = $("monitorState");
+  if(box){
+    box.style.cursor = ferma ? "pointer" : "";
+    box.title = ferma ? "Clicca per far ripartire lo slideshow" : "";
+  }
+}
+setInterval(aggiornaEtichettaMonitor, 15000);   // il conteggio dei minuti si aggiorna da solo
+$("monitorState").onclick = ()=>{
+  const M=state.monitor;
+  if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); toast("Slideshow ripreso"); }
+};
+
 /* Quante foto stanno in una schermata del monitor: la stessa cifra usata dal mosaico. */
 function fotoPerPagina(){
   return (state.event && TILE_GRID[state.event.tiles]) ? state.event.tiles : 6;
@@ -4093,6 +4134,7 @@ function presentNav(d){
   const M=state.monitor; if(M.mode!=="present") return;
   M.pIdx=Math.min(M.present.length-1, Math.max(0, M.pIdx+d));
   paintMonitorPhoto(M.present[M.pIdx], true);
+  aggiornaEtichettaMonitor();
   const nx=M.present[M.pIdx+d]; if(nx) getBig(nx);
 }
 function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) startSlideshow(); }
