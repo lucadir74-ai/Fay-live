@@ -646,14 +646,17 @@ function letters(){
   const dalleFoto = S.photos.map(p=>p.letter);
   return [...new Set([...daiRulli, ...dalleFoto])].sort();
 }
-// i gruppi appartengono al rullo in cui sono stati creati: fuori da quel rullo non esistono
+/* I gruppi sono cartelle della GIORNATA, non del rullo: lo stesso tavolo viene
+   fotografato da più fotografi, e le sue foto devono poter stare insieme anche se
+   arrivano da rulli diversi. Le schede 📁 restano quindi visibili qualunque rullo si
+   stia guardando, e dentro la cartella si vedono le foto di tutti i rulli (il codice
+   sulla foto dice sempre da quale rullo viene). */
 function gruppi(){
-  if(!S.letter) return [];
-  return [...new Set(S.photos.filter(p=>p.letter===S.letter).map(p=>p.gruppo).filter(Boolean))].sort();
+  return [...new Set(S.photos.map(p=>p.gruppo).filter(Boolean))].sort();
 }
 function visible(){
   let list;
-  if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo && p.letter===S.letter);   // resta dentro il rullo
+  if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo);   // tutti i rulli insieme
   else list = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
   if(S.favOnly) list = list.filter(p=>p.fav);
   return list;
@@ -666,7 +669,13 @@ function render(){
   const cnt = L => S.photos.filter(p=>p.letter===L).length;
   nav.innerHTML =
     ls.map(L=>`<div class="rtab ${(!S.gruppo&&S.letter===L)?'on':''}" data-l="${L}">${L} <span class="cnt">${cnt(L)}</span></div>`).join("")+
-    gruppi().map(G=>`<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${S.photos.filter(p=>p.gruppo===G && p.letter===S.letter).length}</span>${S.gruppo===G?`<span class="del" data-del="${esc(G)}">🗑</span>`:""}</div>`).join("");
+    gruppi().map(G=>{
+      const ps = S.photos.filter(p=>p.gruppo===G);
+      const rulli = [...new Set(ps.map(p=>p.letter))].sort();
+      // se la cartella pesca da più rulli lo dice: "📁 Tavolo 12  8 · E G"
+      const daRulli = rulli.length>1 ? ` <span class="cnt">${rulli.join(" ")}</span>` : "";
+      return `<div class="rtab grp ${S.gruppo===G?'on':''}" data-g="${esc(G)}">📁 ${esc(G)} <span class="cnt">${ps.length}</span>${daRulli}${S.gruppo===G?`<span class="del" data-del="${esc(G)}">🗑</span>`:""}</div>`;
+    }).join("");
   nav.querySelectorAll(".rtab").forEach(b=>b.onclick=(e)=>{
     if(e.target && e.target.dataset && e.target.dataset.del !== undefined){ eliminaGruppo(e.target.dataset.del); return; }
     if(b.dataset.g !== undefined){ S.gruppo=b.dataset.g; }
@@ -681,7 +690,8 @@ function render(){
   aggiornaSpiaBadge();
   $("favOnly").classList.toggle("on", S.favOnly);
   // dentro la vista preferiti il tasto dice come uscirne
-  const nFav = (S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos).filter(x=>x.fav).length;
+  const nFav = (S.gruppo ? S.photos.filter(x=>x.gruppo===S.gruppo)
+              : (S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos)).filter(x=>x.fav).length;
   $("favOnly").lastElementChild.textContent = S.favOnly ? "Chiudi preferiti"
                                             : (nFav ? "Preferiti (" + nFav + ")" : "Preferiti");
   $("favOnly").querySelector(".heart").textContent = S.favOnly ? "♥" : "♡";
@@ -712,7 +722,7 @@ function render(){
     <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
-      ${(p.gruppo && S.letter)?`<span class="grp">${esc(p.gruppo)}</span>`:""}
+      ${p.gruppo?`<span class="grp">${esc(p.gruppo)}</span>`:""}
       ${haOriginale(p)?"":`<span class="orig">⏳</span>`}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
@@ -868,9 +878,11 @@ $("selNone").onclick=()=>{
 function apriGruppi(){
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
-  // i gruppi vivono dentro un rullo: da "Tutte" non si crea nulla
-  if(!S.letter){ toast("Scegli prima un rullo"); return; }
-  $("grpCount").textContent = (ps.length===1 ? "1 foto selezionata" : ps.length+" foto selezionate")+" · rullo "+S.letter;
+  /* La selezione NON si perde cambiando rullo: si scelgono le foto in E, si passa a G,
+     se ne scelgono altre e finiscono tutte nella stessa cartella. */
+  const rulli = [...new Set(ps.map(p=>p.letter))].sort();
+  $("grpCount").textContent = (ps.length===1 ? "1 foto selezionata" : ps.length+" foto selezionate")
+                            + " · rull" + (rulli.length>1 ? "i " : "o ") + rulli.join(" ");
   const list=$("grpList");
   const gs=gruppi();
   list.innerHTML = gs.length ? gs.map(g=>`<button data-g="${esc(g)}">📁 ${esc(g)}</button>`).join("")
@@ -880,22 +892,19 @@ function apriGruppi(){
   $("grpSheet").classList.add("open");
 }
 async function assegnaGruppo(nome){
-  const tutte=selectedPhotos();
+  const ps=selectedPhotos();
   $("grpSheet").classList.remove("open");
-  if(!tutte.length) return;
-  // sicurezza: se la selezione contiene foto di altri rulli, le lascio fuori
-  const ps = S.letter ? tutte.filter(p=>p.letter===S.letter) : tutte;
-  const escluse = tutte.length - ps.length;
-  if(!ps.length){ toast("Nessuna foto del rullo "+S.letter+" tra quelle selezionate"); return; }
+  if(!ps.length) return;
+  const rulli = [...new Set(ps.map(p=>p.letter))].sort();
   const ids=ps.map(p=>p.id);
   try{
     const {error} = await sb.from("foto").update({gruppo: nome}).in("id", ids);
     if(error) throw error;
     ps.forEach(p=> p.gruppo = nome);
-    toast((nome ? `${ps.length} foto nel gruppo "${nome}"` : `${ps.length} foto tolte dal gruppo · restano nel rullo ${S.letter}`)
-          + (escluse ? ` · ${escluse} di altri rulli non toccate` : ""));
+    toast(nome ? `${ps.length} foto nel gruppo "${nome}"` + (rulli.length>1 ? ` · da ${rulli.join(" e ")}` : "")
+               : `${ps.length} foto tolte dal gruppo · restano nel loro rullo`);
     // se stavo guardando un gruppo e si è svuotato, torno all'elenco del rullo
-    if(S.gruppo && !S.photos.some(p=>p.gruppo===S.gruppo && p.letter===S.letter)) S.gruppo = null;
+    if(S.gruppo && !S.photos.some(p=>p.gruppo===S.gruppo)) S.gruppo = null;
   }catch(err){
     console.warn("assegnaGruppo", err);
     toast("Non riesco a salvare il gruppo: " + (err.message||err));
@@ -906,15 +915,16 @@ async function assegnaGruppo(nome){
 /* ELIMINA GRUPPO — toglie solo la cartella: le foto restano nel rullo e tornano
    nell'elenco generale. Non cancella niente dal cloud a parte l'etichetta. */
 async function eliminaGruppo(nome){
-  const ps = S.photos.filter(p=>p.gruppo===nome && p.letter===S.letter);
+  const ps = S.photos.filter(p=>p.gruppo===nome);
   if(!ps.length){ S.gruppo=null; render(); return; }
-  if(!confirm(`Elimino il gruppo "${nome}"?\n\nLe ${ps.length} foto NON si cancellano: restano nel rullo ${S.letter}, tornano solo nell'elenco generale.`)) return;
+  const rulli = [...new Set(ps.map(p=>p.letter))].sort();
+  if(!confirm(`Elimino il gruppo "${nome}"?\n\nLe ${ps.length} foto NON si cancellano: tornano nell'elenco del loro rullo (${rulli.join(", ")}).`)) return;
   try{
     const {error} = await sb.from("foto").update({gruppo:null}).in("id", ps.map(p=>p.id));
     if(error) throw error;
     ps.forEach(p=> p.gruppo = null);
     if(S.gruppo===nome) S.gruppo = null;
-    toast(`Gruppo "${nome}" eliminato · ${ps.length} foto nel rullo ${S.letter}`);
+    toast(`Gruppo "${nome}" eliminato · ${ps.length} foto tornate nei rulli ${rulli.join(", ")}`);
     render();
   }catch(err){
     console.warn("eliminaGruppo", err);
@@ -931,7 +941,13 @@ $("selUngroup").onclick = ()=>{
 $("grpAdd").onclick = ()=>{
   const n = $("grpName").value.trim();
   if(!n){ toast("Scrivi un nome"); return; }
-  assegnaGruppo(n);
+  /* Due fotografi che scrivono a mano lo stesso nome ("Prive" e "prive", o con uno
+     spazio in più) creerebbero DUE cartelle diverse per lo stesso tavolo. Se un gruppo
+     con lo stesso nome esiste già, si usa quello, con la grafia di chi l'ha creato. */
+  const chiave = t=>t.trim().toLowerCase().replace(/\s+/g," ");
+  const esistente = gruppi().find(g=>chiave(g)===chiave(n));
+  if(esistente && esistente!==n) toast(`Uso la cartella già esistente "${esistente}"`);
+  assegnaGruppo(esistente || n);
 };
 $("grpName").addEventListener("keydown", e=>{ if(e.key==="Enter") $("grpAdd").click(); });
 $("grpNone").onclick = ()=> assegnaGruppo(null);
@@ -1335,7 +1351,9 @@ function avviaSpiaOriginali(){
    alzarsi se le foto scelte sono pronte da inviare, invece di scoprirlo al tavolo. */
 function aggiornaSpiaBadge(){
   const el = $("favCount"); if(!el) return;
-  const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
+  // dentro una cartella il conto è quello della cartella, non del rullo
+  const scope = S.gruppo ? S.photos.filter(x=>x.gruppo===S.gruppo)
+              : (S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos);
   const favs = scope.filter(x=>x.fav);
   /* Il tasto Preferiti si accende qui e non solo nel ridisegno: toccando un cuore la
      griglia aggiorna la sola cella, quindi senza questa riga il tasto restava spento. */
@@ -2157,7 +2175,7 @@ async function refresh(manuale){
     // tengo il rullo/gruppo che stavo guardando, se esiste ancora
     const lettereRulli = new Set(Object.values(rmap).map(r=>r.lettera));
     S.letter = (prevLetter && lettereRulli.has(prevLetter)) ? prevLetter : null;
-    S.gruppo = (prevGruppo && S.letter && nuove.some(p=>p.gruppo===prevGruppo && p.letter===S.letter)) ? prevGruppo : null;
+    S.gruppo = (prevGruppo && nuove.some(p=>p.gruppo===prevGruppo)) ? prevGruppo : null;
     // tengo la selezione, scartando le foto sparite
     S.selected = new Set([...S.selected].filter(id=> map.has(id)));
 
