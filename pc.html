@@ -181,6 +181,15 @@
   /* Scelta copie: piccola e vicina al tasto Stampa, in alto a destra. Al centro dello
      schermo era lontanissima dal tasto appena premuto e copriva la foto. */
   #copDlg{max-width:300px;padding:14px;margin:0;position:fixed;right:18px;top:96px;left:auto}
+  /* La lista "Da stampare" si costruisce mentre si scorre la griglia: era una finestra
+     modale, quindi ogni foto aggiunta la chiudeva e bisognava riaprirla. Ora è un
+     pannello a lato, aperto finché non lo si chiude, che si aggiorna da solo. */
+  #pqDlg{margin:0;position:fixed;right:18px;top:96px;left:auto;width:340px;max-width:340px;
+    padding:16px;max-height:calc(100vh - 150px);display:none;flex-direction:column;
+    z-index:26;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+  #pqDlg[open]{display:flex}
+  #pqDlg h3{margin-bottom:8px}
+  #pqDlg #pqList{flex:1}
   #copDlg::backdrop{background:rgba(0,0,0,.35)}
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
   #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw)}
@@ -542,8 +551,8 @@
 </dialog>
 
 <dialog id="pqDlg">
-  <h3 style="margin-bottom:10px">Foto da stampare (dai tablet)</h3>
-  <div id="pqList" style="max-height:60vh;overflow:auto;margin-bottom:14px"></div>
+  <h3 id="pqTitolo" style="margin-bottom:10px">Da stampare</h3>
+  <div id="pqList" style="overflow:auto;margin-bottom:14px"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
     <button id="pqClose">Chiudi</button>
     <button id="pqClear">Svuota lista</button>
@@ -3698,7 +3707,9 @@ function closeLightbox(){
   $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; state.lbFoto=null;
   // il monitor cliente torna allo slideshow: la vendita è finita
   const M=state.monitor;
-  if(M.win && !M.win.closed && M.mode==="present") startSlideshow(); if($("searchBox").value){ resetSearch(); } paintVisible(); }
+  if(M.win && !M.win.closed && M.mode==="present") startSlideshow(); if($("searchBox").value){ resetSearch(); } paintVisible();
+  if(pqDaRiaprire){ pqDaRiaprire=false; apriPq(); }   // il pannello Da stampare torna dov'era
+}
 $("lbMore").onclick = e=>{ e.stopPropagation(); $("lbMenu").hidden = !$("lbMenu").hidden; };
 $("lbMenu").onclick = ()=>{ $("lbMenu").hidden = true; };   // scelta fatta: si richiude
 $("lbTop").onclick = e=>{ if(!e.target.closest("#lbMore,#lbMenu")) $("lbMenu").hidden = true; };
@@ -5431,6 +5442,8 @@ function updatePrintQueueBadge(){
     if(!n) spegniPrintNuova();
     pqUltimoN = n;
   }
+  // pannello aperto: il suo contenuto segue la lista senza doverlo riaprire
+  const d=$("pqDlg"); if(d && d.open && typeof renderPqList==="function") renderPqList();
 }
 function accendiPrintNuova(){
   const t=$("btnPrintQueue"); if(!t) return;
@@ -5479,14 +5492,16 @@ setInterval(async ()=>{
     if(coda || segni){ renderTabs(); paintVisible(); if(typeof refreshLbStatus==="function") refreshLbStatus(); }
   }catch(_){}
 }, 6000);
-$("btnPrintQueue").onclick = ()=>{
-  spegniPrintNuova();
+/* Il contenuto si ridisegna a ogni cambio della lista, mantenendo le spunte tolte a
+   mano: il pannello resta aperto mentre si aggiungono foto, anche da un tablet. */
+function renderPqList(){
+  const box=$("pqList"); if(!box) return;
   const list=printQueuePhotos();
-  const box=$("pqList");
-  if(!list.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna foto in attesa di stampa.</p>'; }
-  else{
-    box.innerHTML = list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
-      <input type="checkbox" class="pqChk" data-code="${p.code}" checked>
+  const escluse = new Set([...box.querySelectorAll(".pqChk:not(:checked)")].map(c=>c.dataset.code));
+  const tit=$("pqTitolo"); if(tit) tit.textContent = list.length ? `Da stampare (${list.length})` : "Da stampare";
+  if(!list.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna foto in attesa di stampa.</p>'; return; }
+  box.innerHTML = list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
+      <input type="checkbox" class="pqChk" data-code="${p.code}" ${escluse.has(p.code)?"":"checked"}>
       <button class="pqOpen" data-i="${i}" title="Apri la foto per guardarla e regolarla"
 style="font-family:var(--mono);font-weight:700">${p.code}</button>
       ${(p.copie||1)>1 ? `<b style="background:var(--danger);color:#fff;border-radius:6px;
@@ -5495,22 +5510,31 @@ style="font-family:var(--mono);font-weight:700">${p.code}</button>
       <div style="flex:1"></div>
       <span style="color:var(--muted)">${p.adj? (p.adj.bw? 'b/n' : 'ritoccata') : ''}</span>
     </div>`).join("");
-  }
-  $("pqDlg").showModal();
-};
+}
+let pqDaRiaprire = false;   // chiuso solo per far spazio a una foto aperta
+function apriPq(){
+  spegniPrintNuova();
+  renderPqList();
+  const d=$("pqDlg");
+  // show() e non showModal(): il resto della pagina resta usabile e la lista cresce
+  // mentre si continua a scegliere le foto nella griglia
+  if(!d.open) d.show();
+}
+$("btnPrintQueue").onclick = ()=>{ const d=$("pqDlg"); if(d.open){ pqDaRiaprire=false; d.close(); } else apriPq(); };
 $("pqList").onclick = e=>{
   const b = e.target.closest(".pqOpen"); if(!b) return;
   const list = printQueuePhotos();
   const i = +b.dataset.i;
   if(!list[i]) return;
-  $("pqDlg").close();                 // il dialogo coprirebbe il visualizzatore
+  pqDaRiaprire = true;                // coprirebbe i comandi del visualizzatore: torna dopo
+  $("pqDlg").close();
   openLightboxList(list, i);          // frecce ‹ › per scorrere solo le foto della lista
 };
-$("pqClose").onclick=()=>$("pqDlg").close();
+$("pqClose").onclick=()=>{ pqDaRiaprire=false; $("pqDlg").close(); };
 $("pqPrintAll").onclick=async ()=>{
   const codes=[...document.querySelectorAll(".pqChk:checked")].map(c=>c.dataset.code);
   const set=state.photos.filter(p=>codes.includes(p.code));
-  $("pqDlg").close();
+  pqDaRiaprire=false; $("pqDlg").close();
   if(set.length) await printPhotos(set, {copieGiaDecise:true});
   // dopo la stampa, togli il flag da_stampare
   for(const p of set){ p.daStampare=false; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
@@ -5519,7 +5543,7 @@ $("pqPrintAll").onclick=async ()=>{
 $("pqClear").onclick=async ()=>{
   const list=printQueuePhotos();
   for(const p of list){ p.daStampare=false; p.copie=1; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"coda"); }
-  updatePrintQueueBadge(); $("pqDlg").close();
+  updatePrintQueueBadge(); pqDaRiaprire=false; $("pqDlg").close();
   toast("Lista da stampare svuotata");
 };
 
