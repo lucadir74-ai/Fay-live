@@ -198,10 +198,12 @@
   /* Il report della giornata è una tabella: nei 460px standard le colonne si accavallavano. */
   /* UNA sola barra di scorrimento: il riquadro interno aveva la sua e il dialogo, cresciuto
      con le sezioni nuove, si era messo a scorrere a sua volta. Ora scorre solo il corpo. */
-  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw);
-    max-height:90vh;overflow:hidden;display:flex;flex-direction:column}
+  /* display:flex va messo SOLO su [open]: scritto sul selettore normale sovrascriveva la
+     regola del browser che nasconde i dialoghi chiusi, e la finestra restava a schermo
+     dopo il tasto Chiudi come se non funzionasse. */
+  #statsDlg{max-width:min(1150px,95vw);width:min(1150px,95vw);max-height:90vh;overflow:hidden}
+  #statsDlg[open]{display:flex;flex-direction:column}
   #statsDlg #statsBody{flex:1;min-height:0;overflow:auto}
-  #statsDlg #statsBody{max-height:76vh}
   #statsDlg table{width:100%}
   dialog::backdrop{background:rgba(6,8,12,.7)}
   /* pointer-events:none è ESSENZIALE: il toast resta nel DOM anche da invisibile (opacity 0)
