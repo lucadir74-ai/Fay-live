@@ -28,9 +28,15 @@ export default async function handler(req, res) {
   const key = (process.env.FILEMAIL_API_KEY || "").trim();
   if (!key) return res.status(500).json({ errore: "FILEMAIL_API_KEY non configurata su Vercel" });
 
+  /* PIU' DESTINATARI: lo stesso trasferimento puo' andare a piu' indirizzi (coppia che
+     vuole le foto su due caselle, tavolo che le divide). Il tablet manda una stringa
+     con gli indirizzi separati da spazio o virgola; si accetta anche un array. */
   const { email, oggetto, messaggio } = req.body || {};
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-    return res.status(400).json({ errore: "Email non valida" });
+  const grezzi = Array.isArray(email) ? email : String(email || "").split(/[\s,;]+/);
+  const destinatari = [...new Set(grezzi.map(e => String(e || "").trim().toLowerCase()).filter(Boolean))];
+  const nonValidi = destinatari.filter(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+  if (!destinatari.length || nonValidi.length)
+    return res.status(400).json({ errore: "Email non valida" + (nonValidi.length ? ": " + nonValidi.join(", ") : "") });
 
   const intestazioni = { "X-API-Key": key, "Content-Type": "application/json" };
   const conChiave = (url) => url + (url.includes("?") ? "&" : "?") + "apikey=" + encodeURIComponent(key);
@@ -66,7 +72,7 @@ export default async function handler(req, res) {
         method: "POST", headers: intestazioni,
         body: JSON.stringify({
           logintoken: logintoken || undefined,
-          to: [email], from: mittente || undefined, subject: sub, message: msg,
+          to: destinatari, from: mittente || undefined, subject: sub, message: msg,
           days: giorni, confirmation: false, notify: false, sourcedetails: "Fay Live"
         })
       });
@@ -78,7 +84,7 @@ export default async function handler(req, res) {
 
     async function initClassica() {
       const corpo = new URLSearchParams({
-        apikey: key, to: email, subject: sub, message: msg,
+        apikey: key, to: destinatari.join(","), subject: sub, message: msg,
         days: String(giorni), confirmation: "false", notify: "false"
       });
       if (mittente) corpo.set("from", mittente);
