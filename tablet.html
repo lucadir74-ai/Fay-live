@@ -628,6 +628,7 @@ function subscribe(){
            credere che la foto non fosse sul cloud. E' la via piu' rapida per saperlo. */
         if(f.originale_url) p.origPath = f.originale_url;
         aggiornaSpiaBadge();
+        aggiornaClessidre();
         render();
       }
     })
@@ -693,10 +694,19 @@ function render(){
   if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; lastGrid=""; return; }
   // se la griglia è identica a quella già disegnata, non la rifaccio: il controllo automatico
   // ogni 25 secondi ricostruiva tutto e faceva ridisegnare le anteprime da capo
+  /* PERCHE' LA GRIGLIA TORNAVA IN CIMA MENTRE SI SCORREVA.
+     La clessidra faceva parte della firma: ogni volta che PC1 finiva di caricare un
+     originale arrivava la notifica, la firma cambiava e la griglia veniva RICOSTRUITA
+     da zero — e ricostruire #grid, che e' il contenitore che scorre, riporta lo
+     scorrimento a zero. Durante l'invio degli originali succedeva decine di volte.
+     Ora la clessidra si toglie dalla singola cella, senza rifare niente. */
   const firma = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0")+"|"+
-                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")+(haOriginale(p)?"o":"-")).join(",");
-  if(firma===lastGrid && g.childElementCount){ updateSelBar(); return; }
+                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")).join(",");
+  if(firma===lastGrid && g.childElementCount){ aggiornaClessidre(); updateSelBar(); return; }
   lastGrid = firma;
+  // e quando la ricostruzione serve davvero (foto nuove, cambio rullo), il punto in cui
+  // si stava guardando viene rimesso dov'era invece di ripartire dall'alto
+  const scrollPrima = g.scrollTop;
   resetLazy();
   g.innerHTML = list.map((p,i)=>`
     <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
@@ -741,7 +751,26 @@ function render(){
     // la foto si scarica solo quando la cella sta per entrare in vista
     observeCell(c);
   });
+  if(scrollPrima){
+    g.scrollTop = scrollPrima;
+    requestAnimationFrame(()=>{ g.scrollTop = scrollPrima; });
+  }
   updateSelBar();
+}
+
+/* Toglie o rimette la clessidra sulle celle gia' disegnate, senza ricostruire la griglia. */
+function aggiornaClessidre(){
+  const g = $("grid"); if(!g) return;
+  g.querySelectorAll(".cell").forEach(c=>{
+    const p = S.byId.get(c.dataset.id); if(!p) return;
+    const segno = c.querySelector(".orig");
+    if(haOriginale(p)){ if(segno) segno.remove(); }
+    else if(!segno){
+      const sp = document.createElement("span");
+      sp.className = "orig"; sp.textContent = "⏳";
+      c.appendChild(sp);
+    }
+  });
 }
 
 function toggleSelect(p, cell){
@@ -1299,6 +1328,7 @@ function avviaSpiaOriginali(){
       });
     }catch(_){}
     aggiornaSpiaBadge();
+    aggiornaClessidre();
   }, 8000);
 }
 /* Indicatore sempre visibile accanto al contatore preferiti: il venditore sa PRIMA di
