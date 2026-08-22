@@ -190,8 +190,12 @@
   /* pointer-events:none è ESSENZIALE: il toast resta nel DOM anche da invisibile (opacity 0)
      e, stando a z-index 50 sopra la barra "vista insieme", si prendeva i click al posto dei
      pulsanti sotto — "Mostra sul monitor" sembrava rotto ma era solo coperto. */
-  .toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;z-index:50;opacity:0;pointer-events:none;transition:opacity .25s}
-  .toast.show{opacity:1}
+  /* I messaggi stavano in alto al centro, sopra le schede rullo e i contatori: proprio le
+     informazioni che servono mentre si lavora. Spostati in basso a destra, appoggiati alla
+     barra di stato — lato destro per non finire sopra il pannello regolazioni della foto
+     aperta, che sta in basso a sinistra. Spariscono comunque da soli. */
+  .toast{position:fixed;right:16px;bottom:38px;left:auto;max-width:46vw;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 16px;z-index:50;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;transform:translateY(6px);display:flex;align-items:center;gap:10px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  .toast.show{opacity:1;transform:translateY(0)}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
   /* ---------- schermata sedi ---------- */
