@@ -3492,6 +3492,11 @@ async function doPrint(set){
     if(eranoDaStampare.length) updatePrintQueueBadge();
     renderTabs(); paintVisible(); refreshLbStatus();
     set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
+    /* STAMPE DI OGGI SU FOTO DI IERI. Il contatore della foto dice quante volte è stata
+       stampata in assoluto, non QUANDO: una ristampa fatta stasera finiva nel report della
+       serata in cui la foto era stata scattata. Qui si lascia traccia della stampa con il
+       giorno vero, così ogni report può separare le proprie stampe da quelle fatte altrove. */
+    registraStampaDelGiorno(set, copieDi);
 
     if(low) toast(`⚠ ${low} foto stampate in bassa qualità: originale non disponibile`);
     else toast(set.length===1
@@ -4599,6 +4604,83 @@ $("giornoSelect").onchange = e=>{
 /* ---------- svuota giornata (solo cloud) ---------- */
 
 /* ---------- report della giornata ---------- */
+/* Una riga per rullo sulla tabella "attivita", con il giorno di servizio REALE (quello in
+   cui si è premuto Stampa) nel campo dettaglio. Il servizio_id resta quello delle foto:
+   così il report di quella giornata sa quali stampe non gli appartengono, e il report di
+   oggi sa quali stampe deve prendersi. */
+function registraStampaDelGiorno(set, copieDi){
+  try{
+    if(!sb || !cloud.servizio) return;
+    const oggi = serviceDateStr();
+    const perRullo = {};
+    set.forEach(p=>{
+      const L = p.letter || "?";
+      perRullo[L] = perRullo[L] || {fogli:0, codici:[]};
+      perRullo[L].fogli += (copieDi && copieDi.get) ? (copieDi.get(p)||1) : Math.max(1, p.copie||1);
+      perRullo[L].codici.push(p.code);
+    });
+    Object.keys(perRullo).forEach(L=>{
+      sb.from("attivita").insert({
+        servizio_id: cloud.servizio.id,
+        rullo_lettera: L,
+        codici: perRullo[L].codici.join(", "),
+        azione: "~stampa",
+        quante: perRullo[L].fogli,
+        postazione: nomePostazione(),
+        esito: "ok",
+        dettaglio: "giorno=" + oggi
+      }).then(()=>{}, ()=>{});
+    });
+  }catch(_){}
+}
+/* Legge le stampe registrate e le divide in due gruppi:
+   - fuori: fogli di QUESTA giornata stampati in un altro giorno (per rullo)
+   - dentro: fogli stampati NEL giorno di questa giornata ma su foto di altre giornate */
+async function leggiStampeIncrociate(){
+  const vuoto = {fuori:{}, dentro:[], totFuori:0, totDentro:0};
+  if(!sb || !cloud.servizio) return vuoto;
+  const giornoQui = cloud.servizio.data_servizio;
+  const giornoDi = r => {
+    const m = /giorno=(\d{4}-\d{2}-\d{2})/.exec(r.dettaglio||"");
+    return m ? m[1] : null;
+  };
+  try{
+    // stampe delle foto di questa giornata, ovunque siano state fatte
+    const {data:mie} = await sb.from("attivita")
+      .select("rullo_lettera,quante,dettaglio")
+      .eq("servizio_id", cloud.servizio.id).eq("azione","~stampa");
+    (mie||[]).forEach(r=>{
+      const g = giornoDi(r);
+      if(!g || g === giornoQui) return;                 // stampata nella sua giornata: normale
+      const L = r.rullo_lettera || "?";
+      vuoto.fuori[L] = (vuoto.fuori[L]||0) + (r.quante||0);
+      vuoto.totFuori += (r.quante||0);
+    });
+
+    // stampe fatte NEL giorno di questa giornata su foto di ALTRE giornate della stessa sede
+    if(cloud.sede){
+      const {data:servizi} = await sb.from("servizi")
+        .select("id,data_servizio").eq("sede_id", cloud.sede.id);
+      const altri = (servizi||[]).filter(x=>String(x.id)!==String(cloud.servizio.id));
+      if(altri.length){
+        const mappa = new Map(altri.map(x=>[String(x.id), x.data_servizio]));
+        const {data:loro} = await sb.from("attivita")
+          .select("servizio_id,rullo_lettera,quante,dettaglio")
+          .in("servizio_id", altri.map(x=>x.id)).eq("azione","~stampa");
+        const perGiornata = {};
+        (loro||[]).forEach(r=>{
+          if(giornoDi(r) !== giornoQui) return;          // non stampata oggi: non ci riguarda
+          const d = mappa.get(String(r.servizio_id)) || "altra giornata";
+          perGiornata[d] = (perGiornata[d]||0) + (r.quante||0);
+          vuoto.totDentro += (r.quante||0);
+        });
+        vuoto.dentro = Object.keys(perGiornata).sort().map(d=>({giorno:d, fogli:perGiornata[d]}));
+      }
+    }
+  }catch(err){ console.warn("stampe incrociate", err); }
+  return vuoto;
+}
+
 const PESO_ORIG = 2 * 1024 * 1024;      // ~2 MB per originale
 const PESO_ANTE = 110 * 1024;           // anteprima 1280
 const PESO_MINI = 25 * 1024;            // miniatura griglia
@@ -4675,6 +4757,7 @@ function datiReport(){
      uscito dalla stampante). I file venduti si sommano dopo: non hanno scarti e non si
      regalano, perché li si scrive a mano proprio quando la vendita c'è stata. */
   for(const L of Object.keys(righe)){
+    righe[L].fuori = (state.stampeFuori && state.stampeFuori[L]) || 0;
     const st = state.rulloStats[L] || {};
     righe[L].omaggi = st.omaggi || 0;
     righe[L].scarti = st.scarti || 0;
@@ -4682,8 +4765,12 @@ function datiReport(){
   }
   return righe;
 }
-/* Formula unica, usata in tabella, nei totali e nel CSV. */
-function venduteRullo(r){ return Math.max(0, (r.stampe||0) - (r.omaggi||0) - (r.scarti||0)) + (r.file||0); }
+/* Formula unica, usata in tabella, nei totali e nel CSV.
+   ATTENZIONE: "stampe" qui sono le stampe DI QUESTA GIORNATA. Le ristampe fatte in un
+   altro giorno vengono tolte (stanno nella colonna "Altri giorni") e contano nel report
+   del giorno in cui sono uscite dalla stampante, non in questo. */
+function stampeGiornata(r){ return Math.max(0, (r.stampe||0) - (r.fuori||0)); }
+function venduteRullo(r){ return Math.max(0, stampeGiornata(r) - (r.omaggi||0) - (r.scarti||0)) + (r.file||0); }
 
 // salva sul cloud il valore digitato, così lo vedono anche le altre postazioni
 async function salvaStat(L, campo, valore){
@@ -4694,7 +4781,9 @@ async function salvaStat(L, campo, valore){
   }
 }
 
-function apriStats(){
+async function apriStats(){
+  const incrociate = await leggiStampeIncrociate();
+  state.stampeFuori = incrociate.fuori;
   const righe = datiReport();
   const L = Object.keys(righe).sort();
   const tot = {foto:0, stampe:0, omaggi:0, scarti:0, file:0};
@@ -4710,14 +4799,17 @@ function apriStats(){
   let h = `<table style="width:100%;border-collapse:collapse;font-size:13px">
     <tr style="color:var(--muted)">
       <th style="text-align:left;padding:6px 10px">Rullo</th>
-      <th ${th}>Foto</th><th ${th}>Stampe</th><th ${th}>Omaggi</th>
+      <th ${th}>Foto</th><th ${th}>Stampe</th>
+      <th ${th} title="Fogli di questo rullo usciti in un altro giorno: contano nel report di quel giorno">Altri giorni</th>
+      <th ${th}>Omaggi</th>
       <th ${th}>Scarti</th><th ${th}>Nulle</th><th ${th}>File</th><th ${th}>Vendute</th>
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
     h += `<tr>
       <td style="padding:6px 10px;border-top:1px solid var(--line);font-weight:700">${k}</td>
-      <td ${td}>${r.foto}</td><td ${td}>${r.stampe}</td>
+      <td ${td}>${r.foto}</td><td ${td}>${stampeGiornata(r)}</td>
+      <td ${td} style="text-align:right;padding:6px 10px;border-top:1px solid var(--line);color:var(--muted)">${r.fuori? r.fuori : "—"}</td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="omaggi" value="${r.omaggi}"></td>
       <td ${td}><input type="number" min="0" ${inp} data-l="${k}" data-c="scarti" value="${r.scarti}"></td>
       <td ${td} data-n="${k}">${(r.omaggi||0)+(r.scarti||0)}</td>
@@ -4726,7 +4818,8 @@ function apriStats(){
   });
   h += `<tr style="background:rgba(255,255,255,.04);font-weight:800">
       <td style="padding:8px 10px;border-top:2px solid var(--line)">TOTALE</td>
-      <td ${td}>${tot.foto}</td><td ${td} id="stTotStampe">${tot.stampe}</td>
+      <td ${td}>${tot.foto}</td><td ${td} id="stTotStampe">${L.reduce((a,k)=>a+stampeGiornata(righe[k]),0)}</td>
+      <td ${td} style="color:var(--muted)">${incrociate.totFuori || "—"}</td>
       <td ${td} id="stTotOm">${tot.omaggi}</td><td ${td} id="stTotSc">${tot.scarti}</td>
       <td ${td} id="stTotNulle">${tot.omaggi+tot.scarti}</td>
       <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
@@ -4737,6 +4830,18 @@ function apriStats(){
       <b>stampe</b>; i <b>file</b> venduti senza stampa si sommano dopo:
       vendute = stampe − omaggi − scarti + file.
       Restano salvati sulla giornata e li vedono tutte le postazioni.</p>`;
+
+  /* Il rovescio della medaglia: quello che è uscito dalla stampante IN QUESTA serata ma
+     appartiene alle foto di altre giornate. Sta qui perché è lavoro di questa serata. */
+  if(incrociate.totDentro){
+    h += `<h4 style="margin:18px 0 8px">Stampe di questa serata su foto di altre giornate</h4>
+      <div style="font-size:13px;line-height:1.9">` +
+      incrociate.dentro.map(x=>`<div>${x.giorno}: <b>${x.fogli}</b> fogli</div>`).join("") +
+      `<div style="margin-top:6px">Totale fogli in più stampati stasera: <b>${incrociate.totDentro}</b></div>
+       <div style="color:var(--muted);font-size:12px">Non entrano nella tabella qui sopra, che riguarda i rulli
+       di questa giornata: nel report di quelle giornate compaiono nella colonna "Altri giorni".</div>
+      </div>`;
+  }
 
   // --- spazio sul cloud: STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
   const stimaGiorno = state.photos.length * (PESO_ORIG + PESO_ANTE + PESO_MINI);
@@ -4810,22 +4915,24 @@ function aggiornaVendute(){
     if(n) n.textContent = (r.omaggi||0)+(r.scarti||0);
   });
   const set=(id,v)=>{ const e=$(id); if(e) e.textContent=v; };
+  set("stTotStampe", Object.keys(righe).reduce((a,k)=>a+stampeGiornata(righe[k]),0));
   set("stTotOm", tO); set("stTotSc", tSc); set("stTotNulle", tO+tSc);
   set("stTotFile", tF); set("stTotVen", tV);
 }
-$("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; apriStats(); };
+$("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; toast("Preparo il report…"); apriStats(); };
 $("statsClose").onclick = ()=> $("statsDlg").close();
 $("statsCsv").onclick = ()=>{
   const righe = datiReport();
   const L = Object.keys(righe).sort();
-  let csv = "Rullo;Foto;Stampe;Omaggi;Scarti;File;Vendute\n";
+  let csv = "Rullo;Foto;Stampe;Altri giorni;Omaggi;Scarti;File;Vendute\n";
   L.forEach(k=>{ const r=righe[k];
-    csv += [k, r.foto, r.stampe, r.omaggi, r.scarti, r.file, venduteRullo(r)].join(";")+"\n";
+    csv += [k, r.foto, stampeGiornata(r), r.fuori||0, r.omaggi, r.scarti, r.file, venduteRullo(r)].join(";")+"\n";
   });
   { const t = L.reduce((a,k)=>{ const r=righe[k];
-      a.foto+=r.foto; a.stampe+=r.stampe; a.omaggi+=r.omaggi; a.scarti+=r.scarti; a.file+=r.file; a.vendute+=venduteRullo(r); return a;
-    }, {foto:0,stampe:0,omaggi:0,scarti:0,file:0,vendute:0});
-    csv += ["TOTALE", t.foto, t.stampe, t.omaggi, t.scarti, t.file, t.vendute].join(";")+"\n"; }
+      a.foto+=r.foto; a.stampe+=stampeGiornata(r); a.fuori+=(r.fuori||0);
+      a.omaggi+=r.omaggi; a.scarti+=r.scarti; a.file+=r.file; a.vendute+=venduteRullo(r); return a;
+    }, {foto:0,stampe:0,fuori:0,omaggi:0,scarti:0,file:0,vendute:0});
+    csv += ["TOTALE", t.foto, t.stampe, t.fuori, t.omaggi, t.scarti, t.file, t.vendute].join(";")+"\n"; }
   const nome = "report_"+((cloud.sede?cloud.sede.nome:"faylive").replace(/\W+/g,"_"))+
                "_"+(cloud.servizio? cloud.servizio.data_servizio : "oggi")+".csv";
   const a=document.createElement("a");
