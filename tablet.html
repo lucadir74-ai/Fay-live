@@ -1274,7 +1274,17 @@ function aggiornaSpiaBadge(){
   const el = $("favCount"); if(!el) return;
   const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
   const favs = scope.filter(x=>x.fav);
-  if(!favs.length){ el.textContent=""; return; }
+  /* Senza preferiti si mostra comunque quanti originali sono gia' sul cloud nel rullo:
+     serve a sapere cosa e' inviabile SUBITO senza dover prima mettere i cuori (e senza
+     dover indovinare se PC1 ha gia' caricato quella giornata). */
+  if(!favs.length){
+    if(!scope.length){ el.textContent=""; return; }
+    const pronte = scope.filter(p=>haOriginale(p)).length;
+    el.textContent = pronte>=scope.length
+      ? `originali ${scope.length}/${scope.length} ✓`
+      : `originali ${pronte}/${scope.length}`;
+    return;
+  }
   const pronte = favs.filter(p=>haOriginale(p)).length;
   const base = `♥ ${favs.length} preferiti${S.letter? " ("+S.letter+")":""}`;
   el.textContent = pronte>=favs.length ? base+" · pronte ✓" : base+` · pronte ${pronte}/${favs.length}`;
