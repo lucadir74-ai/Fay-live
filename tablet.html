@@ -33,6 +33,26 @@
   .favtoggle.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* riga dei tasti principali, sopra la griglia */
+  #azioni{display:flex;gap:10px;padding:10px 14px;background:var(--surface);
+    border-bottom:1px solid var(--line);flex-shrink:0}
+  .bigact{flex:1;display:flex;align-items:center;justify-content:center;gap:10px;
+    border-radius:14px;padding:14px 10px;font-size:18px;font-weight:700;min-height:58px;
+    font-family:inherit;cursor:pointer;border:2px solid transparent;color:#fff;
+    background:var(--surface2);transition:background .12s,border-color .12s,opacity .12s}
+  .bigact span:first-child{font-size:22px}
+  .bigact:active{filter:brightness(1.25)}
+  .bigact:disabled{opacity:.5}
+  .act-send{background:#1f5fa8;border-color:#2f7fd6}
+  .act-print{background:#2f7d4f;border-color:#43a76c}
+  /* Preferiti: SPENTO finché non c'è almeno un cuore, acceso appena ce n'è uno,
+     pieno quando si sta guardando la vista preferiti. */
+  .act-fav{background:var(--surface2);border-color:var(--line);color:var(--muted);opacity:.55}
+  .act-fav.has{color:var(--fav);border-color:var(--fav);opacity:1}
+  .act-fav.on{background:var(--fav);border-color:var(--fav);color:#fff;opacity:1}
+  .bigact.busy{opacity:.7}
+  .bigact.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
+
   /* schede rullo grandi, scorrevoli */
   nav{display:flex;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line);
     overflow-x:auto;flex-shrink:0;scrollbar-width:none}
@@ -238,16 +258,22 @@
     <select id="giornoSel" hidden></select>
     <div class="spacer"></div>
     <button class="favtoggle" id="btnRefresh"><span>⟳</span><span>Aggiorna</span></button>
-    <button class="favtoggle" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
-    <button class="favtoggle" id="btnSend"><span>✈</span><span>Invia</span></button>
-    <button class="favtoggle" id="btnPrint"><span>🖨</span><span>Manda in stampa</span></button>
     <button class="favtoggle" id="btnInvii"><span>📋</span><span>Registro</span></button>
     <button class="favtoggle" id="btnFavClear"><span>✕</span><span>Pulisci preferiti</span></button>
   </header>
 
   <nav id="tabs" hidden></nav>
+
+  <!-- I tre tasti che si usano davvero durante la vendita: vicini tra loro, grandi e
+       a colpo d'occhio distinguibili, subito sopra le foto invece che persi in alto
+       tra i tasti di servizio. -->
+  <div id="azioni">
+    <button class="bigact act-fav" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
+    <button class="bigact act-send" id="btnSend"><span>✉</span><span>Invia</span></button>
+    <button class="bigact act-print" id="btnPrint"><span>🖨</span><span>Manda in stampa</span></button>
+  </div>
 
   <!-- il cliente scrive QUI la propria email, sul tablet che ha già in mano -->
   <div id="mailOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:120;align-items:center;justify-content:center;padding:24px">
@@ -283,7 +309,7 @@
       <span id="vCode"></span>
       <button class="vAct" id="vShare">↗ Condividi</button>
       <button class="vAct" id="vExport">⬇ Esporta</button>
-      <button class="vAct" id="vSend">✈ Invia</button>
+      <button class="vAct" id="vSend">✉ Invia</button>
       <button class="vAct" id="vPrint">🖨 Stampa</button>
       <button id="vClose">✕</button>
     </div>
@@ -375,7 +401,7 @@
     <button class="sb" id="selAll">Tutte</button>
     <button class="sb" id="selNone">Nessuna</button>
     <button class="sb" id="selPrint">🖨 Manda in stampa</button>
-    <button class="sb" id="selSend">✈ Invia</button>
+    <button class="sb" id="selSend">✉ Invia</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
     <button class="sb" id="selFile">📄 Solo file</button>
@@ -654,7 +680,9 @@ function render(){
   aggiornaSpiaBadge();
   $("favOnly").classList.toggle("on", S.favOnly);
   // dentro la vista preferiti il tasto dice come uscirne
-  $("favOnly").lastElementChild.textContent = S.favOnly ? "Chiudi preferiti" : "Preferiti";
+  const nFav = (S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos).filter(x=>x.fav).length;
+  $("favOnly").lastElementChild.textContent = S.favOnly ? "Chiudi preferiti"
+                                            : (nFav ? "Preferiti (" + nFav + ")" : "Preferiti");
   $("favOnly").querySelector(".heart").textContent = S.favOnly ? "♥" : "♡";
   aggiornaIndicatoreAnteprime();
 
@@ -1279,6 +1307,13 @@ function aggiornaSpiaBadge(){
   const el = $("favCount"); if(!el) return;
   const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
   const favs = scope.filter(x=>x.fav);
+  /* Il tasto Preferiti si accende qui e non solo nel ridisegno: toccando un cuore la
+     griglia aggiorna la sola cella, quindi senza questa riga il tasto restava spento. */
+  const fo = $("favOnly");
+  if(fo){
+    fo.classList.toggle("has", favs.length>0);
+    if(!S.favOnly) fo.lastElementChild.textContent = favs.length ? "Preferiti (" + favs.length + ")" : "Preferiti";
+  }
   /* Senza preferiti si mostra comunque quanti originali sono gia' sul cloud nel rullo:
      serve a sapere cosa e' inviabile SUBITO senza dover prima mettere i cuori (e senza
      dover indovinare se PC1 ha gia' caricato quella giornata). */
