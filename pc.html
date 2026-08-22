@@ -485,6 +485,7 @@
     <span>Foto: <b id="stTotal">0</b></span>
     <span>Archivio: <b id="stArch" style="cursor:pointer" title="Clicca per vedere dove vengono salvate le foto">non impostato</b></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
+    <span>Originali cloud: <b id="stOrigCloud" title="Quante foto del rullo attivo hanno l'originale a piena risoluzione sul cloud">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
     <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
     <b id="stThumbs" hidden></b>
@@ -2491,6 +2492,7 @@ function updateOrigCount(){
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
   $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
+  updateOrigCloud();
   if(urg) setSync("syncing","Carico originali ("+urg+")");
   else if(bg) setSync(autoOrigOn()?"syncing":null, autoOrigOn()? "Sottofondo ("+bg+")" : "Sincronizzato");
   else if(cloud.online) setSync("online");
@@ -5119,6 +5121,45 @@ function updateThumbCloud(){
                      + (bloccoGrandi ? ` (${bloccoGrandi} in attesa dall'altra postazione)` : "") : "");
   el.style.color = onCloud<tot ? "var(--danger)" : "var(--ok)";
   el.title = spiegaAnteprimeMancanti(onCloud, tot);
+  updateOrigCloud();
+}
+
+/* Quanti originali a piena risoluzione ci sono sul cloud, per il RULLO ATTIVO.
+   E' l'equivalente della clessidra del tablet, che sul PC non c'era: serve soprattutto
+   sulle giornate passate, dove gli originali sul cloud durano pochi giorni mentre le
+   anteprime restano per mesi. Senza questo dato l'operatore scopriva che l'originale
+   non c'era solo al momento della stampa o dell'invio. */
+function updateOrigCloud(){
+  const el = $("stOrigCloud"); if(!el) return;
+  const L = state.activeLetter;
+  const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+  const tot = scope.length;
+  if(!cloud.servizio || !tot){ el.textContent = "—"; el.style.color = ""; return; }
+  const suCloud = scope.filter(p=>p.origUploaded || p.origReadyCloud).length;
+  const inLocale = scope.filter(p=>p.file || p.arch).length;
+  // pronte davvero = originale sul cloud OPPURE su questo disco
+  const pronte = scope.filter(p=>p.origUploaded || p.origReadyCloud || p.file || p.arch).length;
+
+  el.textContent = suCloud + "/" + tot + (suCloud < tot ? " ⏳" : " ✓")
+                 + (suCloud < tot && inLocale ? "  ·  su questo PC: " + inLocale + "/" + tot : "");
+  el.style.color = pronte >= tot ? "var(--ok)" : (pronte ? "var(--danger)" : "var(--muted)");
+
+  const dove = L ? ("rullo " + L) : "tutta la giornata";
+  let nota;
+  if(suCloud >= tot){
+    nota = "Tutti gli originali sono sul cloud: stampa e invio funzionano da qualsiasi postazione.";
+  } else if(pronte >= tot){
+    nota = "Gli originali mancanti sul cloud ci sono su QUESTO PC: da qui stampi e invii senza problemi, "
+         + "dalle altre postazioni devono essere caricati (partono su richiesta).";
+  } else {
+    nota = (tot - pronte) + " foto non hanno l'originale né sul cloud né su questo PC.\n"
+         + "Se la giornata è vecchia, sul cloud gli originali non ci sono più (restano solo le anteprime): "
+         + "prendili dalla cartella dell'archivio e allegali a mano.\n"
+         + "Se la giornata è di oggi, li ha la postazione che ha importato quel rullo: "
+         + "controlla che sia accesa, sulla stessa sede/giornata e con Altro → Ricollega originali fatto.";
+  }
+  el.title = "Originali a piena risoluzione — " + dove + ": " + suCloud + " di " + tot + " sul cloud"
+           + (inLocale ? ", " + inLocale + " su questo PC" : "") + ".\n\n" + nota;
 }
 
 /* Testo del suggerimento: quando l'indicatore è rosso dice QUALI rulli sono indietro e
@@ -5174,7 +5215,11 @@ function addRemotePhotoFast(f, letter){
             srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, copie:f.copie||1,
-            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true,
+            /* Serve all'indicatore "Originali cloud": quando si apre una giornata passata
+               questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
+               La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
+            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -5184,7 +5229,11 @@ async function addRemotePhoto(f, letter){
             srvId: cloud.servizio? cloud.servizio.id : null,
             file:null, thumb:null, ts:f.scattata_il? new Date(f.scattata_il).getTime():Date.now(),
             prints:f.stampe||0, exported:!!f.esportata, daStampare:!!f.da_stampare, copie:f.copie||1,
-            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true };
+            miniUrl:f.mini_url||null, anteprimaUrl:f.anteprima_url, remote:true,
+            /* Serve all'indicatore "Originali cloud": quando si apre una giornata passata
+               questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
+               La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
+            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
   if(blob){ p.preview=blob; }                                  // la grande era già in cache
