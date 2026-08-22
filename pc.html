@@ -5277,17 +5277,31 @@ function updateOrigCloud(){
   // pronte davvero = originale sul cloud OPPURE su questo disco
   const pronte = scope.filter(p=>p.origUploaded || p.origReadyCloud || p.file || p.arch).length;
 
-  el.textContent = suCloud + "/" + tot + (suCloud < tot ? " ⏳" : " ✓")
+  /* La sigla del rullo va scritta: ogni postazione guarda un rullo diverso, e senza
+     la lettera due PC affiancati sembrano dare numeri in contrasto sulla stessa cosa. */
+  /* CARICAMENTO SU RICHIESTA = SCELTA, NON GUASTO.
+     Con l'automatico spento è NORMALE che sul cloud ci siano pochi originali: salgono
+     quando un tablet o un altro PC li chiede. L'indicatore quindi non deve allarmare —
+     niente rosso, niente clessidra — ma dire com'è messa la postazione. Resta rosso solo
+     per le foto che non ha nessuno: quelle sì che sono un problema. */
+  const suRichiesta = !autoOrigOn();
+  const orfane = tot - pronte;                       // né sul cloud né su questo PC
+  el.textContent = (L ? L + ": " : "giornata: ") + suCloud + "/" + tot
+                 + (suCloud >= tot ? " ✓" : (suRichiesta ? " · su richiesta" : " ⏳"))
                  + (suCloud < tot && inLocale ? "  ·  su questo PC: " + inLocale + "/" + tot : "");
-  el.style.color = pronte >= tot ? "var(--ok)" : (pronte ? "var(--danger)" : "var(--muted)");
+  el.style.color = orfane ? "var(--danger)" : (suCloud >= tot ? "var(--ok)" : (suRichiesta ? "" : "var(--accent)"));
 
   const dove = L ? ("rullo " + L) : "tutta la giornata";
   let nota;
   if(suCloud >= tot){
     nota = "Tutti gli originali sono sul cloud: stampa e invio funzionano da qualsiasi postazione.";
   } else if(pronte >= tot){
-    nota = "Gli originali mancanti sul cloud ci sono su QUESTO PC: da qui stampi e invii senza problemi, "
-         + "dalle altre postazioni devono essere caricati (partono su richiesta).";
+    nota = suRichiesta
+      ? "Normale: il caricamento automatico è spento, gli originali salgono sul cloud solo quando "
+        + "un tablet o un'altra postazione li chiede. Qui ci sono tutti su disco, quindi da questo PC "
+        + "stampi e invii senza aspettare."
+      : "Gli originali mancanti sul cloud ci sono su QUESTO PC: da qui stampi e invii senza problemi, "
+        + "dalle altre postazioni devono essere caricati (partono su richiesta).";
   } else {
     nota = (tot - pronte) + " foto non hanno l'originale né sul cloud né su questo PC.\n"
          + "Se la giornata è vecchia, sul cloud gli originali non ci sono più (restano solo le anteprime): "
@@ -5296,7 +5310,8 @@ function updateOrigCloud(){
          + "controlla che sia accesa, sulla stessa sede/giornata e con Altro → Ricollega originali fatto.";
   }
   el.title = "Originali a piena risoluzione — " + dove + ": " + suCloud + " di " + tot + " sul cloud"
-           + (inLocale ? ", " + inLocale + " su questo PC" : "") + ".\n\n" + nota;
+           + (inLocale ? ", " + inLocale + " su questo PC" : "")
+           + (suRichiesta ? " · caricamento su richiesta" : "") + ".\n\n" + nota;
 }
 
 /* Testo del suggerimento: quando l'indicatore è rosso dice QUALI rulli sono indietro e
