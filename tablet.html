@@ -1487,6 +1487,22 @@ function chiediEmail(quante){
   });
 }
 
+/* Messaggio di attesa: fra la conferma dell'email e la partenza vera passa qualche
+   secondo (originali da controllare, indirizzi firmati da chiedere). Senza niente a
+   schermo sembra che il tocco non abbia fatto effetto e si tocca due volte. */
+function mostraAttesa(testo){
+  const ov=$("mailOverlay");
+  $("mailTitolo").textContent="Un momento…";
+  $("mailSotto").style.whiteSpace="pre-line";
+  $("mailSotto").textContent=testo;
+  $("mailInput").style.display="none";
+  $("mailErrore").textContent="";
+  $("mailCopia").hidden=true;
+  $("mailAnnulla").style.display="none";
+  $("mailOk").style.display="none";
+  ov.style.display="flex";
+}
+
 /* Avanzamento a schermo durante l'invio: con 60 foto l'attesa è lunga e senza un numero
    che sale sembra bloccato. Riusa la stessa finestra dell'email, senza tasti. */
 function mostraAvanzamento(fatte, totali){
@@ -1670,7 +1686,7 @@ async function inviaConFilemail(list, ctx, opz){
   const email = (opz && opz.emailGia) || await chiediEmail(list.length);
   if(!email) return;
 
-  toast("Preparo gli originali…");
+  mostraAttesa("Controllo che le foto siano pronte…");
   await ensureOriginals(list);
 
   /* Controllo finale: tra la fine dell'attesa e l'invio possono essere arrivati altri
@@ -1687,17 +1703,35 @@ async function inviaConFilemail(list, ctx, opz){
     }
   }catch(_){}
 
+  /* Gli indirizzi firmati si chiedono TUTTI IN UNA VOLTA: prima era una richiesta per
+     foto, in fila — con 45 foto erano 45 viaggi sull'hotspot prima ancora di iniziare,
+     ed e' quella l'attesa muta che si vedeva dopo aver confermato l'email. */
+  mostraAttesa("Preparo le foto da inviare…");
   const files=[], mancanti=[];
-  for(const pRaw of list){
-    const p = vivo(pRaw);
-    if(!p.origPath){ mancanti.push(p.code); continue; }
-    try{
-      /* 1 ora invece di 15 minuti: con 60 foto l'invio dura parecchio e gli indirizzi
-         firmati per primi rischiavano di scadere prima di essere usati. */
-      const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 3600);
-      if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
-      files.push({nome:p.code+".jpg", url:data.signedUrl});
-    }catch(_){ mancanti.push(p.code); }
+  const pronte = list.map(p=>vivo(p)).filter(p=>{ if(p.origPath) return true; mancanti.push(p.code); return false; });
+  const perPercorso = new Map();
+  pronte.forEach(p=>{ if(!perPercorso.has(p.origPath)) perPercorso.set(p.origPath, p); });
+  try{
+    const percorsi = [...perPercorso.keys()];
+    const {data,error} = await sb.storage.from("originali").createSignedUrls(percorsi, 3600);
+    if(error) throw error;
+    (data||[]).forEach(r=>{
+      const p = perPercorso.get(r.path);
+      if(!p) return;
+      if(r.error || !r.signedUrl){ mancanti.push(p.code); return; }
+      files.push({nome:p.code+".jpg", url:r.signedUrl});
+    });
+  }catch(_){
+    /* Ripiego sulla vecchia strada, una per volta: piu' lenta ma sempre meglio che
+       lasciare il cliente senza foto se la richiesta in blocco non passa. */
+    for(const p of pronte){
+      if(files.some(f=>f.nome===p.code+".jpg")) continue;
+      try{
+        const {data,error}=await sb.storage.from("originali").createSignedUrl(p.origPath, 3600);
+        if(error||!data||!data.signedUrl){ mancanti.push(p.code); continue; }
+        files.push({nome:p.code+".jpg", url:data.signedUrl});
+      }catch(_){ mancanti.push(p.code); }
+    }
   }
   if(!files.length){
     mostraEsito("Gli originali di queste foto non sono ancora sul cloud.\nAspetta che PC1 finisca di caricarli e riprova.","Invio non riuscito");
