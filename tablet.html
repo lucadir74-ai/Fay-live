@@ -29,6 +29,7 @@
   .favtoggle:active{background:var(--line)}
   .favtoggle.on{border-color:var(--fav);color:var(--fav)}
   .favtoggle .heart{font-size:18px}
+  .favtoggle.salto{padding:9px 13px;font-size:21px;line-height:1}
   .favtoggle.busy{border-color:var(--accent);color:var(--accent);opacity:.75}
   .favtoggle.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -288,6 +289,9 @@
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
     <button class="favtoggle" id="btnInvii"><span>📋</span><span>Registro</span></button>
     <button class="favtoggle" id="btnFavClear"><span>✕</span><span>Pulisci preferiti</span></button>
+    <!-- Con 1200 foto in un rullo, tornare in cima a dito era un'impresa. -->
+    <button class="favtoggle salto" id="btnSu" title="Vai all'inizio delle foto"><span>⤒</span></button>
+    <button class="favtoggle salto" id="btnGiu" title="Vai in fondo alle foto"><span>⤓</span></button>
   </header>
 
   <nav id="tabs" hidden></nav>
@@ -2306,6 +2310,16 @@ async function refresh(manuale){
     const b = $("btnRefresh"); if(b) b.classList.remove("busy");
   }
 }
+
+/* Salto istantaneo, non scorrimento animato: scorrendo per finta attraverso mille foto
+   l'osservatore le vedrebbe passare tutte una per una e metterebbe in coda centinaia di
+   miniature da scaricare, sull'hotspot, per niente. */
+function saltaGriglia(dove){
+  const g=$("grid"); if(!g) return;
+  g.scrollTop = (dove==="fine") ? g.scrollHeight : 0;
+}
+$("btnSu").onclick  = ()=> saltaGriglia("inizio");
+$("btnGiu").onclick = ()=> saltaGriglia("fine");
 
 $("btnRefresh").onclick = ()=> refresh(true);
 
