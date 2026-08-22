@@ -50,6 +50,8 @@
   .act-fav{background:var(--surface2);border-color:var(--line);color:var(--muted);opacity:.55}
   .act-fav.has{color:var(--fav);border-color:var(--fav);opacity:1}
   .act-fav.on{background:var(--fav);border-color:var(--fav);color:#fff;opacity:1}
+  .act-group{background:#8a5a12;border-color:var(--accent);display:none}
+  body.selmode #actGroup{display:flex}
   .bigact.busy{opacity:.7}
   .bigact.busy span:first-child{animation:spin .9s linear infinite;display:inline-block}
 
@@ -273,6 +275,9 @@
     <button class="bigact act-fav" id="favOnly"><span class="heart">♡</span><span>Preferiti</span></button>
     <button class="bigact act-send" id="btnSend"><span>✉</span><span>Invia</span></button>
     <button class="bigact act-print" id="btnPrint"><span>🖨</span><span>Manda in stampa</span></button>
+    <!-- Compare solo mentre si selezionano foto: e' il gesto che si fa subito dopo
+         averle scelte, quindi sta qui vicino alle schede e non in fondo allo schermo. -->
+    <button class="bigact act-group" id="actGroup"><span>📁</span><span>Gruppo</span></button>
   </div>
 
   <!-- il cliente scrive QUI la propria email, sul tablet che ha già in mano -->
@@ -406,7 +411,6 @@
     <button class="sb" id="selExport">⬇ Esporta</button>
     <button class="sb" id="selFile">📄 Solo file</button>
     <button class="sb" id="selOmaggio">🎁 Omaggio</button>
-    <button class="sb" id="selGroup">📁 Gruppo</button>
     <button class="sb" id="selUngroup" hidden>📁− Togli dal gruppo</button>
     <button class="sb" id="selDone">✕ Chiudi selezione</button>
   </div>
@@ -722,7 +726,6 @@ function render(){
     <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
-      ${p.gruppo?`<span class="grp">${esc(p.gruppo)}</span>`:""}
       ${haOriginale(p)?"":`<span class="orig">⏳</span>`}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
@@ -931,7 +934,7 @@ async function eliminaGruppo(nome){
     toast("Non riesco a eliminare il gruppo: " + (err.message||err));
   }
 }
-$("selGroup").onclick = apriGruppi;
+$("actGroup").onclick = apriGruppi;
 /* Scorciatoia: dentro un gruppo, le foto selezionate escono dalla cartella con un tocco
    solo (stessa cosa del tasto "Togli dal gruppo" nel pannello, senza aprirlo). */
 $("selUngroup").onclick = ()=>{
