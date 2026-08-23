@@ -1477,12 +1477,14 @@ function aggiornaSpiaBadge(){
 }
 $("favOnly").onclick=()=>{ S.favOnly=!S.favOnly; render(); };
 
-/* Unico modo per azzerare i preferiti: esplicito, e solo sul rullo che stai guardando. */
+/* Unico modo per azzerare i preferiti: esplicito, e solo su quello che stai guardando —
+   la cartella se ce n'è una aperta, altrimenti il rullo. */
 $("btnFavClear").onclick = async ()=>{
-  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const scope = S.gruppo ? S.photos.filter(p=>p.gruppo===S.gruppo)
+              : (S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos);
   const favs = scope.filter(p=>p.fav);
-  if(!favs.length){ toast("Non ci sono preferiti da pulire"+(S.letter?" nel rullo "+S.letter:"")); return; }
-  if(!confirm(`Tolgo i ${favs.length} preferiti${S.letter? " del rullo "+S.letter : ""}?`)) return;
+  if(!favs.length){ toast("Non ci sono preferiti da pulire"+(ambitoAttivo())); return; }
+  if(!confirm(`Tolgo i ${favs.length} preferiti${ambitoAttivo()}?`)) return;
   favs.forEach(p=>{ p.fav=false; favLocali.set(p.id,false); });
   salvaFavSalvati();
   S.favOnly=false; lastGrid=""; render();
@@ -1636,8 +1638,16 @@ async function exportPhotos(list, ctx){
   toast(`Esportate ${ok} foto nei Download`);
 }
 
+/* I preferiti "attivi" sono quelli di ciò che si sta GUARDANDO, non del rullo.
+   Prima questa funzione filtrava solo per rullo: dentro una cartella si vedevano 4 foto
+   preferite e ne partivano tutte quelle del rullo. Lo scopo dev'essere lo stesso di
+   visible(): se c'è una cartella aperta comanda la cartella, altrimenti il rullo. */
+function ambitoAttivo(){
+  return S.gruppo ? ` nella cartella ${S.gruppo}` : (S.letter ? ` nel rullo ${S.letter}` : "");
+}
 function activeFavs(){
-  const scope = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
+  const scope = S.gruppo ? S.photos.filter(p=>p.gruppo===S.gruppo)
+              : (S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos);
   return scope.filter(p=>p.fav);
 }
 /* REGOLA UNICA: se c'e' una selezione aperta comandano le foto SELEZIONATE, i preferiti
@@ -1645,8 +1655,8 @@ function activeFavs(){
 function inSelezione(){ return S.selmode && S.selected.size>0; }
 function bersaglio(){ return inSelezione() ? selectedPhotos() : activeFavs(); }
 // tasti in alto: agiscono sui PREFERITI del rullo attivo
-$("btnShare").onclick = ()=> { const ps=bersaglio(); sharePhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"condivise"); };
-$("btnExport").onclick = ()=> { const ps=bersaglio(); exportPhotos(ps, S.letter?" nel rullo "+S.letter:""); logActivity(ps,"esportate"); };
+$("btnShare").onclick = ()=> { const ps=bersaglio(); sharePhotos(ps, ambitoAttivo()); logActivity(ps,"condivise"); };
+$("btnExport").onclick = ()=> { const ps=bersaglio(); exportPhotos(ps, ambitoAttivo()); logActivity(ps,"esportate"); };
 /* INVIO DIGITALI DAL TABLET (via Filemail, come sul PC).
    Il tablet NON scarica nessuna foto: chiede solo gli indirizzi firmati e li passa alla
    funzione su Vercel, che prende i file da Supabase e li manda a Filemail. Sull'hotspot
@@ -2024,7 +2034,7 @@ async function inviaConFilemail(list, ctx, opz){
     mostraEsito(spiega+"\n\nL'invio resta nel Registro: da lì puoi rispedirlo.", "Invio non riuscito");
   }finally{ b.disabled=false; attesaInCorso=false; rilasciaSchermo(); }
 }
-$("btnSend").onclick = ()=>{ const ps=bersaglio(); inviaConFilemail(ps, S.letter?" nel rullo "+S.letter:""); };
+$("btnSend").onclick = ()=>{ const ps=bersaglio(); inviaConFilemail(ps, ambitoAttivo()); };
 
 /* Manda in stampa TUTTI i preferiti del rullo attivo: finiscono nella lista "Da stampare"
    del PC, dove il venditore li ritrova al rientro in postazione. Non tocca gli originali
@@ -2032,7 +2042,7 @@ $("btnSend").onclick = ()=>{ const ps=bersaglio(); inviaConFilemail(ps, S.letter
 $("btnPrint").onclick = async ()=>{
   const sel = inSelezione();
   const ps = sel ? selectedPhotos() : activeFavs();
-  if(!ps.length){ toast(sel ? "Nessuna foto selezionata" : "Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
+  if(!ps.length){ toast(sel ? "Nessuna foto selezionata" : "Nessun preferito da mandare in stampa"+(ambitoAttivo())); return; }
   if(!sb){ toast("Cloud non raggiungibile"); return; }
   const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`, ps);
   if(!copie) return;
