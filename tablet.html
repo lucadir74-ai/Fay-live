@@ -108,6 +108,14 @@
   #cpBox{background:#151922;width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:18px 16px 26px}
   #cpBox h3{margin:0 0 4px;font-size:20px}
   #cpBox p{margin:0 0 16px;color:var(--muted);font-size:14px}
+  /* Riepilogo di quello che sta per partire: miniature + codice. Serve a fermare l'invio
+     sbagliato PRIMA che parta, che è l'unico momento in cui costa niente. */
+  #cpFoto{display:flex;gap:8px;overflow-x:auto;margin:0 -4px 14px;padding:2px 4px 6px;-webkit-overflow-scrolling:touch}
+  #cpFoto .cpF{flex:0 0 auto;width:76px;text-align:center}
+  #cpFoto .cpF img{width:76px;height:76px;object-fit:cover;border-radius:10px;
+    background:#222836;border:1px solid #39415a;display:block}
+  #cpFoto .cpF span{display:block;font-size:11px;color:#c7cede;margin-top:3px;
+    font-family:ui-monospace,Menlo,Consolas,monospace}
   #cpQuick{display:flex;gap:10px;margin-bottom:16px}
   #cpQuick button{flex:1;background:#222836;border:1px solid #39415a;color:#e8ecf5;
     padding:18px 0;border-radius:14px;font-size:24px;font-weight:700;font-family:inherit}
@@ -397,8 +405,9 @@
   <!-- quante copie: 1 è il caso normale, i tasti mandano in stampa con un tocco solo -->
   <div id="cpSheet">
     <div id="cpBox">
-      <h3>Quante copie per foto?</h3>
+      <h3>Mando in stampa queste foto</h3>
       <p id="cpSub"></p>
+      <div id="cpFoto"></div>
       <div id="cpQuick">
         <button data-n="1">1</button>
         <button data-n="2">2</button>
@@ -1067,10 +1076,23 @@ $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logAc
    subito (un tocco solo), il − + serve per numeri più alti. Chiudendo si annulla tutto.
    Il numero viaggia sul cloud nella colonna `copie` e il PC lo mostra nella lista. */
 const CP = { risolvi:null, n:1 };
-function chiediCopie(sub){
+/* `ps` = le foto che stanno per partire: si mostrano in miniatura con il loro codice.
+   Non è un passaggio in più — è lo stesso foglio delle copie, che adesso dice anche COSA
+   si sta mandando. Chi ha selezionato male se ne accorge qui e chiude senza inviare. */
+function chiediCopie(sub, ps){
   return new Promise(res=>{
     CP.risolvi = res; CP.n = 1;
     $("cpSub").textContent = sub || "";
+    const box = $("cpFoto");
+    const list = Array.isArray(ps) ? ps : [];
+    box.innerHTML = list.slice(0,40).map(p=>{
+      const c = String(p.code||"").replace(/[<>&"]/g,"");
+      const u = p.url || p.miniUrl || p.bigUrl || "";
+      return `<div class="cpF">`+
+             (u ? `<img src="${u}" alt="${c}" loading="lazy">` : `<img alt="${c}">`)+
+             `<span>${c}</span></div>`;
+    }).join("") + (list.length>40 ? `<div class="cpF"><span>+${list.length-40}</span></div>` : "");
+    box.hidden = !list.length;
     $("cpN").textContent = "1";
     $("cpSheet").classList.add("open");
   });
@@ -1091,7 +1113,7 @@ const testoCopie = n => n>1 ? ` · ${n} copie l'una` : "";
 $("selPrint").onclick=async ()=>{
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
-  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`);
+  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`, ps);
   if(!copie) return;
   // segna le foto come "da stampare" → il PC le mostra nella lista Da stampare
   for(const p of ps){ try{ await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id); }catch(_){} }
@@ -2012,7 +2034,7 @@ $("btnPrint").onclick = async ()=>{
   const ps = sel ? selectedPhotos() : activeFavs();
   if(!ps.length){ toast(sel ? "Nessuna foto selezionata" : "Nessun preferito da mandare in stampa"+(S.letter?" nel rullo "+S.letter:"")); return; }
   if(!sb){ toast("Cloud non raggiungibile"); return; }
-  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`);
+  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`, ps);
   if(!copie) return;
   const b=$("btnPrint"); b.disabled=true; b.classList.add("busy");
   let ok=0, ko=[];
@@ -2038,7 +2060,7 @@ $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); lo
 $("vPrint").onclick = async ()=>{
   const p=V.list[V.idx]; if(!p) return;
   if(!sb){ toast("Cloud non raggiungibile"); return; }
-  const copie = await chiediCopie(p.code);
+  const copie = await chiediCopie(p.code, [p]);
   if(!copie) return;
   try{
     await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id);

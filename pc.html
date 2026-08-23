@@ -507,6 +507,7 @@
   <div id="statusBar">
     <span>Foto: <b id="stTotal">0</b></span>
     <span>Archivio: <b id="stArch" style="cursor:pointer" title="Clicca per vedere dove vengono salvate le foto">non impostato</b></span>
+    <span id="stArchPath" style="color:var(--muted);font-family:var(--mono);font-size:11px" hidden></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
     <span>Originali cloud: <b id="stOrigCloud" title="Quante foto del rullo attivo hanno l'originale a piena risoluzione sul cloud">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
@@ -522,7 +523,7 @@
 <dialog id="archDlg">
   <h3 style="margin-bottom:10px">Dove salvo le foto di questa postazione</h3>
   <div id="archBody" style="font-size:13px;line-height:1.55"></div>
-  <div style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
+  <div id="archHelp" style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
     <b>Scegli solo DOVE: la cartella <code>FayLive</code> la crea l'app.</b><br>
     Premi <b>Scegli cartella…</b> → seleziona <b>Disco locale (C:)</b> → conferma. Dentro ci troverai <code>C:\FayLive</code>,
     uguale su tutte le postazioni. Non serve creare né rinominare niente a mano.
@@ -1625,6 +1626,10 @@ async function pickArchivio(nota){
   try{ localStorage.removeItem("faylive_arch_path"); }catch(_){}   // il percorso annotato non vale più
   segnaArchivio(dir.name, true);
   nascondiAllarmeArchivio();
+  /* Il percorso completo il browser non lo dà: si annota una volta per postazione, subito
+     dopo la scelta, così da lì in poi ogni avvio può dire "Archivio collegato: C:\FayLive"
+     invece del solo nome della cartella. */
+  setTimeout(()=>{ try{ if(!percorsoAnnotato()) apriDoveDlg(); }catch(_){} }, 400);
   return dir;
 }
 
@@ -1668,10 +1673,18 @@ function apriArchDlg(motivo){
     : motivo === "nonscrivibile"
       ? `Nella cartella <b>${n}</b> non si riesce a scrivere: il supporto è protetto o pieno.<br>Gli originali importati adesso non verrebbero salvati.`
     : motivo === "riattivare"
-      ? `Questa postazione usa la cartella <b>${n}</b>, ma dopo il ricaricamento della pagina Windows chiede di nuovo il permesso.`
+      ? `<b>Archivio di questa postazione: ${percorsoAnnotato() ? percorsoAnnotato().replace(/[<>&]/g,"") : n}</b><br>`+
+        `È lo stesso di sempre e non va riscelto. Windows però richiede il permesso a ogni `+
+        `ricaricamento della pagina: basta premere <b>Riattiva questa cartella</b> qui sotto.`
       : `Questa postazione non ha ancora una cartella dove salvare gli originali delle foto importate.`;
   $("archBody").innerHTML = `<p>${testo}</p>`;
   $("archKeep").hidden = (motivo !== "riattivare");
+  /* Quando la cartella è già nota, l'azione giusta è riattivarla: "Scegli cartella…" resta
+     disponibile ma non deve più essere il tasto che si preme d'istinto. */
+  $("archKeep").classList.toggle("primary", motivo === "riattivare");
+  $("archPick").classList.toggle("primary", motivo !== "riattivare");
+  $("archPick").textContent = (motivo === "riattivare") ? "Scegli un'altra cartella…" : "Scegli cartella…";
+  try{ $("archHelp").hidden = (motivo === "riattivare"); }catch(_){}
   try{ $("archDlg").showModal(); }catch(_){ /* un'altra finestra è già aperta */ }
 }
 $("archPick").onclick = async ()=>{
@@ -1700,7 +1713,14 @@ async function controllaArchivioSede(){
   await riattivaArchivioSilenzioso();
   if(state.archive){
     const v = await verificaArchivio(state.archive);
-    if(v.ok){ nascondiAllarmeArchivio(); toast(`Originali salvati in "${state.archive.name}"`); return; }
+    /* Archivio a posto: nessuna finestra da chiudere, solo la conferma di DOVE sta
+       scrivendo — con il percorso completo se la postazione se l'è annotato. */
+    if(v.ok){
+      nascondiAllarmeArchivio();
+      const pa = percorsoAnnotato();
+      toast(`Archivio collegato: ${pa || state.archive.name}`, 4000);
+      return;
+    }
     const nome = state.archive.name;
     if(v.motivo !== "sospetta"){ state.archive = null; segnaArchivio(nome, false); }
     apriArchDlg(v.motivo);
@@ -1923,13 +1943,16 @@ function apriDoveDlg(){
       `Cartella export: <b>${q(($("stExport").textContent||"Download"))}</b>.</p>`+
     `<p style="color:var(--muted)">Il percorso completo il browser non lo sa: con “Apri la cartella” si apre `+
       `la finestra di Windows dentro l'archivio e in alto si legge il percorso, da incollare qui sotto.</p>`;
-  $("dovePath").value = perc;
+  /* Se non è ancora annotato, si propone lo standard di casa: nella quasi totalità dei casi
+     la cartella è esattamente quella e all'operatore resta solo da confermare. */
+  $("dovePath").value = perc || (!archivioFuoriStandard() && (state.archive||state.archiveName) ? "C:\\" + NOME_ARCHIVIO : "");
   $("doveDlg").showModal();
 }
 $("stArch").onclick = apriDoveDlg;
 $("doveClose").onclick = ()=>{
   try{ localStorage.setItem("faylive_arch_path", $("dovePath").value.trim()); }catch(_){}
   $("doveDlg").close();
+  try{ updateOrigCount(); }catch(_){}
 };
 $("doveOpen").onclick = async ()=>{
   if(!window.showDirectoryPicker){ toast("Questo browser non apre le cartelle"); return; }
@@ -2515,6 +2538,12 @@ function updateOrigCount(){
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
   $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
+  /* Il percorso completo accanto al nome: il browser non lo sa, ma la postazione se l'è
+     annotato una volta e da lì in poi si legge sempre a colpo d'occhio. */
+  try{
+    const sp = $("stArchPath"), pa = percorsoAnnotato();
+    if(sp){ sp.textContent = pa ? "("+pa+")" : ""; sp.hidden = !pa; }
+  }catch(_){}
   updateOrigCloud();
   if(urg) setSync("syncing","Carico originali ("+urg+")");
   else if(bg) setSync(autoOrigOn()?"syncing":null, autoOrigOn()? "Sottofondo ("+bg+")" : "Sincronizzato");
@@ -5781,19 +5810,45 @@ $("btnReport").onclick = async ()=>{
     const {data:grezzi} = await sb.from("attivita").select("*").eq("servizio_id",cloud.servizio.id).order("creato_il",{ascending:false});
     const data = (grezzi||[]).filter(a=>!(a.azione||"").startsWith("~"));   // le righe tecniche stanno nel Registro
     if(!data.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna attività registrata per questa giornata.</p>'; return; }
+    /* I codici non sono più solo scritti: ognuno apre la foto nel visualizzatore, dove c'è
+       già il tasto Stampa. Serve quando dal tablet arriva un invio e in postazione si vuole
+       vedere di quale foto si tratta senza cercarla a mano nella griglia. */
     box.innerHTML = data.map(a=>{
       const t=new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
       const col = a.azione==="condivise"?"var(--accent)":a.azione==="in stampa"?"var(--danger)":"var(--muted)";
+      const codici = String(a.codici||"").split(/[\s,;]+/).filter(Boolean);
+      const chips = codici.map(c=>{
+        const cc = c.toUpperCase().replace(/[<>&"]/g,"");
+        const c_è = state.byCode.has(cc);
+        return `<button type="button" class="rep-code" data-code="${cc}"`+
+               ` title="${c_è ? "Apri la foto (dal visualizzatore si può ristampare)" : "Non è nella giornata aperta"}"`+
+               ` style="font-family:var(--mono);font-size:12px;padding:3px 8px;margin:2px 4px 2px 0;border-radius:7px;`+
+               `border:1px solid var(--line);background:var(--surface2);`+
+               `color:${c_è ? "var(--ink)" : "var(--muted)"};cursor:${c_è ? "pointer" : "default"}">${cc}</button>`;
+      }).join("");
       return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
         <span style="color:var(--muted)">${t}</span> ·
         <b>${a.rullo_lettera||"?"}</b> ·
         <span style="color:${col}">${a.quante} ${a.azione}</span>
-        <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${(a.codici||"").replace(/[<>&]/g,"")}</div>
+        <div style="margin-top:4px">${chips || '<span style="color:var(--muted);font-size:12px">nessun codice</span>'}</div>
       </div>`;
     }).join("");
   }catch(err){ box.innerHTML='<p style="color:var(--danger)">Errore nel caricare il report.</p>'; }
 };
 $("reportClose").onclick=()=>$("reportDlg").close();
+
+/* Apertura della foto da un codice del report. La finestra del report è modale e sta sopra
+   al visualizzatore: va chiusa prima, altrimenti si preme e non si vede niente. */
+$("reportList").onclick = e=>{
+  const b = e.target.closest("button.rep-code"); if(!b) return;
+  const code = b.dataset.code;
+  const p = state.byCode.get(code);
+  if(!p){ toast(`${code} non è tra le foto della giornata aperta`); return; }
+  const i = state.photos.indexOf(p);
+  if(i < 0){ toast(`${code} non è più in griglia`); return; }
+  $("reportDlg").close();
+  openLightboxList([p], 0);
+};
 
 /* --- Registro invii: chi ha ricevuto cosa, giorno per giorno ---
    Legge le righe "~invio" della tabella attivita, che vengono scritte a ogni tentativo
