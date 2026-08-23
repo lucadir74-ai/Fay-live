@@ -25,7 +25,8 @@
   /* ---------- Layout ---------- */
   #app{display:flex;flex-direction:column;height:100%}
   header{position:relative;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
-  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;max-height:calc(100vh - 70px);overflow-y:auto;overscroll-behavior:contain;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #toolsMenu button{flex:0 0 auto}
   #toolsMenu[hidden]{display:none}
   #toolsMenu button{text-align:left;width:100%}
   #toolsMenu hr{border:none;border-top:1px solid var(--line);margin:2px 0}
@@ -299,13 +300,13 @@
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
       <button id="btnExportDir">Cartella export…</button>
-      <button id="btnAutoOrig" title="Se attivo, ogni foto importata sale sul cloud a piena risoluzione: tutte le postazioni stampano anche se questo PC è spento">Caricamento automatico: —</button>
       <button id="btnPushAll" title="Carica ORA sul cloud gli originali di questa giornata (utile per giornate vecchie o se il caricamento automatico era spento)">Carica originali sul cloud</button>
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
       <button id="btnDiagThumb" title="Dice perché le miniature non compaiono e prova a rigenerarle subito">Diagnosi miniature</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <button id="btnCodice" title="Codice che serve per aprire Fay Live su PC e tablet">Codice di accesso…</button>
       <hr>
+      <button id="btnAutoOrig" title="Se attivo, OGNI foto importata sale sul cloud a piena risoluzione, anche quelle mai vendute: tanto traffico sull'hotspot. Vale per tutta la sede, non solo per questo PC">Caricamento automatico: —</button>
       <button id="btnClearDay">Svuota giornata</button>
       <button id="btnClearAll" title="Svuota dal cloud tutte le giornate di questa sede, in un colpo solo">Svuota tutte le giornate</button>
       <button id="btnDelSede" title="Cancella la sede selezionata">Cancella sede</button>
@@ -1031,7 +1032,7 @@ async function loadMasksForSede(){
    fino a ieri vivevano solo in memoria e sparivano a ogni ricarica. Ora seguono la sede,
    sul cloud e in copia locale, esattamente come le mascherine. */
 const IMPOSTAZIONI_SALVATE = ["name","secs","qrSecs","tiles","text","infoLine","frameOn","frameBorder",
-  "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos"];
+  "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos","autoOrig"];
 function impKey(){ return "faylive_imp_" + (cloud.sede ? cloud.sede.id : "nosede"); }
 function impCloudPath(){ return "impostazioni/" + (cloud.sede ? cloud.sede.id : "nosede") + ".json"; }
 
@@ -1060,6 +1061,16 @@ async function caricaImpostazioni(){
   }
   if(!dati) return;
   state.event = Object.assign({}, state.event || {}, dati);
+  /* Il caricamento automatico degli originali segue la SEDE, non la singola postazione.
+     Prima stava solo nel localStorage del browser: bastava che qualcuno lo accendesse
+     su un PC perché quella postazione caricasse sul cloud gli originali di tutti i rulli
+     senza che nessuno se ne accorgesse. Ora vince sempre il valore della sede. */
+  if(dati.autoOrig !== undefined){
+    const cambia = autoOrigOn() !== !!dati.autoOrig;
+    setAutoOrig(!!dati.autoOrig, true);
+    if(cambia) toast("Caricamento automatico " + (dati.autoOrig ? "acceso" : "spento") +
+                     ": impostazione della sede" + (cloud.sede ? " " + cloud.sede.nome : ""), 5000);
+  }
   updateEventInfo();
   if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
   paintVisible();
@@ -2323,8 +2334,10 @@ const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle u
    stampi, esporti o invii una foto, e quando un'altra postazione la chiede.
    Chi vuole il vecchio comportamento lo riaccende da Altro. */
 function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") === "1"; }
-function setAutoOrig(on){
+function setAutoOrig(on, daSede){
   localStorage.setItem("faylive_autoorig", on ? "1" : "0");
+  // copia in state.event: è da lì che salvaImpostazioni() la manda sul cloud della sede
+  if(typeof state !== "undefined" && state.event) state.event.autoOrig = on;
   /* Spegnendo l'automatico si svuota anche la coda di sottofondo già accumulata:
      altrimenti resta lì in attesa e sembra che stia ancora caricando. Le foto che
      servono davvero (selezionate, stampate, inviate, richieste da un'altra postazione)
@@ -6303,9 +6316,28 @@ $("btnPushAll").onclick = ()=>{
 };
 $("btnAutoOrig").onclick = ()=>{
   const on = !autoOrigOn();
+  /* Conferma solo in accensione: è l'operazione che costa banda. Lo spegnimento
+     è sempre sicuro e deve restare immediato. */
+  if(on){
+    const L = state.activeLetter;
+    const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
+    const mancanti = scope.filter(p=>!p.origUploaded).length;
+    const mb = Math.round(mancanti * 2.2);
+    if(!confirm(`ACCENDERE il caricamento automatico degli originali?\n\n` +
+                `Da qui in avanti OGNI foto importata sale sul cloud a piena risoluzione, ` +
+                `anche quelle che non si vendono. Solo per le foto già presenti sono circa ` +
+                `${mancanti} originali (~${mb} MB), e la serata continua ad aggiungerne.\n\n` +
+                `Con la connessione del telefono è tanto traffico e ruba banda alle anteprime, ` +
+                `che sono l'unica cosa che serve per vendere.\n\n` +
+                `L'impostazione vale per TUTTA la sede: la prendono anche le altre postazioni.\n\nProcedo?`)) return;
+  }
   setAutoOrig(on);
-  toast(on ? "Caricamento automatico acceso: TUTTI gli originali salgono sul cloud (tanto traffico)"
-           : "Caricamento automatico spento: salgono solo gli originali che servono davvero");
+  /* La scelta vale per la SEDE: la salvo subito sul cloud così le altre postazioni
+     la prendono alla prossima apertura e non possono più divergere fra loro. */
+  salvaImpostazioni();
+  toast(on ? "Caricamento automatico ACCESO per la sede: TUTTI gli originali salgono sul cloud (tanto traffico)"
+           : "Caricamento automatico SPENTO per la sede: salgono solo gli originali che servono davvero");
+  if(!cloud.sede) toast("Nessuna sede selezionata: per ora vale solo su questo PC", 5000);
 };
 setAutoOrig(autoOrigOn());
 /* Finché non è chiaro cosa si rompe, gli errori non devono più sparire nella console:
