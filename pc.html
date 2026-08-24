@@ -1364,13 +1364,23 @@ $("restoreInput").onchange = async e=>{
      in grande la foto di un altro giorno). Prima queste foto venivano saltate perché
      l'indirizzo risultava presente, e il tasto rispondeva "anteprime già tutte presenti"
      senza sistemare niente. */
-  const gia = foto.filter(p=>p.anteprimaUrl && byCode.has(p.code));
-  let lista = need;
-  if(gia.length && confirm(
-      `${gia.length} foto ${L?("del rullo "+L):"della giornata"} hanno già l'anteprima sul cloud.\n\n` +
-      `Rigenero anche quelle?\nServe quando sui tablet una foto si apre in grande mostrando ` +
-      `l'immagine di un altro giorno. Rifà file e indirizzi con il percorso corretto.`)){
-    lista = [...need, ...gia];
+  /* Le foto DAVVERO da rifare si riconoscono: l'indirizzo dell'anteprima contiene la
+     giornata, quindi se non contiene QUESTA giornata l'immagine è quella di un altro
+     giorno. Rifare tutto il rullo su hotspot vuol dire mezz'ora e centinaia di MB:
+     di serie si rifanno solo le mancanti e le sbagliate. */
+  const miaSrv = cloud.servizio ? cloud.servizio.id : "";
+  const sbagliate = foto.filter(p=>p.anteprimaUrl && byCode.has(p.code)
+                                && miaSrv && !String(p.anteprimaUrl).includes(miaSrv));
+  const gia = foto.filter(p=>p.anteprimaUrl && byCode.has(p.code) && !sbagliate.includes(p));
+  let lista = [...need, ...sbagliate];
+  if(!lista.length && gia.length){
+    if(!confirm(
+      `Nessuna anteprima mancante o sbagliata ${L?("nel rullo "+L):"in questa giornata"}.\n\n` +
+      `Vuoi rifarle TUTTE lo stesso (${gia.length} foto, circa ${Math.round(gia.length*0.25)} MB ` +
+      `da caricare)? Con la connessione del telefono ci vuole parecchio.`)) { toast("Niente da rigenerare"); return; }
+    lista = gia;
+  }else if(sbagliate.length){
+    toast(`${sbagliate.length} anteprime di un'altra giornata: le rifaccio`, 4000);
   }
   if(!lista.length){
     toast(missingFile.length? `Nessun originale corrispondente trovato (${missingFile.length} anteprime mancanti)` : "Niente da rigenerare");
