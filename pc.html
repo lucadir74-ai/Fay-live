@@ -571,6 +571,7 @@
       <button id="selOmaggio" title="Stampe regalate al cliente">🎁 Omaggio</button>
       <button id="selScarto" title="Stampe venute male e buttate">🗑 Scarto</button>
       <button id="selMenoStampa" title="Toglie una stampa dal contatore: la stampa era stata annullata e non è uscita">➖ Stampa</button>
+      <button id="selRigen" title="Rifà l'anteprima sul cloud di queste foto, prendendo l'originale dall'archivio di questo PC">🔄 Rifà anteprime</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -3204,6 +3205,7 @@ function updateSelBar(){
   $("selCount").textContent = state.selection.size;
   $("selBar").classList.toggle("show", state.selection.size>0);
 }
+$("selRigen").onclick = ()=> rigeneraAnteprime(selSet());
 $("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
 // unico punto che manda le selezionate TUTTE INSIEME sul monitor: lo decidi tu, qui
 $("selShow").onclick = ()=> presentSelection();
@@ -5035,6 +5037,57 @@ function srvOf(p){ return (p && p.srvId) ? p.srvId : (cloud.servizio ? cloud.ser
 /* CONTROLLO AUTOMATICO all'apertura di una giornata: se l'indirizzo di un'anteprima non
    contiene questa giornata, quell'immagine è di un altro giorno. Prima nessuno se ne
    accorgeva finché un cliente non si vedeva la foto di un'altra sera sul tablet. */
+/* RIGENERA LE SELEZIONATE — la via rapida quando sai già quali foto sono sbagliate:
+   le selezioni nella griglia e rifai solo quelle, senza scegliere nessuna cartella.
+   L'originale viene preso da dove si trova (import o archivio collegato). */
+async function rigeneraAnteprime(set){
+  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
+  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
+  rip.attivo = true; rip.annulla = false; rip.fatte = 0; rip.saltate = 0; rip.totali = set.length;
+  ripAggiorna();
+  let fatte = 0, senzaFile = 0;
+  for(const p of set){
+    if(rip.annulla) break;
+    try{
+      const srvR = srvSicuro(p);
+      if(!srvR) throw new Error("foto di un'altra giornata");
+      const f = (p.arch ? await p.arch.getFile() : p.file);
+      if(!f){ senzaFile++; throw new Error("originale non su questo PC"); }
+      const buf = await f.arrayBuffer();
+      const bmp = await decodeScaled(new Blob([buf],{type:f.type||"image/jpeg"}), 1800);
+      const c = document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+      c.getContext("2d").drawImage(bmp,0,0); bmp.close();
+      const prevBlob = await toBlobAsync(c, 0.85);
+      p.preview = prevBlob; thumbCache.set(ckey(p.code), prevBlob);
+      const ap = pathAnteprima(p, srvR);
+      const up = await conScadenza(sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true}), 60000, p.code);
+      if(up.error) throw up.error;
+      p.anteprimaUrl = pubUrl(ap);
+      if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
+      const km = Math.min(1, 420/Math.max(c.width, c.height));
+      const m = document.createElement("canvas");
+      m.width=Math.max(1,Math.round(c.width*km)); m.height=Math.max(1,Math.round(c.height*km));
+      m.getContext("2d").drawImage(c,0,0,m.width,m.height);
+      const miniBlob = await toBlobAsync(m, 0.72);
+      p.mini = miniBlob;
+      const mp = pathMini(p, srvR);
+      const um = await conScadenza(sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true}), 45000, p.code+" mini");
+      if(!um.error){
+        p.miniUrl = pubUrl(mp);
+        if(p.dbId) await sb.from("foto").update({mini_url:p.miniUrl}).eq("id",p.dbId);
+      }
+      fatte++;
+    }catch(err){ rip.saltate++; console.warn("rigenera", p.code, err); }
+    rip.fatte++; ripAggiorna();
+    paintVisible();
+  }
+  rip.attivo = false; ripAggiorna();
+  updateThumbCloud();
+  toast(`Rifatte ${fatte} anteprime su ${set.length}`
+    + (senzaFile ? ` — ${senzaFile} senza originale su questo PC (ricollega l'archivio)` : "")
+    + (rip.saltate - senzaFile > 0 ? ` — ${rip.saltate - senzaFile} non riuscite` : ""), 8000);
+}
+
 /* RIPRISTINO ANTEPRIME — stato in basso, non nella barra dell'import.
    La barra grande resta quella dell'import (copia su disco + anteprime della serata):
    è l'unica che serve a capire quando si può togliere la scheda. Il ripristino è un
