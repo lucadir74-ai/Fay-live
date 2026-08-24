@@ -3105,7 +3105,8 @@ $("searchBox").addEventListener("keydown", e=>{
     if(q.found.length && !stessa){
       if(q.tokens.length > 1){
         // ELENCO: seleziono tutte e le apro affiancate
-        q.found.forEach(p=>{ if(!state.selection.has(p.id)){ state.selection.add(p.id); queueOriginalUpload(p); } });
+        // come sopra: selezionare non carica nulla sul cloud
+        q.found.forEach(p=>{ state.selection.add(p.id); });
         updateSelBar(); paintVisible();
         resetSearch();
         openCompare();
@@ -3148,7 +3149,11 @@ $("searchBox").addEventListener("keydown", e=>{
 /* ---------- selezione ---------- */
 function toggleSel(p){
   if(state.selection.has(p.id)) state.selection.delete(p.id);
-  else { state.selection.add(p.id); queueOriginalUpload(p); } // selezionata = probabile stampa → sale l'originale
+  /* La selezione NON carica più l'originale sul cloud: si seleziona soprattutto per
+     mandare i set sul monitor cliente, e caricare lì significava spedire decine di file
+     da 2 MB per foto mai vendute. L'originale sale quando serve davvero: Stampa,
+     Esporta e Invia lo chiedono già per conto loro. */
+  else state.selection.add(p.id);
   updateSelBar();
 }
 function selSet(){ return [...state.selection].map(id=>state.photos.find(p=>p.id===id)).filter(Boolean); }
