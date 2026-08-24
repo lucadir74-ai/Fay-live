@@ -1110,16 +1110,54 @@ $("cpAnnulla").onclick = ()=> chiudiCopie(null);
 $("cpSheet").onclick = e=>{ if(e.target.id==="cpSheet") chiudiCopie(null); };
 const testoCopie = n => n>1 ? ` · ${n} copie l'una` : "";
 
+
+/* Manda in stampa: UNA sola strada per tutti e tre i tasti.
+   Prima ogni tasto faceva a modo suo e "Manda in stampa" dalla selezione dichiarava
+   riuscito anche quando la scrittura sul cloud era fallita: sul tablet compariva la
+   conferma, in postazione non arrivava niente e nessuno poteva accorgersene. Ora ogni
+   foto viene ritentata, e alla fine si RILEGGE dal cloud che il segnale ci sia davvero. */
+async function mandaInStampa(ps, copie){
+  const ok = [], ko = [];
+  for(const p of ps){
+    let fatto = false;
+    for(let t=0; sb && t<3 && !fatto; t++){
+      try{
+        const {error} = await sb.from("foto").update({da_stampare:true, copie}).eq("id", p.id);
+        if(!error) fatto = true;
+      }catch(_){}
+      if(!fatto) await new Promise(r=>setTimeout(r, 1200*(t+1)));
+    }
+    (fatto ? ok : ko).push(p);
+  }
+  // controprova: quello che credo scritto deve risultare scritto anche rileggendolo
+  if(ok.length && sb){
+    try{
+      const {data} = await sb.from("foto").select("id").in("id", ok.map(p=>p.id)).eq("da_stampare", true);
+      const conf = new Set((data||[]).map(r=>r.id));
+      for(let i=ok.length-1; i>=0; i--) if(!conf.has(ok[i].id)) ko.push(ok.splice(i,1)[0]);
+    }catch(_){}
+  }
+  if(ok.length) logActivity(ok, "in stampa");
+  return {ok, ko};
+}
+function esitoMandaInStampa(ok, ko, copie){
+  if(!ko.length){ toast(`${ok.length} foto mandate in stampa${testoCopie(copie)}`); return; }
+  mostraEsito(
+    (ok.length ? `${ok.length} foto sono arrivate in postazione.\n\n` : "")
+    + `${ko.length} NON sono partite: ${ko.map(p=>p.code).join(", ")}.\n`
+    + `Riprova quando la linea torna, oppure detta i codici in postazione.`,
+    "Da stampare: non tutte sono passate");
+}
+
 $("selPrint").onclick=async ()=>{
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
   const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`, ps);
   if(!copie) return;
-  // segna le foto come "da stampare" → il PC le mostra nella lista Da stampare
-  for(const p of ps){ try{ await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id); }catch(_){} }
-  logActivity(ps,"in stampa");
-  toast(`${ps.length} foto mandate in stampa${testoCopie(copie)}`);
-  esciDaSelezione();   // fuori dalla selezione e via le spunte
+  if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const {ok, ko} = await mandaInStampa(ps, copie);
+  esitoMandaInStampa(ok, ko, copie);
+  if(ok.length) esciDaSelezione();   // fuori dalla selezione e via le spunte
 };
 
 // registra un'attività sul cloud (per il report lato PC)
@@ -2079,18 +2117,9 @@ $("btnPrint").onclick = async ()=>{
   const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`, ps);
   if(!copie) return;
   const b=$("btnPrint"); b.disabled=true; b.classList.add("busy");
-  let ok=0, ko=[];
-  for(const p of ps){
-    try{
-      const {error} = await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id);
-      if(error) throw error;
-      ok++;
-    }catch(_){ ko.push(p.code); }
-  }
+  const {ok, ko} = await mandaInStampa(ps, copie);
   b.disabled=false; b.classList.remove("busy");
-  if(ok) logActivity(ps.filter(p=>!ko.includes(p.code)),"in stampa");
-  toast(ko.length ? `${ok} mandate in stampa, ${ko.length} non riuscite (${ko.join(", ")})`
-                  : `${ok} foto mandate in stampa${testoCopie(copie)}`);
+  esitoMandaInStampa(ok, ko, copie);
 };
 
 // tasti nel visore: agiscono sulla FOTO aperta
@@ -2104,11 +2133,10 @@ $("vPrint").onclick = async ()=>{
   if(!sb){ toast("Cloud non raggiungibile"); return; }
   const copie = await chiediCopie(p.code, [p]);
   if(!copie) return;
-  try{
-    await sb.from("foto").update({da_stampare:true, copie}).eq("id",p.id);
-    logActivity([p],"in stampa");
-    toast(`${p.code} mandata in stampa${testoCopie(copie)}`);
-  }catch(err){ toast("Non riuscito: "+(err.message||err)); }
+  const {ok, ko} = await mandaInStampa([p], copie);
+  if(ok.length) toast(`${p.code} mandata in stampa${testoCopie(copie)}`);
+  else mostraEsito(`${p.code} non è arrivata in postazione: la linea non ha risposto.\nRiprova tra poco.`,
+                   "Da stampare: non riuscito");
 };
 $("vSend").onclick = ()=>{
   const p=V.list[V.idx]; if(!p) return;
@@ -2162,8 +2190,30 @@ async function caricaBig(url){
 function precaricaVicine(){
   [1,2,-1].forEach(d=>{
     const q = V.list[V.idx+d];
-    if(q) caricaBig(q.bigUrl || q.url);
+    if(q) caricaBig(urlDiQuestaGiornata(q.bigUrl) ? q.bigUrl : q.url);
   });
+}
+
+/* L'indirizzo dell'anteprima e' <giornata>/<codice>.jpg e i codici si ripetono ogni
+   giorno: se su una riga finisce l'indirizzo di un'altra giornata, il tablet apre in
+   grande la foto di due sere prima con la miniatura giusta accanto. Prima di fidarsi,
+   quindi, si controlla che l'indirizzo appartenga alla giornata aperta. */
+function urlDiQuestaGiornata(u){
+  return !!(u && S.servizio && String(u).includes(S.servizio.id));
+}
+async function bigUrlAffidabile(p){
+  if(!p.bigUrl) return null;
+  if(urlDiQuestaGiornata(p.bigUrl)) return p.bigUrl;
+  // rileggo la riga: puo' essere solo una copia vecchia rimasta in memoria sul tablet
+  try{
+    const {data} = await sb.from("foto").select("anteprima_url,mini_url").eq("id", p.id).single();
+    if(data){
+      if(data.mini_url) p.url = data.mini_url;
+      if(urlDiQuestaGiornata(data.anteprima_url)){ p.bigUrl = data.anteprima_url; return p.bigUrl; }
+    }
+  }catch(_){}
+  p.bigUrl = null;                 // sbagliato davvero: meglio la miniatura che la foto di un altro
+  return null;
 }
 
 async function showCurrent(){
@@ -2171,7 +2221,7 @@ async function showCurrent(){
   $("vCode").textContent=p.code;
   $("vFav").classList.toggle("on",p.fav); $("vFav").textContent=p.fav?'♥':'♡';
   V.scale=1; V.tx=0; V.ty=0;
-  const url = p.bigUrl || p.url;
+  const url = (await bigUrlAffidabile(p)) || p.url;
 
   /* 1) se l'anteprima grande e' gia' in memoria si mostra all'istante */
   const pronta = bigCache.get(url);
@@ -2184,9 +2234,9 @@ async function showCurrent(){
   draw();
 
   /* 3) e appena arriva la versione grande si sostituisce, se siamo ancora su questa foto */
-  const atteso = p.code;
+  const atteso = p.id;               // l'id, non il codice: i codici si ripetono ogni giorno
   const im = await caricaBig(url);
-  if(im && V.list[V.idx] && V.list[V.idx].code === atteso){ V.img=im; draw(); }
+  if(im && V.list[V.idx] && V.list[V.idx].id === atteso){ V.img=im; draw(); }
   precaricaVicine();
 }
 /* Fra una foto e l'altra passa solo una STRISCIA nera di pochi millimetri: le due foto
