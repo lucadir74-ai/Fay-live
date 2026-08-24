@@ -163,8 +163,11 @@
   #lbAdjBar hr{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
   /* spazio sempre riservato: prima la nota compariva al primo tocco di un cursore
      e il pannello si spostava di qualche millimetro sotto le dita */
-  #lbAdjBar #adjNote{display:block;min-height:0;line-height:1.3}
-  #adjAutoNote{line-height:1.3}
+  /* Il pannello è ancorato in BASSO: qualsiasi riga che compare lo fa crescere verso
+     l'alto, e i cursori scivolano via da sotto il mouse (si finiva per trascinare
+     un'altra barra). Le due note quindi occupano SEMPRE lo stesso spazio, piene o vuote. */
+  #lbAdjBar #adjNote{display:block;min-height:32px;line-height:1.3}
+  #adjAutoNote{display:block;min-height:32px;line-height:1.3}
   /* preset: insiemi di cursori salvati per la sede, applicabili con un tocco */
   #adjPresets{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
   #adjPresets .pre{position:relative;padding:5px 22px 5px 10px;font-size:13px;border-radius:14px;
@@ -4468,6 +4471,8 @@ function ridisegnaFotoAperta(){
 }
 function applyAdjFromBar(){
   const p = lbPhoto(); if(!p) return;
+  // rete di sicurezza: il pannello non deve scorrere da solo mentre muovi un cursore
+  const bar = $("lbAdjBar"), scrollPrima = bar ? bar.scrollTop : 0;
   p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
             dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
             sk:+$("adjSk").value,
@@ -4480,6 +4485,7 @@ function applyAdjFromBar(){
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa e resta sulla foto · l'originale su disco non si tocca" : "";
   monitorFollow();              // il cliente vede subito la foto corretta
   aggiornaMiniaturaTraPoco(p);  // la griglia mostra la foto come l'hai corretta
+  if(bar && bar.scrollTop !== scrollPrima) bar.scrollTop = scrollPrima;
 }
 for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2","adjSk"]) $(id).oninput = applyAdjFromBar;
 
