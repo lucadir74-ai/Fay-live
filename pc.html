@@ -585,6 +585,7 @@
     <span>Originali cloud: <b id="stOrigCloud" title="Quante foto del rullo attivo hanno l'originale a piena risoluzione sul cloud">—</b></span>
     <span>Export: <b id="stExport">Download</b></span>
     <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
+    <span id="stRipristino" hidden style="color:var(--accent);font-weight:700;cursor:pointer" title="Clicca per fermare il ripristino"></span>
     <b id="stThumbs" hidden></b>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
@@ -1386,10 +1387,11 @@ $("restoreInput").onchange = async e=>{
     toast(missingFile.length? `Nessun originale corrispondente trovato (${missingFile.length} anteprime mancanti)` : "Niente da rigenerare");
     return;
   }
-  prog.cancel=false; prog.total+=lista.length; progUpdate();
+  rip.attivo = true; rip.annulla = false; rip.fatte = 0; rip.saltate = 0; rip.totali = lista.length;
+  ripAggiorna();
   let done=0;
   for(const p of lista){
-    if(prog.cancel) break;
+    if(rip.annulla) break;
     const f=byCode.get(p.code);
     try{
       const buf=await f.arrayBuffer();
@@ -1402,8 +1404,8 @@ $("restoreInput").onchange = async e=>{
       // ricarica sul cloud mantenendo lo stesso codice/riga
       const srvR = srvSicuro(p);
       if(!srvR){ console.warn("ripristino saltato (giornata diversa)", p.code); continue; }
-      const ap=srvR+"/"+p.code+".jpg";
-      const up=await sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true});
+      const ap=pathAnteprima(p, srvR);
+      const up=await conScadenza(sb.storage.from("anteprime").upload(ap, prevBlob, {contentType:"image/jpeg", upsert:true}), 60000, p.code);
       if(!up.error){
         p.anteprimaUrl=pubUrl(ap);
         if(p.dbId) await sb.from("foto").update({anteprima_url:p.anteprimaUrl}).eq("id",p.dbId);
@@ -1416,19 +1418,22 @@ $("restoreInput").onchange = async e=>{
         m.getContext("2d").drawImage(c,0,0,m.width,m.height);
         const miniBlob = await toBlobAsync(m, 0.72);
         p.mini = miniBlob;
-        const mp = srvR+"/"+p.code+"_m.jpg";
-        const um = await sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true});
+        const mp = pathMini(p, srvR);
+        const um = await conScadenza(sb.storage.from("anteprime").upload(mp, miniBlob, {contentType:"image/jpeg", upsert:true}), 45000, p.code+" mini");
         if(!um.error){
           p.miniUrl = pubUrl(mp);
           if(p.dbId) await sb.from("foto").update({mini_url:p.miniUrl}).eq("id",p.dbId);
         }
       }catch(_){}
-    }catch(err){ console.warn("ripristino", p.code, err); }
-    done++; prog.done++;
-    if((done&3)===0){ progUpdate(); paintVisible(); updateThumbCloud(); await new Promise(r=>setTimeout(r,0)); }
+    }catch(err){ rip.saltate++; console.warn("ripristino", p.code, err); }
+    done++; rip.fatte = done; ripAggiorna();
+    if((done&3)===0){ paintVisible(); updateThumbCloud(); await new Promise(r=>setTimeout(r,0)); }
   }
-  progUpdate(); paintVisible(); updateThumbCloud();
-  toast(`Ripristinate ${done} anteprime` + (missingFile.length? ` — ${missingFile.length} senza originale nella cartella` : ""));
+  rip.attivo = false; ripAggiorna();
+  paintVisible(); updateThumbCloud();
+  toast(`Rigenerate ${done - rip.saltate} anteprime su ${lista.length}`
+    + (rip.saltate ? ` — ${rip.saltate} non riuscite, rilancia il ripristino per riprovarle` : "")
+    + (missingFile.length ? ` — ${missingFile.length} senza originale nella cartella` : ""), 8000);
 };
 
 // lettera suggerita dal nome della cartella che contiene la foto (es. ".../25-07/B/IMG_001.jpg" -> B)
@@ -2339,7 +2344,7 @@ async function syncPhotoUp(p){
   try{
     await ensureRullo(p.letter);
     if(p.mini && !p.miniUrl && srvSicuro(p)){
-      const mp = srvSicuro(p)+"/"+p.code+"_m.jpg";
+      const mp = pathMini(p, srvSicuro(p));
       const up = await sb.storage.from("anteprime").upload(mp, p.mini, {contentType:"image/jpeg", upsert:true});
       if(up.error) throw up.error;
       p.miniUrl = pubUrl(mp);
@@ -2400,7 +2405,7 @@ function pumpBigQueue(){
       try{
         const srv = srvSicuro(p);
         if(!srv){ console.warn("anteprima grande saltata (giornata diversa)", p.code); return; }
-        const ap = srv+"/"+p.code+".jpg";
+        const ap = pathAnteprima(p, srv);
         const up = await sb.storage.from("anteprime").upload(ap, p.preview, {contentType:"image/jpeg", upsert:true});
         if(up.error) throw up.error;
         p.anteprimaUrl = pubUrl(ap);
@@ -2538,7 +2543,7 @@ async function uploadOneOriginal(p){
        errori che poi non venivano ritentati. */
     const limite = Math.min(240000, Math.max(90000, Math.round(blob.size/1048576*60000)));
     const up = await conScadenzaUpload(
-      sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true}),
+      sb.storage.from("originali").upload((p.origKey = origPath(p)), blob, {contentType:blob.type, upsert:true}),
       limite, p.code);
     registraVelocita(blob.size, Date.now()-t0);
     if(up.error && up.error.statusCode!=="409" && !/exists/i.test(up.error.message||"")) throw up.error;
@@ -2546,7 +2551,7 @@ async function uploadOneOriginal(p){
     origFalliti.delete(p.code);
     logEvento("originale caricato", {codici:p.code, rullo:p.letter,
       dettaglio: Math.round((Date.now()-t0)/1000)+" s, "+Math.round(blob.size/1024)+" KB"});
-    if(p.dbId) await sb.from("foto").update({originale_url: origPath(p), richiesta_originale:false}).eq("id",p.dbId);
+    if(p.dbId) await sb.from("foto").update({originale_url: p.origKey, richiesta_originale:false}).eq("id",p.dbId);
     else console.warn("originale caricato ma senza riga sul database:", p.code);
     cloud.online=true;
   }catch(err){
@@ -2820,7 +2825,12 @@ setInterval(serviRichiesteAltreGiornate, 8000);
    Ordine: 1) file locale/archivio  2) originale già sul cloud  3) lo carico io ora dal mio locale.
    Se nessuna via è possibile (foto di un'altra postazione, non ancora sul cloud, e io non ho il file),
    torna null e il chiamante ripiega sull'anteprima avvisando l'operatore. */
-const origPath = p => srvOf(p)+"/"+p.code+".jpg";
+/* Stessa protezione delle anteprime, e qui conta di più: un originale sovrascritto
+   significherebbe STAMPARE la foto di un'altra sera. Nel nome entra la sigla del rullo,
+   e per scaricare si usa sempre il percorso realmente salvato sulla riga (p.origKey),
+   così i file caricati con lo schema vecchio restano raggiungibili. */
+const origPath = p => { const r = rulloIdDi(p); return srvOf(p)+"/"+(r?r+"-":"")+p.code+".jpg"; };
+const origKeyDi = p => (p && p.origKey) ? p.origKey : origPath(p);
 
 async function ensureOriginalBlob(p){
   // 1) ho il file in locale (l'ho importato io)?
@@ -2832,10 +2842,10 @@ async function ensureOriginalBlob(p){
       // se online e non ancora caricato, lo metto sul cloud per le altre postazioni
       if(sb && cloud.servizio && !p.origUploaded){
         sbTry(async ()=>{
-          const up = await sb.storage.from("originali").upload(origPath(p), blob, {contentType:blob.type, upsert:true});
+          const up = await sb.storage.from("originali").upload((p.origKey = origPath(p)), blob, {contentType:blob.type, upsert:true});
           if(up.error && up.error.statusCode!=="409") throw up.error;
           p.origUploaded = true;
-          if(p.dbId) await sb.from("foto").update({originale_url: origPath(p)}).eq("id",p.dbId);
+          if(p.dbId) await sb.from("foto").update({originale_url: p.origKey}).eq("id",p.dbId);
         }, "sync originale "+p.code);
       }
       return blob;
@@ -2845,7 +2855,7 @@ async function ensureOriginalBlob(p){
   // 2) l'originale è già sul cloud (caricato da un'altra postazione)?
   if(sb && cloud.servizio){
     const got = await sbTry(async ()=>{
-      const dl = await sb.storage.from("originali").download(origPath(p));
+      const dl = await sb.storage.from("originali").download(origKeyDi(p));
       if(dl.error) throw dl.error;
       return dl.data;
     }, "scarico originale "+p.code);
@@ -3300,7 +3310,7 @@ async function inviaDiretto(set){
   const files=[], mancanti=[];
   for(const p of set){
     try{
-      const {data,error} = await sb.storage.from("originali").createSignedUrl(origPath(p), 900);
+      const {data,error} = await sb.storage.from("originali").createSignedUrl(origKeyDi(p), 900);
       if(error || !data || !data.signedUrl){ mancanti.push(p.code); continue; }
       files.push({nome:p.code+".jpg", url:data.signedUrl});
     }catch(_){ mancanti.push(p.code); }
@@ -5017,6 +5027,60 @@ function srvOf(p){ return (p && p.srvId) ? p.srvId : (cloud.servizio ? cloud.ser
    Dal PC non si vede (usa l'originale su disco): lo vedono solo i tablet, e solo
    sull'anteprima grande. Qui la giornata della foto si fissa una volta e non si carica
    mai un'anteprima dentro la giornata di un altro giorno. */
+/* PERCORSI DELLE ANTEPRIME — la garanzia che una giornata non possa scrivere sopra
+   un'altra. Nel nome del file entra anche l'IDENTIFICATIVO DEL RULLO, che è diverso per
+   ogni giornata: anche se per un errore la cartella fosse quella sbagliata, il nome non
+   coinciderebbe mai con quello di un'altra sera, e nessun file verrebbe sovrascritto.
+   Restano tutti in una cartella sola per giornata, così lo svuotamento non cambia. */
+/* CONTROLLO AUTOMATICO all'apertura di una giornata: se l'indirizzo di un'anteprima non
+   contiene questa giornata, quell'immagine è di un altro giorno. Prima nessuno se ne
+   accorgeva finché un cliente non si vedeva la foto di un'altra sera sul tablet. */
+/* RIPRISTINO ANTEPRIME — stato in basso, non nella barra dell'import.
+   La barra grande resta quella dell'import (copia su disco + anteprime della serata):
+   è l'unica che serve a capire quando si può togliere la scheda. Il ripristino è un
+   lavoro di manutenzione e vive nella riga di stato, dove si può anche fermare. */
+const rip = { attivo:false, fatte:0, totali:0, annulla:false, saltate:0 };
+function ripAggiorna(){
+  const el = $("stRipristino"); if(!el) return;
+  if(!rip.attivo){ el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = `Rigenero anteprime ${rip.fatte}/${rip.totali}`
+    + (rip.saltate ? ` · ${rip.saltate} saltate` : "") + " — clicca per fermare";
+}
+document.addEventListener("click", e=>{
+  if(e.target && e.target.id==="stRipristino" && rip.attivo){
+    rip.annulla = true;
+    toast("Fermo il ripristino: quello già fatto resta valido");
+  }
+});
+/* Scadenza per foto: se un caricamento resta appeso (linea caduta a metà) prima
+   bloccava tutta la fila dietro. Ora dopo il tempo previsto si passa alla successiva
+   e la foto viene contata tra le saltate, da rifare al giro dopo. */
+function conScadenza(promessa, ms, cosa){
+  return Promise.race([
+    promessa,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error("tempo scaduto: "+cosa)), ms))
+  ]);
+}
+function anteprimeFuoriGiornata(){
+  const srv = cloud.servizio ? String(cloud.servizio.id) : "";
+  if(!srv) return [];
+  return state.photos.filter(p=>p.anteprimaUrl && !String(p.anteprimaUrl).includes(srv));
+}
+function controlloAnteprimeGiornata(){
+  const fuori = anteprimeFuoriGiornata();
+  if(!fuori.length) return;
+  const lettere = [...new Set(fuori.map(p=>p.letter))].sort().join(", ");
+  toast(`⚠ ${fuori.length} anteprime (rulli ${lettere}) puntano a un'altra giornata: ` +
+        `rigenerale con Altro → Ripristina anteprime`, 12000);
+  console.warn("anteprime fuori giornata", fuori.map(p=>p.code));
+}
+function rulloIdDi(p){
+  const r = p && p.letter && cloud.rulli ? cloud.rulli[p.letter] : null;
+  return r && r.id ? String(r.id).replace(/-/g,"").slice(0,8) : "";
+}
+function pathAnteprima(p, srv){ const r = rulloIdDi(p); return srv+"/"+(r?r+"-":"")+p.code+".jpg"; }
+function pathMini(p, srv){ const r = rulloIdDi(p); return srv+"/"+(r?r+"-":"")+p.code+"_m.jpg"; }
 function srvSicuro(p){
   if(!p) return null;
   if(!p.srvId && cloud.servizio) p.srvId = cloud.servizio.id;   // la fisso adesso, per sempre
@@ -5343,6 +5407,17 @@ async function openServizio(sv){
   ricordaScelta();
   ricordaGiornataCache(sv.id);
   cloud.rulli = {};
+  /* CODE FERMATE PRIMA DI CAMBIARE GIORNATA.
+     Anteprime e miniature salgono in coda per parecchi minuti, e i tentativi falliti
+     si ripetono anche dopo. Cambiando data quelle rimaste in sospeso continuavano a
+     salire mentre era aperta un'altra giornata: è così che una ventina di foto è finita
+     nella cartella sbagliata. Ora la coda si svuota qui; tornando su quella giornata le
+     anteprime mancanti vengono rimesse in coda da sole. */
+  const fermate = bigQueue.length + thumbQueue.length;
+  bigQueue.forEach(p=>{ p._inBig=false; });
+  thumbQueue.forEach(p=>{ p._inThumb=false; });
+  bigQueue.length = 0; thumbQueue.length = 0;
+  if(fermate) toast(`${fermate} anteprime in coda messe in pausa: riprendono riaprendo la giornata`, 5000);
   state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
   state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
   cellPool.forEach(el=>el.remove()); cellPool.clear();
@@ -5350,6 +5425,7 @@ async function openServizio(sv){
   setSync("syncing","Apro la giornata…");
   try{
     await loadServizioFoto();
+    controlloAnteprimeGiornata();     // avvisa subito se qualche anteprima punta altrove
     subscribeRealtime();
     cleanupOld();
     cloud.online=true; setSync("online");
@@ -6261,7 +6337,8 @@ function addRemotePhotoFast(f, letter){
             /* Serve all'indicatore "Originali cloud": quando si apre una giornata passata
                questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
-            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url };
+            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
+            origKey: f.originale_url || null };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -6275,7 +6352,8 @@ async function addRemotePhoto(f, letter){
             /* Serve all'indicatore "Originali cloud": quando si apre una giornata passata
                questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
-            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url };
+            origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
+            origKey: f.originale_url || null };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
   if(blob){ p.preview=blob; }                                  // la grande era già in cache
