@@ -120,7 +120,15 @@
   #lbMenu{position:absolute;top:52px;right:16px;z-index:5;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:200px;background:rgba(11,14,20,.97);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbMenu[hidden]{display:none}
   #lbMenu button{text-align:left;width:100%}
-  #lbAdjBar{position:absolute;left:16px;bottom:16px;z-index:5;flex-direction:column;gap:13px;padding:18px;width:340px;display:flex;background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  /* Il pannello e' ancorato in basso: crescendo di righe finiva a sbucare sopra il bordo
+     dello schermo, sotto la barra del programma, e le prime righe sparivano. Ora ha un
+     tetto di altezza e, se serve, scorre dentro di se'. */
+  #lbAdjBar{position:absolute;left:16px;bottom:16px;top:auto;z-index:5;flex-direction:column;gap:10px;padding:15px;width:340px;display:flex;
+    max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbAdjBar::-webkit-scrollbar, #lbRitBar::-webkit-scrollbar{width:9px}
+  #lbAdjBar::-webkit-scrollbar-thumb, #lbRitBar::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+  #lbAdjBar > *{flex:0 0 auto}
   #lbAdjBar[hidden]{display:none}
   .cmp{position:relative}
   /* Tondo con la X centrata davvero: prima il glifo era spinto in alto dal line-height
@@ -155,7 +163,8 @@
   #lbAdjBar hr{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
   /* spazio sempre riservato: prima la nota compariva al primo tocco di un cursore
      e il pannello si spostava di qualche millimetro sotto le dita */
-  #lbAdjBar #adjNote{display:block;min-height:32px;line-height:1.35}
+  #lbAdjBar #adjNote{display:block;min-height:0;line-height:1.3}
+  #adjAutoNote{line-height:1.3}
   /* preset: insiemi di cursori salvati per la sede, applicabili con un tocco */
   #adjPresets{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
   #adjPresets .pre{position:relative;padding:5px 22px 5px 10px;font-size:13px;border-radius:14px;
@@ -174,9 +183,11 @@
   #lbMigliora.on{border-color:var(--accent);color:var(--accent)}
   #lbMigliora:disabled{opacity:.45;cursor:default}
   /* pannello del ritocco: sta a destra, il pannello luce e colore resta a sinistra */
-  #lbRitBar{position:absolute;right:16px;bottom:16px;z-index:6;flex-direction:column;gap:11px;padding:16px;
-    width:290px;display:flex;background:rgba(11,14,20,.96);border:1px solid var(--line);
+  #lbRitBar{position:absolute;right:16px;bottom:16px;top:auto;z-index:6;flex-direction:column;gap:10px;padding:15px;
+    width:290px;display:flex;max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    background:rgba(11,14,20,.96);border:1px solid var(--line);
     border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbRitBar > *{flex:0 0 auto}
   #lbRitBar[hidden]{display:none}
   #lbRitBar .tit{font-size:15px;font-weight:700;color:var(--ink)}
   #lbRitBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
@@ -4428,9 +4439,8 @@ function syncAdjBar(){
   const cfg = autoLuce();
   $("adjAuto").checked = cfg.on;
   $("adjAutoNote").textContent = cfg.on
-    ? "Il tasto ✦ Migliora sistema luce, contrasto e dominanti, solo dove serve · riferimento di questa postazione: luce "
-      + cfg.target + ", contrasto " + cfg.contrasto
-    : "Correzione automatica spenta: il tasto ✦ Migliora resta grigio";
+    ? "Riferimento postazione: luce " + cfg.target + ", contrasto " + cfg.contrasto
+    : "Spenta: il tasto ✦ Migliora resta grigio";
   $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
   $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = !!a.bw;
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
