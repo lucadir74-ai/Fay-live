@@ -171,6 +171,8 @@
   #lbAdjBar .auto{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
   #lbAdjBar .auto label{display:flex;gap:7px;align-items:center;font-size:14px;color:var(--ink)}
   #btnTara{font-size:12.5px;padding:4px 9px}
+  #lbMigliora.on{border-color:var(--accent);color:var(--accent)}
+  #lbMigliora:disabled{opacity:.45;cursor:default}
   /* pannello del ritocco: sta a destra, il pannello luce e colore resta a sinistra */
   #lbRitBar{position:absolute;right:16px;bottom:16px;z-index:6;flex-direction:column;gap:11px;padding:16px;
     width:290px;display:flex;background:rgba(11,14,20,.96);border:1px solid var(--line);
@@ -403,6 +405,7 @@
         <span id="lbStatus" class="hint"></span>
         <div class="spacer"></div>
         <button id="lbFav">♡ Segna <kbd>spazio</kbd></button>
+        <button id="lbMigliora" title="Applica la correzione automatica di luce, contrasto e dominanti. Premuto di nuovo torna all'originale">✦ Migliora <kbd>m</kbd></button>
         <button id="lbQr">QR al cliente</button>
         <button id="lbPrint" class="primary">Stampa</button>
         <button id="lbShow">Monitor <kbd>-</kbd></button>
@@ -430,7 +433,7 @@
         <div class="row"><span class="dom"><i class="pas" style="background:#e8e83a"></i>B<i class="pas" style="background:#1971c2"></i></span><input type="range" id="adjB2" min="-100" max="100" step="1" value="0"></div>
         <hr>
         <div class="auto">
-          <label><input type="checkbox" id="adjAuto"> Correzione automatica</label>
+          <label><input type="checkbox" id="adjAuto"> Proponi la correzione (tasto ✦ Migliora)</label>
           <button id="btnTara" title="Prende la foto come la vedi ora e la usa come riferimento per luce e contrasto">Tara su questa</button>
         </div>
         <span id="adjAutoNote" class="hint"></span>
@@ -3912,18 +3915,56 @@ function calcolaAuto(mis, cfg){
   }
   return fatto.length ? {adj:a, fatto} : null;
 }
-/* applicata una volta all'apertura della foto, e solo se non c'è già una correzione a mano */
-function applicaAutoCorrezione(p, bmp){
+/* La correzione si CALCOLA all'apertura ma non si applica: resta pronta dietro il tasto
+   Migliora, così si confronta originale e migliorata con un colpo solo. Premuto di nuovo
+   il tasto rimette l'originale. Quando è applicata vale ovunque, come ogni altra modifica:
+   visualizzatore, monitor, miniature, stampa ed export. */
+function calcolaSuggerimento(p, bmp){
+  if(!p || !bmp) return null;
+  if(p.autoSugg !== undefined) return p.autoSugg;   // gia' calcolata per questa foto
   const cfg = autoLuce();
-  if(!cfg.on || !p || !bmp || p.autoFatta || p.adj) return null;
-  p.autoFatta = true;
+  if(!cfg.on){ p.autoSugg = null; return null; }
   let mis;
   try{ mis = misuraFoto(bmp, bmp.width, bmp.height); }
-  catch(_){ return null; }                        // canvas non leggibile: si lascia com'è
+  catch(_){ p.autoSugg = null; return null; }       // canvas non leggibile: si lascia com'è
   const r = calcolaAuto(mis, cfg);
-  if(!r) return null;                             // foto già a posto: non si tocca nulla
-  p.adj = r.adj;
-  return r;
+  p.autoSugg = r || null;                           // null = foto gia' a posto
+  return p.autoSugg;
+}
+function aggiornaTastoMigliora(){
+  const b = $("lbMigliora"); if(!b) return;
+  const p = lbPhoto();
+  if(!p){ b.disabled = true; b.classList.remove("on"); return; }
+  if(p.autoApplicata){
+    b.disabled = false; b.classList.add("on");
+    b.innerHTML = "✦ Originale <kbd>m</kbd>";
+    b.title = "Torna alla foto com'era: " + ((p.autoSugg && p.autoSugg.fatto.join(", ")) || "correzione applicata");
+    return;
+  }
+  b.classList.remove("on");
+  b.innerHTML = "✦ Migliora <kbd>m</kbd>";
+  if(p.adj){ b.disabled = true; b.title = "Ci sono già regolazioni a mano su questa foto"; return; }
+  if(p.autoSugg === undefined){ b.disabled = true; b.title = "Sto ancora leggendo la foto"; return; }
+  if(!p.autoSugg){ b.disabled = true; b.title = "Questa foto non ha bisogno di correzioni"; return; }
+  b.disabled = false;
+  b.title = "Applica: " + p.autoSugg.fatto.join(", ");
+}
+function toggleMigliora(){
+  const p = lbPhoto(); if(!p) return;
+  if(p.autoApplicata){
+    p.adj = null; p.autoApplicata = false;
+    $("adjNote").textContent = "";
+    toast("Foto originale");
+  }else{
+    if(p.adj || !p.autoSugg) return;
+    p.adj = Object.assign({}, p.autoSugg.adj);
+    p.autoApplicata = true;
+    $("adjNote").textContent = "Corretta in automatico: " + p.autoSugg.fatto.join(", ");
+    toast("Migliorata: " + p.autoSugg.fatto.join(", "));
+  }
+  syncAdjBar(); ridisegnaFotoAperta(); monitorFollow();
+  aggiornaMiniatura(p);           // anteprima in griglia subito allineata
+  aggiornaTastoMigliora();
 }
 
 /* ---------- preset dei cursori (per sede) ---------- */
@@ -3951,9 +3992,9 @@ function renderPresets(){
 function applicaPreset(pr){
   const p = lbPhoto(); if(!p) return;
   p.adj = Object.assign({}, ADJ0, pr.adj || {});
-  p.autoFatta = true;                  // scelta dell'operatore: l'automatico non la sovrascrive
+  p.autoApplicata = false;             // scelta dell'operatore, non correzione automatica
   syncAdjBar(); ridisegnaFotoAperta();
-  monitorFollow(); aggiornaMiniaturaTraPoco(p);
+  monitorFollow(); aggiornaMiniaturaTraPoco(p); aggiornaTastoMigliora();
   toast("Preset " + pr.nome);
 }
 async function salvaPreset(){
@@ -4004,7 +4045,7 @@ function aggiornaMiniaturaTraPoco(p){
    l'anteprima originale. L'originale su disco non è mai stato toccato. */
 function ripristinaFoto(p){
   if(!p) return;
-  p.adj = null; p.autoFatta = true; p.thumbMod = null;
+  p.adj = null; p.autoApplicata = false; p.thumbMod = null;
   ritLibera(p);
 }
 
@@ -4212,13 +4253,14 @@ $("lbRitocco").onclick = ()=>{ $("lbMenu").hidden = true; entraRitocco(); };
 $("ritFine").onclick = esciRitocco;
 $("ritUndo").onclick = ritAnnulla;
 $("ritSrc").onclick = ()=>{ rit.hasSrc = false; ritPasso("1 · Clicca una zona PULITA vicina al difetto, da cui copiare."); };
+$("lbMigliora").onclick = toggleMigliora;
 $("lbRipristina").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   if(!fotoModificata(p)){ toast("Questa foto non ha modifiche"); return; }
   if(!confirm("Tolgo tutte le modifiche da " + p.code + " (luce, colore, pelle e ritocco)?")) return;
   esciRitocco();
   ripristinaFoto(p);
-  syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); paintVisible();
+  syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); paintVisible(); aggiornaTastoMigliora();
   $("adjNote").textContent = "";
   toast(p.code + " ripristinata come l'originale");
 };
@@ -4287,6 +4329,7 @@ async function paintLightbox(){
   $("lbCode").textContent=p.code;
   setLbStatus(p);
   if(!$("lbAdjBar").hidden) syncAdjBar();   // cursori sempre allineati alla foto aperta
+  aggiornaTastoMigliora();                  // il tasto parla SEMPRE della foto che hai davanti
   $("lbSelect").firstChild.textContent = state.selection.has(p.id)? "Deseleziona ":"Seleziona ";
   const segnata = state.selection.has(p.id);
   const bf = $("lbFav");
@@ -4324,12 +4367,8 @@ async function paintLightbox(){
     lbBmp = bmp; lbBmpFor = p.id;              // tenuta da parte per i cursori
     /* la luce automatica lavora sulla versione nitida, una volta sola per foto,
        e solo se l'operatore non ha già messo mano ai cursori */
-    const auto = applicaAutoCorrezione(p, bmp);
-    if(auto){
-      if(!$("lbAdjBar").hidden) syncAdjBar();
-      $("adjNote").textContent = "Corretta in automatico: " + auto.fatto.join(", ");
-      aggiornaMiniaturaTraPoco(p);
-    }
+    calcolaSuggerimento(p, bmp);          // pronta da applicare col tasto, non applicata
+    aggiornaTastoMigliora();
     drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
@@ -4347,7 +4386,7 @@ function closeLightbox(){
      anche dopo. Restano in memoria per la giornata e si tolgono a mano con "Ripristina
      originale" (una foto) o "Ripristina tutte le foto" (menu Altro). */
   const ap = fotoAperta();
-  if(ap){ aggiornaMiniatura(ap); if(!ap.adj) ap.autoFatta = false; }
+  if(ap) aggiornaMiniatura(ap);
   $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; state.lbFoto=null;
   // il monitor cliente torna allo slideshow: la vendita è finita
   const M=state.monitor;
@@ -4389,9 +4428,9 @@ function syncAdjBar(){
   const cfg = autoLuce();
   $("adjAuto").checked = cfg.on;
   $("adjAutoNote").textContent = cfg.on
-    ? "Luce, contrasto e dominanti sistemati all'apertura, solo dove serve · riferimento di questa postazione: luce "
+    ? "Il tasto ✦ Migliora sistema luce, contrasto e dominanti, solo dove serve · riferimento di questa postazione: luce "
       + cfg.target + ", contrasto " + cfg.contrasto
-    : "Pelle e ritocco restano sempre a mano";
+    : "Correzione automatica spenta: il tasto ✦ Migliora resta grigio";
   $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
   $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = !!a.bw;
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
@@ -4418,7 +4457,8 @@ function applyAdjFromBar(){
             dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
             sk:+$("adjSk").value,
             bw: $("adjBW").checked };
-  p.autoFatta = true;           // corretta a mano: la luce automatica non ci torna sopra
+  p.autoApplicata = false;      // da qui in poi e' roba tua, non piu' la correzione automatica
+  aggiornaTastoMigliora();
   $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
   $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = $("adjBW").checked;
   ridisegnaFotoAperta();
@@ -4434,8 +4474,10 @@ $("adjAuto").onchange = ()=>{
   cfg.on = $("adjAuto").checked;
   setAutoLuce(cfg);
   syncAdjBar();
-  toast(cfg.on ? "Correzione automatica accesa su questa postazione"
-               : "Correzione automatica spenta su questa postazione");
+  for(const p of state.photos) p.autoSugg = undefined;   // si ricalcola con la nuova scelta
+  aggiornaTastoMigliora();
+  toast(cfg.on ? "Correzione proposta su questa postazione"
+               : "Correzione non proposta su questa postazione");
 };
 /* La taratura si fa una volta: si sistema a mano una foto finché non piace,
    si preme il tasto e quel livello diventa il riferimento per tutte le altre. */
@@ -4449,7 +4491,8 @@ $("btnTara").onclick = ()=>{
   const cfg = autoLuce();
   cfg.target = m.luce; cfg.contrasto = m.ampiezza; cfg.on = true;
   setAutoLuce(cfg);
-  syncAdjBar();
+  for(const q of state.photos) if(!q.autoApplicata) q.autoSugg = undefined;  // col nuovo riferimento
+  syncAdjBar(); aggiornaTastoMigliora();
   toast("Riferimento tarato: luce " + m.luce + ", contrasto " + m.ampiezza + " · vale per questa postazione");
 };
 
@@ -4478,7 +4521,8 @@ $("adjBW").onchange = applyAdjFromBar;
 $("adjReset").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   p.adj = null;
-  p.autoFatta = true;           // azzerata di proposito: resta com'è finché la foto è aperta
+  p.autoApplicata = false;
+  aggiornaTastoMigliora();      // il tasto Migliora torna disponibile
   syncAdjBar();
   ridisegnaFotoAperta();
   $("adjNote").textContent = "";
@@ -4879,6 +4923,7 @@ addEventListener("keydown", e=>{
     else if(e.key==="ArrowLeft") $("lbPrev").click();
     else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
     else if(e.key==="-") $("lbShow").click();
+    else if(e.key==="m" || e.key==="M"){ e.preventDefault(); if(!$("lbMigliora").disabled) toggleMigliora(); }
     else if(e.key==="Enter"){ e.preventDefault(); closeLightbox(); }
     return;
   }
@@ -6968,7 +7013,7 @@ $("btnResetRitocchi").onclick = ()=>{
               (mod.length===1 ? " foto" : " foto") + "? Tornano come le hai importate.")) return;
   esciRitocco();
   for(const p of mod) ripristinaFoto(p);
-  if($("lightbox").classList.contains("open")){ syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); }
+  if($("lightbox").classList.contains("open")){ syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); aggiornaTastoMigliora(); }
   paintVisible();
   toast(mod.length + " foto ripristinate");
 };
