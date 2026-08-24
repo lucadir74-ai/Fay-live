@@ -95,6 +95,7 @@
   .chip.ex{background:#7FB8F0;color:#0a1f33}
   .flag.print{color:var(--ok)}
   .flag.exp{color:#7FB8F0}
+  .flag.mod{color:#F5B942}
 
   /* ---------- vista insieme ---------- */
   #compare{position:absolute;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:18}
@@ -155,6 +156,37 @@
   /* spazio sempre riservato: prima la nota compariva al primo tocco di un cursore
      e il pannello si spostava di qualche millimetro sotto le dita */
   #lbAdjBar #adjNote{display:block;min-height:32px;line-height:1.35}
+  /* preset: insiemi di cursori salvati per la sede, applicabili con un tocco */
+  #adjPresets{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  #adjPresets .pre{position:relative;padding:5px 22px 5px 10px;font-size:13px;border-radius:14px;
+    background:var(--surface2);color:var(--ink);border:1px solid var(--line);cursor:pointer;max-width:100%}
+  #adjPresets .pre:hover{border-color:var(--accent);color:var(--accent)}
+  #adjPresets .preX{position:absolute;top:50%;right:5px;transform:translateY(-50%);
+    width:15px;height:15px;display:flex;align-items:center;justify-content:center;
+    border-radius:50%;font-size:11px;line-height:1;color:var(--muted);cursor:pointer}
+  #adjPresets .preX:hover{background:var(--danger);color:#fff}
+  #adjPresets .add{padding:5px 10px;font-size:13px;border-radius:14px;background:transparent;
+    color:var(--muted);border:1px dashed var(--line);cursor:pointer}
+  #adjPresets .add:hover{border-color:var(--accent);color:var(--accent)}
+  #lbAdjBar .auto{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
+  #lbAdjBar .auto label{display:flex;gap:7px;align-items:center;font-size:14px;color:var(--ink)}
+  #btnTara{font-size:12.5px;padding:4px 9px}
+  /* pannello del ritocco: sta a destra, il pannello luce e colore resta a sinistra */
+  #lbRitBar{position:absolute;right:16px;bottom:16px;z-index:6;flex-direction:column;gap:11px;padding:16px;
+    width:290px;display:flex;background:rgba(11,14,20,.96);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbRitBar[hidden]{display:none}
+  #lbRitBar .tit{font-size:15px;font-weight:700;color:var(--ink)}
+  #lbRitBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  #lbRitBar .row span{font-size:14px;color:var(--muted);min-width:74px}
+  #lbRitBar input[type=range]{flex:1;height:22px}
+  #lbRitBar label{display:flex;gap:7px;align-items:center;font-size:13.5px;color:var(--ink)}
+  #lbRitBar .az{display:flex;gap:7px;flex-wrap:wrap}
+  #lbRitBar .az button{font-size:13px;padding:6px 10px}
+  #ritPasso{font-size:13.5px;line-height:1.35;color:var(--accent);min-height:36px}
+  #lightbox.ritocco #lbStage{overflow:hidden}
+  #lightbox.ritocco #lbCanvas{cursor:crosshair;touch-action:none}
+  #lightbox.ritocco #lbNav{display:none}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -304,6 +336,7 @@
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
       <button id="btnDiagThumb" title="Dice perché le miniature non compaiono e prova a rigenerarle subito">Diagnosi miniature</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
+      <button id="btnResetRitocchi" title="Toglie luce, colore, pelle e ritocchi da TUTTE le foto della giornata: tornano come le hai importate">Ripristina tutte le foto</button>
       <button id="btnCodice" title="Codice che serve per aprire Fay Live su PC e tablet">Codice di accesso…</button>
       <hr>
       <button id="btnAutoOrig" title="Se attivo, OGNI foto importata sale sul cloud a piena risoluzione, anche quelle mai vendute: tanto traffico sull'hotspot. Vale per tutta la sede, non solo per questo PC">Caricamento automatico: —</button>
@@ -380,21 +413,43 @@
           <button id="lbExport">Esporta file</button>
           <button id="lbSend">✈ Invia</button>
           <button id="lbAdj">Luce e colore</button>
+          <button id="lbRitocco">Ritocco (pennello)</button>
+          <button id="lbRipristina">Ripristina originale</button>
         </div>
       </div>
       <div id="lbAdjBar">
+        <div id="adjPresets"></div>
         <div class="row"><span>Luce</span><input type="range" id="adjB" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Colore</span><input type="range" id="adjS" min="0" max="200" step="1" value="100"></div>
         <div class="row"><span>Calore</span><input type="range" id="adjT" min="-100" max="100" step="1" value="0"></div>
+        <div class="row"><span>Pelle</span><input type="range" id="adjSk" min="0" max="100" step="1" value="0"></div>
         <hr>
         <div class="row"><span class="dom"><i class="pas" style="background:#00d5d5"></i>R<i class="pas" style="background:#e03131"></i></span><input type="range" id="adjR" min="-100" max="100" step="1" value="0"></div>
         <div class="row"><span class="dom"><i class="pas" style="background:#d500d5"></i>G<i class="pas" style="background:#2f9e44"></i></span><input type="range" id="adjG" min="-100" max="100" step="1" value="0"></div>
         <div class="row"><span class="dom"><i class="pas" style="background:#e8e83a"></i>B<i class="pas" style="background:#1971c2"></i></span><input type="range" id="adjB2" min="-100" max="100" step="1" value="0"></div>
         <hr>
+        <div class="auto">
+          <label><input type="checkbox" id="adjAuto"> Correzione automatica</label>
+          <button id="btnTara" title="Prende la foto come la vedi ora e la usa come riferimento per luce e contrasto">Tara su questa</button>
+        </div>
+        <span id="adjAutoNote" class="hint"></span>
         <div class="row"><label style="display:flex;gap:7px;align-items:center;font-size:14px"><input type="checkbox" id="adjBW"> Bianco e nero</label>
           <button id="adjReset">Azzera</button></div>
         <span id="adjNote" class="hint"></span>
+      </div>
+      <div id="lbRitBar" hidden>
+        <div class="tit">Ritocco</div>
+        <div id="ritPasso"></div>
+        <div class="row"><span>Pennello</span><input type="range" id="ritSize" min="10" max="220" step="2" value="60"></div>
+        <div class="row"><span>Zoom</span><input type="range" id="ritZoom" min="1" max="6" step="0.1" value="1"></div>
+        <label><input type="checkbox" id="ritAdatta" checked> Adatta al colore (correttivo)</label>
+        <div class="az">
+          <button id="ritSrc">Cambia zona pulita</button>
+          <button id="ritUndo">Annulla</button>
+          <button id="ritFine" class="primary">Fine</button>
+        </div>
+        <span class="hint">Maiusc + trascina sposta la foto ingrandita · Esc esce dal ritocco</span>
       </div>
       <div id="lbStage"><canvas id="lbCanvas"></canvas>
         <div id="lbLoading">Carico la versione nitida…</div>
@@ -1032,7 +1087,7 @@ async function loadMasksForSede(){
    fino a ieri vivevano solo in memoria e sparivano a ogni ricarica. Ora seguono la sede,
    sul cloud e in copia locale, esattamente come le mascherine. */
 const IMPOSTAZIONI_SALVATE = ["name","secs","qrSecs","tiles","text","infoLine","frameOn","frameBorder",
-  "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos","autoOrig"];
+  "frameBottom","logoSize","textSize","font","fontInfo","infoH","codePos","autoOrig","presets"];
 function impKey(){ return "faylive_imp_" + (cloud.sede ? cloud.sede.id : "nosede"); }
 function impCloudPath(){ return "impostazioni/" + (cloud.sede ? cloud.sede.id : "nosede") + ".json"; }
 
@@ -1072,6 +1127,7 @@ async function caricaImpostazioni(){
                      ": impostazione della sede" + (cloud.sede ? " " + cloud.sede.nome : ""), 5000);
   }
   updateEventInfo();
+  try{ renderPresets(); }catch(_){}      // i preset arrivano con le impostazioni della sede
   if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
   paintVisible();
 }
@@ -1141,6 +1197,7 @@ $("evSave").onclick = ()=>{
     codePos: $("evCodePos").value,
     maskH: state.event.maskH || null,
     maskV: state.event.maskV || null,
+    presets: (state.event && state.event.presets) || [],   // i preset dei cursori restano
   };
   updateEventInfo();
   salvaImpostazioni();
@@ -2985,8 +3042,10 @@ function paintVisible(){
     let flags="";
     if(p.prints>0) flags+=`<span class="flag print">🖨${p.prints>1?"×"+p.prints:""}</span>`;
     if(p.exported) flags+=`<span class="flag exp">⇩</span>`;
+    if(fotoModificata(p)) flags+=`<span class="flag mod" title="Foto modificata: luce, colore o ritocco">✎</span>`;
     const st=statusOf(p);
-    const html = (p.thumb? `<img src="${p.thumb}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
+    const anteprima = p.thumbMod || p.thumb;
+    const html = (anteprima? `<img src="${anteprima}" alt="">` : "") + `<span class="code${st?" "+st:""}">${p.code}</span>` + (flags?`<span class="flags">${flags}</span>`:"");
     if(el._html!==html){ el.innerHTML=html; el._html=html; }
   }
 }
@@ -3626,16 +3685,14 @@ function refreshLbStatus(){
 /* ---------- regolazioni luce/colore per singola foto ----------
    Valgono per il visualizzatore, il monitor cliente e la stampa.
    L'originale su disco non viene mai modificato.                    */
-const ADJ0 = {b:100, c:100, s:100, t:0, bw:false, dr:0, dg:0, db:0};
+const ADJ0 = {b:100, c:100, s:100, t:0, bw:false, dr:0, dg:0, db:0, sk:0};
 function adjOf(p){
   if(!p || !p.adj) return null;
   const a = p.adj;
   return (a.b===100 && a.c===100 && a.s===100 && a.t===0 && !a.bw
-          && !a.dr && !a.dg && !a.db) ? null : a;
+          && !a.dr && !a.dg && !a.db && !a.sk) ? null : a;
 }
-function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
-  const a = adjOf(p);
-  if(!a){ ctx.drawImage(img, dx, dy, dw, dh); return; }
+function drawAdjCore(ctx, img, dx, dy, dw, dh, a){
   ctx.save();
   ctx.filter = a.bw
     ? `grayscale(100%) brightness(${a.b}%) contrast(${a.c}%)`
@@ -3666,6 +3723,507 @@ function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
   ctx.restore();
 }
 
+/* ---------- pelle morbida ----------
+   Sfoca una copia della foto e la rimette sopra SOLO dove il colore è pelle:
+   attenua micro-imperfezioni e rughe sottili senza toccare vestiti e sfondo.
+   Tutto in locale sul canvas, nessun caricamento e nessun servizio esterno.
+   Le tele di lavoro sono riusate: a piena risoluzione crearne di nuove a ogni
+   colpo di cursore mangerebbe memoria sui PC della postazione. */
+const _sk = { a:null, b:null, m:null };
+function _tela(slot, w, h){
+  let o = _sk[slot];
+  if(!o){ o = _sk[slot] = { cv: document.createElement("canvas") }; o.ctx = o.cv.getContext("2d", {willReadFrequently: slot==="m" || slot==="r"}); }
+  if(o.cv.width !== w || o.cv.height !== h){ o.cv.width = w; o.cv.height = h; }
+  else o.ctx.clearRect(0,0,w,h);
+  return o;
+}
+/* Regola classica per il colore della pelle in RGB. Con le luci colorate del locale
+   può non agganciare tutto: in quel caso l'effetto si vede meno, non sbaglia. */
+function _ePelle(r, g, b){
+  const mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+  return r > 70 && g > 32 && b > 15 && mx - mn > 12 && r > g && r >= b && (r - g) > 10;
+}
+function ammorbidisciPelle(base, forza){
+  const w = base.cv.width, h = base.cv.height;
+  if(!w || !h || !forza) return;
+  const raggio = Math.max(1, (Math.min(w,h) / 300) * (0.8 + forza/130));
+  const sf = _tela("b", w, h);
+  sf.ctx.filter = `blur(${raggio.toFixed(2)}px)`;
+  sf.ctx.drawImage(base.cv, 0, 0);
+  sf.ctx.filter = "none";
+  let mascheraOk = false;
+  try{
+    const mw = Math.max(24, Math.min(180, Math.round(180 * w / Math.max(w,h))));
+    const mh = Math.max(24, Math.round(mw * h / w));
+    const m = _tela("m", mw, mh);
+    m.ctx.drawImage(base.cv, 0, 0, mw, mh);
+    const dat = m.ctx.getImageData(0, 0, mw, mh);
+    const px = dat.data;
+    for(let i = 0; i < px.length; i += 4){
+      const pelle = _ePelle(px[i], px[i+1], px[i+2]);
+      px[i] = px[i+1] = px[i+2] = 255;
+      px[i+3] = pelle ? 255 : 0;
+    }
+    m.ctx.putImageData(dat, 0, 0);
+    sf.ctx.globalCompositeOperation = "destination-in";
+    sf.ctx.imageSmoothingEnabled = true;
+    sf.ctx.imageSmoothingQuality = "high";
+    sf.ctx.drawImage(m.cv, 0, 0, w, h);   // ingrandita: i bordi della maschera si sfumano da soli
+    sf.ctx.globalCompositeOperation = "source-over";
+    mascheraOk = true;
+  }catch(_){ /* foto dal cloud senza permessi di lettura: ripiego su un velo leggero su tutto */ }
+  base.ctx.save();
+  base.ctx.globalAlpha = (forza/100) * (mascheraOk ? 0.9 : 0.28);
+  base.ctx.drawImage(sf.cv, 0, 0);
+  base.ctx.restore();
+}
+/* Il ritocco è uno STRATO trasparente sovrapposto, non una foto rifatta: contiene solo
+   le pennellate. Così la stampa continua a partire dall'originale a piena risoluzione e
+   solo le zone toccate arrivano dallo strato. Va applicato PRIMA di luce e colore,
+   altrimenti la toppa resterebbe con una luce diversa da quella intorno. */
+function haRitocco(p){ return !!(p && (p.ritLayer || p.ritPatch)); }
+/* Una foto è "modificata" se ha cursori spostati o pennellate: serve alla griglia
+   per il contrassegno e per capire cosa va ripristinato. */
+function fotoModificata(p){ return !!(adjOf(p) || haRitocco(p)); }
+function fonteConRitocco(img, p, w, h){
+  if(!haRitocco(p)) return null;
+  const t = _tela("c", w, h);
+  t.ctx.drawImage(img, 0, 0, w, h);
+  t.ctx.imageSmoothingEnabled = true; t.ctx.imageSmoothingQuality = "high";
+  if(p.ritLayer){
+    t.ctx.drawImage(p.ritLayer, 0, 0, w, h);           // ritocco in corso: strato intero
+  }else{
+    const q = p.ritPatch;                              // ritocco finito: solo il ritaglio
+    t.ctx.drawImage(q.cv, q.x*w/q.bw, q.y*h/q.bh, q.w*w/q.bw, q.h*h/q.bh);
+  }
+  return t.cv;
+}
+function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
+  const w = Math.max(1, Math.round(dw)), h = Math.max(1, Math.round(dh));
+  let fonte = img;
+  if(haRitocco(p)){
+    try{ fonte = fonteConRitocco(img, p, w, h) || img; }
+    catch(err){ console.warn("ritocco", err); fonte = img; }
+  }
+  const a = adjOf(p);
+  if(!a){ ctx.drawImage(fonte, dx, dy, dw, dh); return; }
+  if(!a.sk){ drawAdjCore(ctx, fonte, dx, dy, dw, dh, a); return; }
+  try{
+    const base = _tela("a", w, h);
+    drawAdjCore(base.ctx, fonte, 0, 0, w, h, a);
+    ammorbidisciPelle(base, a.sk);
+    ctx.drawImage(base.cv, dx, dy, dw, dh);
+  }catch(err){
+    console.warn("pelle morbida", err);
+    drawAdjCore(ctx, fonte, dx, dy, dw, dh, a);   // qualunque intoppo: si stampa comunque
+  }
+}
+
+/* ---------- luce automatica ----------
+   Misura il livello di luce della foto e sposta da solo il cursore Luce per portarla
+   al livello di riferimento tarato una volta da questa postazione. Si guarda il 75°
+   percentile e non la media: nei locali lo sfondo è quasi nero e la media trascinerebbe
+   la correzione verso l'alto bruciando la persona illuminata dal flash. */
+const AUTOLUCE_KEY = "faylive_autoluce";
+const AUTO_DEF = {target:176, contrasto:170};
+function autoLuce(){
+  try{ const o = JSON.parse(localStorage.getItem(AUTOLUCE_KEY) || "null");
+       if(o && typeof o.target === "number")
+         return {on: !!o.on, target: o.target, contrasto: (typeof o.contrasto==="number" ? o.contrasto : AUTO_DEF.contrasto)}; }catch(_){}
+  return {on:false, target:AUTO_DEF.target, contrasto:AUTO_DEF.contrasto};
+}
+function setAutoLuce(o){ try{ localStorage.setItem(AUTOLUCE_KEY, JSON.stringify(o)); }catch(_){} }
+
+/* Una sola lettura della foto in piccolo, da cui esce tutto quello che serve:
+   - luce      → 75° percentile (non la media: nei locali lo sfondo nero la trascinerebbe
+                 in basso e la persona illuminata dal flash uscirebbe bruciata)
+   - contrasto → distanza tra il 5° e il 95° percentile
+   - dominante → medie dei tre canali sui SOLI mezzi toni: neri e bruciati non contano */
+function misuraFoto(src, w, h){
+  const mw = 150, mh = Math.max(1, Math.round(mw * h / Math.max(1,w)));
+  const m = _tela("m", mw, mh);
+  m.ctx.drawImage(src, 0, 0, mw, mh);
+  const d = m.ctx.getImageData(0, 0, mw, mh).data;
+  const isto = new Uint32Array(256);
+  let n = 0, sR = 0, sG = 0, sB = 0, nMid = 0;
+  for(let i = 0; i < d.length; i += 4){
+    const r = d[i], g = d[i+1], b = d[i+2];
+    const L = (r*0.299 + g*0.587 + b*0.114) | 0;
+    isto[L]++; n++;
+    if(L >= 45 && L <= 215){ sR += r; sG += g; sB += b; nMid++; }
+  }
+  if(!n) return null;
+  const perc = f => { const s0 = n * f; let acc = 0;
+    for(let L = 0; L < 256; L++){ acc += isto[L]; if(acc >= s0) return L; } return 255; };
+  const out = {luce: perc(0.75), p05: perc(0.05), p95: perc(0.95), mid: nMid};
+  out.ampiezza = Math.max(1, out.p95 - out.p05);
+  if(nMid > 40){ out.mR = sR/nMid; out.mG = sG/nMid; out.mB = sB/nMid; }
+  return out;
+}
+/* misura la foto COME LA SI VEDE ORA, correzioni comprese: serve per la taratura */
+function misuraConAdj(bmp, p){
+  const w = 150, h = Math.max(1, Math.round(150 * bmp.height / bmp.width));
+  const t = _tela("t", w, h);      // tela sua: la "a" la usa gia' la pelle morbida
+  drawAdjusted(t.ctx, bmp, 0, 0, w, h, p);
+  return misuraFoto(t.cv, w, h);
+}
+
+/* ---------- correzione automatica all'apertura ----------
+   Tocca SOLO luce, contrasto e dominanti, e solo se la foto ne ha davvero bisogno:
+   sotto le soglie qui sotto non scrive niente e la foto resta com'è (nessun segno ✎).
+   Pelle e ritocco restano a mano: sono scelte, non correzioni. */
+const AUTO_SOGLIA = {luce:4, contrasto:6, dominante:6};
+const AUTO_FORZA_DOM = 0.5;   // si corregge META' della dominante e non di più: nei locali
+                              // le luci colorate fanno parte della foto, azzerarle la spegne
+function calcolaAuto(mis, cfg){
+  if(!mis) return null;
+  const fatto = [];
+  const a = Object.assign({}, ADJ0);
+  // --- luce ---
+  const b = Math.round(Math.min(140, Math.max(78, 100 * cfg.target / Math.max(1, mis.luce))));
+  if(Math.abs(b - 100) >= AUTO_SOGLIA.luce){ a.b = b; fatto.push("luce"); }
+  // --- contrasto: si valuta sull'ampiezza dopo la correzione di luce, e si può solo alzare ---
+  const ampiezza = mis.ampiezza * (a.b / 100);
+  const c = Math.round(Math.min(128, Math.max(100, 100 * cfg.contrasto / Math.max(1, ampiezza))));
+  if(c - 100 >= AUTO_SOGLIA.contrasto){ a.c = c; fatto.push("contrasto"); }
+  // --- dominanti: quanto ogni canale si scosta dalla media dei tre, sui mezzi toni ---
+  if(mis.mR != null){
+    const med = (mis.mR + mis.mG + mis.mB) / 3;
+    const nomi = ["rosso", "verde", "blu"];
+    const scarti = [mis.mR - med, mis.mG - med, mis.mB - med];
+    const canali = [mis.mR, mis.mG, mis.mB];
+    let peggiore = 0, quale = -1;
+    scarti.forEach((v, i)=>{ if(Math.abs(v) > peggiore){ peggiore = Math.abs(v); quale = i; } });
+    if(peggiore >= AUTO_SOGLIA.dominante){
+      const val = [0, 0, 0];
+      scarti.forEach((sc, i)=>{
+        const q = sc * AUTO_FORZA_DOM;
+        let k;
+        if(q > 0) k = -255 * q / Math.max(1, canali[i]);   // canale forte: si smorza
+        else      k = -q;                                   // canale debole: si alza
+        const v = Math.round(k / 0.62);
+        val[i] = Math.max(-28, Math.min(28, v));   // tetto basso: l'automatico attenua, non stravolge
+      });
+      if(val.some(v => Math.abs(v) >= 3)){
+        a.dr = val[0]; a.dg = val[1]; a.db = val[2];
+        fatto.push("dominante " + nomi[quale]);
+      }
+    }
+  }
+  return fatto.length ? {adj:a, fatto} : null;
+}
+/* applicata una volta all'apertura della foto, e solo se non c'è già una correzione a mano */
+function applicaAutoCorrezione(p, bmp){
+  const cfg = autoLuce();
+  if(!cfg.on || !p || !bmp || p.autoFatta || p.adj) return null;
+  p.autoFatta = true;
+  let mis;
+  try{ mis = misuraFoto(bmp, bmp.width, bmp.height); }
+  catch(_){ return null; }                        // canvas non leggibile: si lascia com'è
+  const r = calcolaAuto(mis, cfg);
+  if(!r) return null;                             // foto già a posto: non si tocca nulla
+  p.adj = r.adj;
+  return r;
+}
+
+/* ---------- preset dei cursori (per sede) ---------- */
+function presetList(){ return (state.event && Array.isArray(state.event.presets)) ? state.event.presets : []; }
+function renderPresets(){
+  const box = $("adjPresets"); if(!box) return;
+  box.innerHTML = "";
+  for(const pr of presetList()){
+    const b = document.createElement("button");
+    b.className = "pre"; b.title = "Applica il preset " + pr.nome;
+    b.textContent = pr.nome;
+    b.onclick = ()=>{ applicaPreset(pr); };
+    const x = document.createElement("span");
+    x.className = "preX"; x.textContent = "×"; x.title = "Elimina questo preset";
+    x.onclick = e=>{ e.stopPropagation(); eliminaPreset(pr.nome); };
+    b.appendChild(x);
+    box.appendChild(b);
+  }
+  const add = document.createElement("button");
+  add.className = "add"; add.textContent = "+ Salva preset";
+  add.title = "Salva i cursori come sono ora, per questa sede";
+  add.onclick = salvaPreset;
+  box.appendChild(add);
+}
+function applicaPreset(pr){
+  const p = lbPhoto(); if(!p) return;
+  p.adj = Object.assign({}, ADJ0, pr.adj || {});
+  p.autoFatta = true;                  // scelta dell'operatore: l'automatico non la sovrascrive
+  syncAdjBar(); ridisegnaFotoAperta();
+  monitorFollow(); aggiornaMiniaturaTraPoco(p);
+  toast("Preset " + pr.nome);
+}
+async function salvaPreset(){
+  const p = lbPhoto();
+  const a = (p && p.adj) || null;
+  if(!a){ toast("Prima sposta i cursori: non c'è niente da salvare"); return; }
+  const nome = (prompt("Nome del preset (es. Notte, Piscina, Flash duro):") || "").trim();
+  if(!nome) return;
+  const lista = presetList().filter(x => x.nome.toLowerCase() !== nome.toLowerCase());
+  lista.push({nome, adj: Object.assign({}, a)});
+  state.event = Object.assign({}, state.event || {}, {presets: lista});
+  renderPresets();
+  await salvaImpostazioni();
+  toast(cloud.sede ? "Preset \"" + nome + "\" salvato per la sede " + cloud.sede.nome
+                   : "Preset \"" + nome + "\" salvato solo su questo PC: nessuna sede selezionata");
+}
+async function eliminaPreset(nome){
+  if(!confirm("Elimino il preset \"" + nome + "\"?")) return;
+  state.event = Object.assign({}, state.event || {}, {presets: presetList().filter(x => x.nome !== nome)});
+  renderPresets();
+  await salvaImpostazioni();
+  toast("Preset eliminato");
+}
+
+/* ---------- la griglia deve mostrare la foto MODIFICATA ----------
+   Le celle sono <img> con l'anteprima originale: se una foto è stata corretta o ritoccata
+   se ne rigenera una copia con le modifiche sopra (p.thumbMod) e la cella usa quella.
+   Costa poco: si lavora sulla miniatura, non sull'originale. */
+let _minTimer = null;
+async function aggiornaMiniatura(p){
+  if(!p) return;
+  if(!fotoModificata(p)){ if(p.thumbMod){ p.thumbMod = null; paintVisible(); } return; }
+  if(!p.thumb) return;
+  try{
+    const im = await loadImg(p.thumb);
+    const c = document.createElement("canvas");
+    c.width = im.width; c.height = im.height;
+    drawAdjusted(c.getContext("2d"), im, 0, 0, c.width, c.height, p);
+    p.thumbMod = c.toDataURL("image/jpeg", 0.85);
+    paintVisible();
+  }catch(err){ console.warn("miniatura modificata", p.code, err); }
+}
+function aggiornaMiniaturaTraPoco(p){
+  clearTimeout(_minTimer);
+  _minTimer = setTimeout(()=>aggiornaMiniatura(p), 600);
+}
+/* Ripristino: toglie TUTTO da una foto — cursori, pelle e pennellate — e rimette
+   l'anteprima originale. L'originale su disco non è mai stato toccato. */
+function ripristinaFoto(p){
+  if(!p) return;
+  p.adj = null; p.autoFatta = true; p.thumbMod = null;
+  ritLibera(p);
+}
+
+/* ---------- ritocco: pennello correttivo e toppa ----------
+   Copia pixel da una zona pulita scelta dall'operatore e li posa sul difetto con i bordi
+   sfumati. Con "adatta al colore" la toppa prende prima la tinta e la luce del punto
+   di arrivo (correttivo), senza si comporta come una toppa secca.
+   Funziona bene su tessuti, muri, pelle: dove intorno c'è materiale simile da cui copiare.
+   Sui capelli al vento su sfondo movimentato copia il pezzo sbagliato: non è il suo mestiere. */
+const rit = {on:false, sx:0, sy:0, hasSrc:false, ax:0, ay:0,
+             giu:false, pan:false, lx:0, ly:0, stroke:null, undo:[], z:1, px:0, py:0};
+function ritSize(){ return Math.max(10, Math.round(+$("ritSize").value || 60)); }
+function ritPasso(t){ $("ritPasso").textContent = t; }
+function ritTrasforma(){
+  const cv = $("lbCanvas");
+  cv.style.transform = `translate(${rit.px}px, ${rit.py}px) scale(${rit.z})`;
+  cv.style.transformOrigin = "center center";
+}
+function ritPrepara(p){
+  if(!lbBmp || lbBmpFor !== p.id) return false;
+  if(p.ritLayer && p.ritLayer.width === lbBmp.width) return true;
+  const w = lbBmp.width, h = lbBmp.height;
+  p.ritLayer = document.createElement("canvas"); p.ritLayer.width = w; p.ritLayer.height = h;
+  p.ritWork  = document.createElement("canvas"); p.ritWork.width  = w; p.ritWork.height  = h;
+  const L = p.ritLayer.getContext("2d", {willReadFrequently:true});
+  const W = p.ritWork.getContext("2d", {willReadFrequently:true});
+  W.drawImage(lbBmp, 0, 0);
+  // se questa foto era già stata ritoccata, rimetto il ritaglio al suo posto e riprendo da lì
+  if(p.ritPatch){
+    const q = p.ritPatch;
+    const dx = q.x*w/q.bw, dy = q.y*h/q.bh, dw = q.w*w/q.bw, dh = q.h*h/q.bh;
+    L.drawImage(q.cv, dx, dy, dw, dh);
+    W.drawImage(q.cv, dx, dy, dw, dh);
+    p._ritBox = {x0:dx, y0:dy, x1:dx+dw, y1:dy+dh};
+  }else p._ritBox = null;
+  return true;
+}
+/* Alla fine del ritocco lo strato viene RITAGLIATO sulla zona toccata: tenere una tela
+   intera per ogni foto ritoccata riempirebbe la memoria del PC nel giro di una serata. */
+function ritSalva(p){
+  if(!p || !p.ritLayer) return;
+  const bb = p._ritBox;
+  if(!bb){ p.ritPatch = null; }
+  else{
+    const bw = p.ritLayer.width, bh = p.ritLayer.height;
+    const x = Math.max(0, Math.floor(bb.x0)), y = Math.max(0, Math.floor(bb.y0));
+    const w = Math.max(1, Math.min(bw - x, Math.ceil(bb.x1) - x));
+    const h = Math.max(1, Math.min(bh - y, Math.ceil(bb.y1) - y));
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(p.ritLayer, x, y, w, h, 0, 0, w, h);
+    p.ritPatch = {cv, x, y, w, h, bw, bh};
+  }
+  p.ritLayer = null; p.ritWork = null;
+}
+function ritPunto(e){
+  const cv = $("lbCanvas"), r = cv.getBoundingClientRect();
+  const sc = Math.min(r.width / cv.width, r.height / cv.height);
+  const ox = (r.width - cv.width * sc) / 2, oy = (r.height - cv.height * sc) / 2;
+  return { x: (e.clientX - r.left - ox) / sc, y: (e.clientY - r.top - oy) / sc };
+}
+/* media dei canali su una zona, saltando i pixel trasparenti (bordi della foto) */
+function _media(ctx, x, y, w, h){
+  const d = ctx.getImageData(x, y, w, h).data;
+  let r=0,g=0,b=0,n=0;
+  for(let i=0;i<d.length;i+=16){ if(d[i+3]<128) continue; r+=d[i]; g+=d[i+1]; b+=d[i+2]; n++; }
+  return n ? [r/n, g/n, b/n] : null;
+}
+function ritAdattaColore(off, p, dx, dy, s){
+  const W = p.ritWork.getContext("2d");
+  let dest, sorg;
+  try{ dest = _media(W, dx, dy, s, s); sorg = _media(off.ctx, 0, 0, s, s); }catch(_){ return; }
+  if(!dest || !sorg) return;
+  const lim = v => Math.max(-60, Math.min(60, Math.round(v)));
+  const d = [lim(dest[0]-sorg[0]), lim(dest[1]-sorg[1]), lim(dest[2]-sorg[2])];
+  const pos = d.map(v => Math.max(0, v));
+  const neg = d.map(v => 255 - Math.max(0, -v));
+  off.ctx.save();
+  if(pos.some(v=>v)){ off.ctx.globalCompositeOperation="lighter";
+    off.ctx.fillStyle=`rgb(${pos[0]},${pos[1]},${pos[2]})`; off.ctx.fillRect(0,0,s,s); }
+  if(neg.some(v=>v<255)){ off.ctx.globalCompositeOperation="multiply";
+    off.ctx.fillStyle=`rgb(${neg[0]},${neg[1]},${neg[2]})`; off.ctx.fillRect(0,0,s,s); }
+  off.ctx.restore();
+}
+function ritPennellata(x, y){
+  const p = lbPhoto(); if(!p || !p.ritLayer) return;
+  const s = ritSize(), r = s/2;
+  const W = p.ritWork.getContext("2d"), L = p.ritLayer.getContext("2d");
+  const cw = p.ritWork.width, ch = p.ritWork.height;
+  const dx = Math.round(x - r), dy = Math.round(y - r);
+  let sx = Math.round(rit.sx + (x - rit.ax) - r), sy = Math.round(rit.sy + (y - rit.ay) - r);
+  sx = Math.max(0, Math.min(cw - s, sx)); sy = Math.max(0, Math.min(ch - s, sy));
+  if(rit.stroke){
+    try{ rit.stroke.push({x:dx, y:dy, s,
+      l: L.getImageData(dx, dy, s, s), o: W.getImageData(dx, dy, s, s)}); }catch(_){}
+  }
+  const bb = p._ritBox || (p._ritBox = {x0:dx, y0:dy, x1:dx+s, y1:dy+s});
+  bb.x0 = Math.min(bb.x0, dx); bb.y0 = Math.min(bb.y0, dy);
+  bb.x1 = Math.max(bb.x1, dx+s); bb.y1 = Math.max(bb.y1, dy+s);
+  const off = _tela("r", s, s);
+  off.ctx.clearRect(0, 0, s, s);
+  off.ctx.drawImage(p.ritWork, sx, sy, s, s, 0, 0, s, s);
+  if($("ritAdatta").checked) ritAdattaColore(off, p, dx, dy, s);
+  off.ctx.globalCompositeOperation = "destination-in";
+  const g = off.ctx.createRadialGradient(r, r, r*0.30, r, r, r);
+  g.addColorStop(0, "rgba(0,0,0,1)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  off.ctx.fillStyle = g; off.ctx.fillRect(0, 0, s, s);
+  off.ctx.globalCompositeOperation = "source-over";
+  L.drawImage(off.cv, dx, dy);
+  W.drawImage(off.cv, dx, dy);
+}
+function ritAnnulla(){
+  const p = lbPhoto(); if(!p || !p.ritLayer) return;
+  const st = rit.undo.pop();
+  if(!st || !st.length){ toast("Non c'è altro da annullare"); return; }
+  const L = p.ritLayer.getContext("2d"), W = p.ritWork.getContext("2d");
+  for(let i = st.length - 1; i >= 0; i--){
+    try{ L.putImageData(st[i].l, st[i].x, st[i].y); W.putImageData(st[i].o, st[i].x, st[i].y); }catch(_){}
+  }
+  ridisegnaFotoAperta(); monitorFollow();
+}
+function entraRitocco(){
+  const p = lbPhoto();
+  if(!p){ return; }
+  if(!lbBmp || lbBmpFor !== p.id){ toast("Aspetta che la foto sia caricata"); return; }
+  if(!ritPrepara(p)) return;
+  rit.on = true; rit.hasSrc = false; rit.undo = []; rit.z = 1; rit.px = 0; rit.py = 0;
+  $("ritZoom").value = 1; ritTrasforma();
+  $("lbRitBar").hidden = false;
+  $("lightbox").classList.add("ritocco");
+  ritPasso("1 · Clicca una zona PULITA vicina al difetto, da cui copiare.");
+}
+function esciRitocco(){
+  if(!rit.on) return;
+  rit.on = false; rit.giu = false; rit.pan = false;
+  const p = lbPhoto();
+  ritSalva(p);
+  rit.undo = [];
+  $("lbRitBar").hidden = true;
+  $("lightbox").classList.remove("ritocco");
+  rit.z = 1; rit.px = 0; rit.py = 0; ritTrasforma();
+  if(p){ aggiornaMiniatura(p); ridisegnaFotoAperta(); }
+}
+function ritLibera(p){
+  if(!p) return;
+  p.ritLayer = null; p.ritWork = null; p.ritPatch = null; p._ritBox = null;
+}
+(function ritEventi(){
+  const cv = $("lbCanvas");
+  cv.addEventListener("pointerdown", e=>{
+    if(!rit.on) return;
+    e.preventDefault(); e.stopPropagation();
+    if(e.shiftKey){ rit.pan = true; rit.lx = e.clientX; rit.ly = e.clientY; cv.setPointerCapture(e.pointerId); return; }
+    const q = ritPunto(e);
+    if(!rit.hasSrc){
+      rit.sx = q.x; rit.sy = q.y; rit.hasSrc = true;
+      ritPasso("2 · Ora passa il pennello sul difetto. Se sbagli: Annulla.");
+      toast("Zona pulita presa");
+      return;
+    }
+    rit.giu = true; rit.ax = q.x; rit.ay = q.y;
+    rit.stroke = [];
+    cv.setPointerCapture(e.pointerId);
+    ritPennellata(q.x, q.y);
+    rit._lastX = q.x; rit._lastY = q.y;
+    ridisegnaFotoAperta();
+  });
+  cv.addEventListener("pointermove", e=>{
+    if(!rit.on) return;
+    if(rit.pan){
+      rit.px += e.clientX - rit.lx; rit.py += e.clientY - rit.ly;
+      rit.lx = e.clientX; rit.ly = e.clientY; ritTrasforma(); return;
+    }
+    if(!rit.giu) return;
+    const q = ritPunto(e);
+    const passo = Math.max(3, ritSize() * 0.22);
+    if(Math.hypot(q.x - rit._lastX, q.y - rit._lastY) < passo) return;
+    rit._lastX = q.x; rit._lastY = q.y;
+    ritPennellata(q.x, q.y);
+    ridisegnaFotoAperta();
+  });
+  const su = e=>{
+    if(!rit.on) return;
+    if(rit.pan){ rit.pan = false; return; }
+    if(!rit.giu) return;
+    rit.giu = false;
+    if(rit.stroke && rit.stroke.length){
+      rit.undo.push(rit.stroke);
+      if(rit.undo.length > 30) rit.undo.shift();
+    }
+    rit.stroke = null;
+    monitorFollow();
+  };
+  cv.addEventListener("pointerup", su);
+  cv.addEventListener("pointercancel", su);
+  cv.addEventListener("wheel", e=>{
+    if(!rit.on) return;
+    e.preventDefault();
+    rit.z = Math.max(1, Math.min(6, rit.z * (e.deltaY < 0 ? 1.15 : 1/1.15)));
+    if(rit.z === 1){ rit.px = 0; rit.py = 0; }
+    $("ritZoom").value = rit.z.toFixed(1);
+    ritTrasforma();
+  }, {passive:false});
+})();
+$("lbRitocco").onclick = ()=>{ $("lbMenu").hidden = true; entraRitocco(); };
+$("ritFine").onclick = esciRitocco;
+$("ritUndo").onclick = ritAnnulla;
+$("ritSrc").onclick = ()=>{ rit.hasSrc = false; ritPasso("1 · Clicca una zona PULITA vicina al difetto, da cui copiare."); };
+$("lbRipristina").onclick = ()=>{
+  const p = lbPhoto(); if(!p) return;
+  if(!fotoModificata(p)){ toast("Questa foto non ha modifiche"); return; }
+  if(!confirm("Tolgo tutte le modifiche da " + p.code + " (luce, colore, pelle e ritocco)?")) return;
+  esciRitocco();
+  ripristinaFoto(p);
+  syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); paintVisible();
+  $("adjNote").textContent = "";
+  toast(p.code + " ripristinata come l'originale");
+};
+$("ritZoom").oninput = ()=>{ rit.z = +$("ritZoom").value; if(rit.z===1){ rit.px=0; rit.py=0; } ritTrasforma(); };
+
 /* ---------- lightbox operatore ---------- */
 function lbList(){ return state.lbCustom || filteredPhotos(); }
 /* Il pannello luce e colore è sempre presente all'apertura: serve quasi a ogni foto
@@ -3674,6 +4232,7 @@ function lbList(){ return state.lbCustom || filteredPhotos(); }
 function mostraPannelloRegolazioni(){
   const bar=$("lbAdjBar");
   if(bar && bar.hidden) bar.hidden = false;
+  renderPresets();
 }
 /* La foto aperta è AGGANCIATA all'oggetto, non alla posizione nella lista.
    Prima ogni comando (stampa, invio, QR, monitor) leggeva lbList()[lightboxIdx]: se
@@ -3692,6 +4251,7 @@ function fotoAperta(){
   return p;
 }
 function lbScorri(delta){
+  esciRitocco();                 // il ritocco vale sulla foto che hai davanti
   const list = lbList();
   let i = state.lbFoto ? list.indexOf(state.lbFoto) : state.lightboxIdx;
   if(i < 0) i = state.lightboxIdx;
@@ -3762,6 +4322,14 @@ async function paintLightbox(){
     if(my!==lbSeq) return;
     c.width=bmp.width; c.height=bmp.height;
     lbBmp = bmp; lbBmpFor = p.id;              // tenuta da parte per i cursori
+    /* la luce automatica lavora sulla versione nitida, una volta sola per foto,
+       e solo se l'operatore non ha già messo mano ai cursori */
+    const auto = applicaAutoCorrezione(p, bmp);
+    if(auto){
+      if(!$("lbAdjBar").hidden) syncAdjBar();
+      $("adjNote").textContent = "Corretta in automatico: " + auto.fatto.join(", ");
+      aggiornaMiniaturaTraPoco(p);
+    }
     drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
@@ -3774,9 +4342,12 @@ async function paintLightbox(){
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
 function closeLightbox(){
-  /* Le regolazioni valgono solo finche' la foto e' aperta: chiudendo si azzerano,
-     cosi' nessuno stampa dopo con la correzione di un'altra foto addosso. */
-  for(const p of state.photos) if(p.adj) p.adj = null;
+  esciRitocco();
+  /* Le modifiche NON si perdono più alla chiusura: devono vedersi in griglia e in stampa
+     anche dopo. Restano in memoria per la giornata e si tolgono a mano con "Ripristina
+     originale" (una foto) o "Ripristina tutte le foto" (menu Altro). */
+  const ap = fotoAperta();
+  if(ap){ aggiornaMiniatura(ap); if(!ap.adj) ap.autoFatta = false; }
   $("lbMenu").hidden = true; $("lightbox").classList.remove("open"); state.lightboxIdx=-1; state.lbCustom=null; state.lbFoto=null;
   // il monitor cliente torna allo slideshow: la vendita è finita
   const M=state.monitor;
@@ -3787,7 +4358,7 @@ $("lbMore").onclick = e=>{ e.stopPropagation(); $("lbMenu").hidden = !$("lbMenu"
 $("lbMenu").onclick = ()=>{ $("lbMenu").hidden = true; };   // scelta fatta: si richiude
 $("lbTop").onclick = e=>{ if(!e.target.closest("#lbMore,#lbMenu")) $("lbMenu").hidden = true; };
 $("lbClose").onclick=()=>{ $("lbMenu").hidden = true; closeLightbox(); };
-$("lbStage").onclick=e=>{ if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
+$("lbStage").onclick=e=>{ if(rit.on) return; if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
 // se il monitor cliente sta mostrando una foto, lo faccio scorrere insieme al visualizzatore
 function monitorFollow(){
   const M=state.monitor;
@@ -3813,7 +4384,14 @@ function syncAdjBar(){
   const p = lbPhoto(); const a = (p && p.adj) || ADJ0;
   $("adjB").value=a.b; $("adjC").value=a.c; $("adjS").value=a.s; $("adjT").value=a.t;
   $("adjR").value=a.dr||0; $("adjG").value=a.dg||0; $("adjB2").value=a.db||0;
+  $("adjSk").value=a.sk||0;
   $("adjBW").checked = !!a.bw;
+  const cfg = autoLuce();
+  $("adjAuto").checked = cfg.on;
+  $("adjAutoNote").textContent = cfg.on
+    ? "Luce, contrasto e dominanti sistemati all'apertura, solo dove serve · riferimento di questa postazione: luce "
+      + cfg.target + ", contrasto " + cfg.contrasto
+    : "Pelle e ritocco restano sempre a mano";
   $("adjS").disabled = $("adjT").disabled = !!a.bw;   // senza colore non servono
   $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = !!a.bw;
   $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
@@ -3822,14 +4400,9 @@ $("lbAdj").onclick = ()=>{
   const bar=$("lbAdjBar"); bar.hidden = !bar.hidden;
   if(!bar.hidden) syncAdjBar();
 };
-function applyAdjFromBar(){
+/* ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto */
+function ridisegnaFotoAperta(){
   const p = lbPhoto(); if(!p) return;
-  p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
-            dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
-            bw: $("adjBW").checked };
-  $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
-  $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = $("adjBW").checked;
-  // ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     c.width=lbBmp.width; c.height=lbBmp.height;
@@ -3838,10 +4411,47 @@ function applyAdjFromBar(){
   }else{
     paintLightbox();
   }
-  $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa · l'originale resta intatto" : "";
-  monitorFollow();              // il cliente vede subito la foto corretta
 }
-for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2"]) $(id).oninput = applyAdjFromBar;
+function applyAdjFromBar(){
+  const p = lbPhoto(); if(!p) return;
+  p.adj = { b:+$("adjB").value, c:+$("adjC").value, s:+$("adjS").value, t:+$("adjT").value,
+            dr:+$("adjR").value, dg:+$("adjG").value, db:+$("adjB2").value,
+            sk:+$("adjSk").value,
+            bw: $("adjBW").checked };
+  p.autoFatta = true;           // corretta a mano: la luce automatica non ci torna sopra
+  $("adjS").disabled = $("adjT").disabled = $("adjBW").checked;
+  $("adjR").disabled = $("adjG").disabled = $("adjB2").disabled = $("adjBW").checked;
+  ridisegnaFotoAperta();
+  $("adjNote").textContent = adjOf(p) ? "Vale per monitor e stampa e resta sulla foto · l'originale su disco non si tocca" : "";
+  monitorFollow();              // il cliente vede subito la foto corretta
+  aggiornaMiniaturaTraPoco(p);  // la griglia mostra la foto come l'hai corretta
+}
+for(const id of ["adjB","adjC","adjS","adjT","adjR","adjG","adjB2","adjSk"]) $(id).oninput = applyAdjFromBar;
+
+/* --- luce automatica: interruttore e taratura --- */
+$("adjAuto").onchange = ()=>{
+  const cfg = autoLuce();
+  cfg.on = $("adjAuto").checked;
+  setAutoLuce(cfg);
+  syncAdjBar();
+  toast(cfg.on ? "Correzione automatica accesa su questa postazione"
+               : "Correzione automatica spenta su questa postazione");
+};
+/* La taratura si fa una volta: si sistema a mano una foto finché non piace,
+   si preme il tasto e quel livello diventa il riferimento per tutte le altre. */
+$("btnTara").onclick = ()=>{
+  const p = lbPhoto();
+  if(!p || !lbBmp || lbBmpFor !== p.id){ toast("Aspetta che la foto sia caricata"); return; }
+  let m;
+  try{ m = misuraConAdj(lbBmp, p); }
+  catch(_){ toast("Questa foto non si può misurare: provane un'altra"); return; }
+  if(!m){ toast("Questa foto non si può misurare: provane un'altra"); return; }
+  const cfg = autoLuce();
+  cfg.target = m.luce; cfg.contrasto = m.ampiezza; cfg.on = true;
+  setAutoLuce(cfg);
+  syncAdjBar();
+  toast("Riferimento tarato: luce " + m.luce + ", contrasto " + m.ampiezza + " · vale per questa postazione");
+};
 
 /* Frecce ai lati di ogni barra: un colpo = uno scatto piccolo, per regolare con precisione
    senza trascinare il cursore (col cliente davanti il trascinamento e' impreciso). */
@@ -3868,16 +4478,12 @@ $("adjBW").onchange = applyAdjFromBar;
 $("adjReset").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   p.adj = null;
+  p.autoFatta = true;           // azzerata di proposito: resta com'è finché la foto è aperta
   syncAdjBar();
-  if(lbBmp && lbBmpFor===p.id){
-    const c=$("lbCanvas"), ctx=c.getContext("2d");
-    c.width=lbBmp.width; c.height=lbBmp.height;
-    drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
-    drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
-  }else{
-    paintLightbox();
-  }
-  toast("Regolazioni azzerate");
+  ridisegnaFotoAperta();
+  $("adjNote").textContent = "";
+  monitorFollow(); aggiornaMiniatura(p);
+  toast("Regolazioni azzerate (il ritocco resta)");
 };
 
 /* ---------- monitor cliente ---------- */
@@ -4263,6 +4869,10 @@ addEventListener("keydown", e=>{
   if(M.mode==="present" && !lbOpen){
     if(e.key==="ArrowRight"){ presentNav(1); return; }
     if(e.key==="ArrowLeft"){ presentNav(-1); return; }
+  }
+  if(lbOpen && rit.on){
+    if(e.key==="Escape"){ e.preventDefault(); esciRitocco(); }
+    return;                       // durante il ritocco frecce, spazio e invio restano fermi
   }
   if(lbOpen){
     if(e.key==="ArrowRight") $("lbNext").click();
@@ -6350,6 +6960,18 @@ addEventListener("unhandledrejection", e=>{
   try{ toast("Errore: " + (r && r.message ? r.message : r), 8000); }catch(_){}
 });
 
+$("btnResetRitocchi").onclick = ()=>{
+  $("toolsMenu").hidden = true;
+  const mod = state.photos.filter(fotoModificata);
+  if(!mod.length){ toast("Nessuna foto modificata"); return; }
+  if(!confirm("Tolgo luce, colore, pelle e ritocco da " + mod.length +
+              (mod.length===1 ? " foto" : " foto") + "? Tornano come le hai importate.")) return;
+  esciRitocco();
+  for(const p of mod) ripristinaFoto(p);
+  if($("lightbox").classList.contains("open")){ syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); }
+  paintVisible();
+  toast(mod.length + " foto ripristinate");
+};
 $("btnTools").onclick = e=>{ e.stopPropagation(); $("toolsMenu").hidden = !$("toolsMenu").hidden; };
 $("toolsMenu").onclick = ()=>{ $("toolsMenu").hidden = true; };   // scelta fatta: si richiude
 document.addEventListener("click", e=>{
