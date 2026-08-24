@@ -6662,6 +6662,15 @@ setInterval(controllaCodaAltreGiornate, 30000);
 function renderPqList(){
   const box=$("pqList"); if(!box) return;
   const list=printQueuePhotos();
+  /* Il pannello resta aperto mentre si lavora (così le foto che arrivano dai tablet si
+     vedono comparire), ma quando non resta più niente da stampare si chiude da solo:
+     tenerlo aperto vuoto copre soltanto la griglia. Non si chiude se ci sono foto in
+     attesa in un'altra giornata, altrimenti l'avviso sparirebbe senza essere letto. */
+  if(!list.length && !(typeof codaAltrove !== "undefined" && codaAltrove.length)){
+    const d = $("pqDlg");
+    if(d && d.open){ pqDaRiaprire = false; d.close(); toast("Tutte le foto sono state stampate"); }
+    return;
+  }
   const escluse = new Set([...box.querySelectorAll(".pqChk:not(:checked)")].map(c=>c.dataset.code));
   const tit=$("pqTitolo"); if(tit) tit.textContent = list.length ? `Da stampare (${list.length})` : "Da stampare";
   const altrove = (typeof codaAltrove !== "undefined" && codaAltrove.length)
