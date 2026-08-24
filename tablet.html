@@ -1128,24 +1128,55 @@ function nomeTablet(){
   if(!n){ n = "Tablet-" + Math.random().toString(36).slice(2,5).toUpperCase(); localStorage.setItem("faylive_postazione", n); }
   return n;
 }
+/* La riga di registro si scriveva UNA volta sola, e se la linea cadeva proprio in quel
+   momento l'errore veniva ingoiato: l'email partiva davvero ma dell'invio non restava
+   traccia, e nessuno poteva più sapere se era andata. Ora la scrittura ritenta, e se
+   non passa la riga resta sul tablet finché non si riesce a metterla sul cloud. */
+const LOG_KEY = "faylive_log_pend";
+function leggiLogPend(){
+  try{ return JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); }catch(_){ return []; }
+}
+function scriviLogPend(v){
+  try{ localStorage.setItem(LOG_KEY, JSON.stringify(v.slice(-200))); }catch(_){}
+}
+async function scriviAttivita(riga){
+  for(let tent=0; sb && tent<3; tent++){
+    try{
+      const {error} = await sb.from("attivita").insert(riga);
+      if(!error) return true;
+    }catch(_){}
+    await new Promise(r=>setTimeout(r, 1500*(tent+1)));
+  }
+  const v = leggiLogPend(); v.push(riga); scriviLogPend(v);   // ci riprovo appena torna la linea
+  return false;
+}
+async function flushLogPendenti(){
+  if(!sb) return;
+  const v = leggiLogPend(); if(!v.length) return;
+  const restano = [];
+  for(const riga of v){
+    let ok = false;
+    try{ const {error} = await sb.from("attivita").insert(riga); ok = !error; }catch(_){}
+    if(!ok) restano.push(riga);
+  }
+  scriviLogPend(restano);
+}
 async function logActivity(list, azione, extra){
-  if(!sb || !S.servizio || !list.length) return;
+  if(!S.servizio || !list.length) return false;
   /* Il rullo va preso dalle FOTO, non dalla scheda aperta in quel momento: selezionando
      nel rullo E e passando poi alla scheda Z, l'invio finiva registrato sotto Z. Se la
      selezione tocca più rulli si scrivono tutti (es. "E/G"). */
   const lettere = [...new Set(list.map(p=>p && p.letter).filter(Boolean))].sort();
   const rullo = lettere.length ? lettere.join("/") : (S.letter || "");
-  try{
-    await sb.from("attivita").insert({
-      servizio_id: S.servizio.id,
-      rullo_lettera: rullo,
-      codici: list.map(p=>p.code).join(", "),
-      azione, quante: list.length,
-      postazione: nomeTablet(),
-      esito: (extra&&extra.esito) || "ok",
-      dettaglio: (extra&&extra.dettaglio) || null
-    });
-  }catch(_){}
+  return scriviAttivita({
+    servizio_id: S.servizio.id,
+    rullo_lettera: rullo,
+    codici: list.map(p=>p.code).join(", "),
+    azione, quante: list.length,
+    postazione: nomeTablet(),
+    esito: (extra&&extra.esito) || "ok",
+    dettaglio: (extra&&extra.dettaglio) || null
+  });
 }
 /* Righe tecniche: stessa tabella, azione con "~" davanti, così restano fuori dal
    report venditori e finiscono nel Registro tecnico del PC. */
@@ -2019,10 +2050,11 @@ async function inviaConFilemail(list, ctx, opz){
 
     rimuoviKO(koId);                 // il server ha confermato: non e' piu' in sospeso
     logActivity(list,"inviate");
-    logTecnico(list, "invio", {dettaglio:`${caricate.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
+    const registrato = await logTecnico(list, "invio", {dettaglio:`${caricate.length}/${list.length} foto a ${email}`+(mancanti.length?" — saltate: "+mancanti.join(", "):"")});
     mostraEsito(`Inviate ${caricate.length} foto a ${email}.`+
                 (saltate.length?`\n${saltate.length} non sono passate: ${saltate.join(", ")}`:"")+
-                `\nIl cliente riceve un link valido 7 giorni.`);
+                `\nIl cliente riceve un link valido 7 giorni.`+
+                (registrato?"":`\n\n⚠ L'invio è partito ma non è ancora finito nel Registro: lo scrivo da solo appena torna la linea.`));
   }catch(err){
     console.warn("filemail", err);
     const spiega = (err && err.message) ? err.message : String(err);
@@ -2370,7 +2402,7 @@ setInterval(()=>{ if(autoRefreshOk()) refresh(false); }, 25000);
 document.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState === "visible" && autoRefreshOk()) refresh(false);
 });
-addEventListener("online", ()=>{ if(autoRefreshOk()) refresh(false); });
+addEventListener("online", ()=>{ flushLogPendenti(); if(autoRefreshOk()) refresh(false); });
 
 /* =====================================================================
    INVII — registro delle email partite da questo tablet e dalle postazioni.
@@ -2404,25 +2436,49 @@ function invRulloDi(riga){
   return !l.length ? "—" : (l.length===1 ? l[0] : "misti");
 }
 
+/* La giornata sotto cui compare un invio e' quella in cui l'invio E' PARTITO, con lo
+   stesso taglio delle 6:00 del giorno di servizio: se stanotte mando le foto di ieri,
+   l'invio lo devo trovare nella serata in corso, non in quella delle foto. */
+function invGiornoInvio(a){
+  const t = new Date(a.creato_il);
+  if(isNaN(t.getTime())) return String(a.creato_il||"").slice(0,10);
+  const d = new Date(t.getTime() - CUTOFF_H*3600*1000);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function invGiornoFoto(a){ return INV.giorni[a.servizio_id] || ""; }
+function invDataLunga(g){
+  const d = new Date(g+"T12:00:00");
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+}
+function invDataCorta(g){
+  const d = new Date(g+"T12:00:00");
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{day:"numeric",month:"long"});
+}
 async function invCarica(){
   const box = $("invList");
   if(!sb || !S.sede){ box.innerHTML = '<p class="ivuoto"><b>Serve una sede</b>Scegli prima la sede in alto.</p>'; return; }
   box.innerHTML = '<p class="ivuoto">Carico…</p>';
   INV.righe = []; INV.giorni = {};
+  await flushLogPendenti();   // prima di mostrare il registro, salvo quello rimasto sul tablet
   const gg = parseInt($("invGiorni").value,10) || 30;
   const limite = new Date(Date.now() - gg*24*3600*1000).toISOString().slice(0,10);
   try{
-    // solo le giornate di QUESTA sede: ogni locale vede i propri invii e basta
+    /* Le giornate della sede si prendono TUTTE, senza limite di data: un invio fatto
+       oggi puo' riguardare le foto di un mese fa, e prima quelle righe sparivano dal
+       registro perche' la loro giornata era fuori finestra. Il periodo scelto in alto
+       filtra la data dell'INVIO, non la giornata delle foto. */
     const {data:servizi} = await sb.from("servizi").select("id,data_servizio")
-      .eq("sede_id", S.sede.id).gte("data_servizio", limite);
+      .eq("sede_id", S.sede.id);
     if(!servizi || !servizi.length){
-      box.innerHTML = '<p class="ivuoto"><b>Nessuna giornata</b>In questo periodo la sede non ha servizi.</p>';
+      box.innerHTML = '<p class="ivuoto"><b>Nessuna giornata</b>Questa sede non ha ancora servizi.</p>';
       invContatori([]); return;
     }
     servizi.forEach(v=>{ INV.giorni[v.id] = v.data_servizio; });
+    const daQuando = new Date(Date.now() - gg*24*3600*1000 - CUTOFF_H*3600*1000).toISOString();
     const {data} = await sb.from("attivita").select("*")
       .in("servizio_id", servizi.map(v=>v.id))
       .eq("azione", "~invio")
+      .gte("creato_il", daQuando)
       .order("creato_il", {ascending:false}).limit(1000);
     INV.righe = data || [];
   }catch(err){
@@ -2463,15 +2519,14 @@ function invRender(){
 
   const perGiorno = {};
   righe.forEach(a=>{
-    const g = INV.giorni[a.servizio_id] || String(a.creato_il).slice(0,10);
+    const g = invGiornoInvio(a);
     (perGiorno[g] = perGiorno[g]||[]).push(a);
   });
 
   box.innerHTML = Object.keys(perGiorno).sort().reverse().map(g=>{
     const lista = perGiorno[g];
     const ko = lista.filter(a=>a.esito==="errore").length;
-    const d = new Date(g+"T12:00:00");
-    const tit = isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+    const tit = invDataLunga(g);
 
     const perRullo = {};
     lista.forEach(a=>{ const r=invRulloDi(a); (perRullo[r]=perRullo[r]||[]).push(a); });
@@ -2481,13 +2536,16 @@ function invRender(){
         const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
         const err = a.esito==="errore";
         const em = invEmailDi(a), mo = invMotivoDi(a);
+        const gFoto = invGiornoFoto(a);
         return '<button class="iriga'+(err?" ko":"")+'" data-id="'+a.id+'">'
           + '<span class="l1"><span class="ora">'+t+'</span>'
           + '<span class="es">'+(err?"Non riuscito":"Inviate")+'</span>'
           + '<span class="q">'+(a.quante||0)+' foto · '+invPulito(a.postazione||"?")+'</span></span>'
           + '<span class="em">'+(invPulito(em)||"email non registrata")+'</span>'
           + (mo?'<span class="mo">'+invPulito(mo)+'</span>':"")
-          + '<span class="cd">'+(invPulito(a.codici)||"—")+'</span></button>';
+          + '<span class="cd">'+(invPulito(a.codici)||"—")+'</span>'
+          + (gFoto && gFoto!==g ? '<span class="mo">foto della giornata del '+invDataCorta(gFoto)+'</span>' : "")
+          + '</button>';
       }).join("");
       const kor = perRullo[r].filter(a=>a.esito==="errore").length;
       return '<section class="irullo"><h4><span class="lt">'+invPulito(r)+'</span> '
@@ -2504,13 +2562,13 @@ function invRender(){
 function invApri(id){
   const a = INV.righe.find(x=>String(x.id)===String(id)); if(!a) return;
   INV.corrente = a;
-  const g = INV.giorni[a.servizio_id] || String(a.creato_il).slice(0,10);
-  const d = new Date(g+"T12:00:00");
-  const quando = isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+  const g = invGiornoInvio(a), gFoto = invGiornoFoto(a);
+  const quando = invDataLunga(g);
   const ora = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
   const mo = invMotivoDi(a);
   $("invTit").textContent = a.esito==="errore" ? "Invio non riuscito" : "Invio andato a buon fine";
   $("invSub").textContent = quando+", ore "+ora+" · rullo "+invRulloDi(a)+" · "+(a.quante||0)+" foto"
+    + (gFoto && gFoto!==g ? " · foto della giornata del "+invDataCorta(gFoto) : "")
     + (mo? " · "+mo : "");
   $("invEmail").value = invEmailDi(a);
   $("invCodici").textContent = invCodiciDi(a).join("  ") || "—";
@@ -2637,6 +2695,7 @@ async function invRegistra(a, nomi, quante, email, esito, motivo){
 /* ---------- comandi ---------- */
 $("btnInvii").onclick = ()=>{ $("invDlg").classList.add("on"); renderKO(); invCarica(); };
 aggiornaSpiaInvii();   // la spia rossa si accende gia' all'apertura della pagina
+flushLogPendenti();    // righe di registro rimaste indietro per mancanza di linea
 $("invClose").onclick = ()=> $("invDlg").classList.remove("on");
 $("invGiorni").onchange = invCarica;
 $("invCerca").oninput = invRender;
