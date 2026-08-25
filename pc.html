@@ -3541,7 +3541,7 @@ function chiediCopie(preimpostato){
         const b=document.createElement("button");
         b.textContent=i;
         b.style.cssText="min-width:42px;padding:8px 0;font-size:16px;font-weight:700"+(i===n?";outline:2px solid var(--accent)":"");
-        b.onclick=()=>{ dlg.close(); res(i); };
+        b.onclick=()=>finita(i);
         box.append(b);
       }
       const meno=document.createElement("button"); meno.textContent="−";
@@ -3554,12 +3554,31 @@ function chiediCopie(preimpostato){
       piu.onclick=()=>{ n=Math.min(20,n+1); disegna(); };
       const ok=document.createElement("button"); ok.textContent="Stampa "+n;
       ok.style.cssText="background:var(--accent);color:#000;font-weight:700;padding:8px 14px;font-size:14px";
-      ok.onclick=()=>{ dlg.close(); res(n); };
+      ok.onclick=()=>finita(n);
       box.append(meno,val,piu,ok);
     };
     disegna();
-    $("copCancel").onclick=()=>{ dlg.close(); res(0); };
+    /* Col cliente davanti si stampa a raffica: invio conferma senza andare col mouse
+       sul tasto, i numeri da tastiera scelgono le copie, Esc annulla.
+       Prima Esc chiudeva la finestra senza rispondere e la stampa restava appesa. */
+    let chiuso = false;
+    const finita = v =>{ if(chiuso) return; chiuso = true;
+      dlg.removeEventListener("keydown", tasti); dlg.removeEventListener("cancel", annulla);
+      try{ dlg.close(); }catch(_){} res(v); };
+    const annulla = e =>{ e.preventDefault(); finita(0); };
+    const tasti = e =>{
+      if(e.key === "Enter"){ e.preventDefault(); finita(n); }
+      else if(e.key === "Escape"){ e.preventDefault(); finita(0); }
+      else if(/^[1-9]$/.test(e.key)){ e.preventDefault(); n = +e.key; disegna(); }
+      else if(e.key === "+" || e.key === "ArrowUp" || e.key === "ArrowRight"){ e.preventDefault(); n = Math.min(20, n+1); disegna(); }
+      else if(e.key === "-" || e.key === "ArrowDown" || e.key === "ArrowLeft"){ e.preventDefault(); n = Math.max(1, n-1); disegna(); }
+    };
+    dlg.addEventListener("keydown", tasti);
+    dlg.addEventListener("cancel", annulla);
+    $("copCancel").onclick=()=>finita(0);
     dlg.showModal();
+    // il fuoco resta sul dialogo: i tasti arrivano qui e non alla griglia dietro
+    try{ dlg.focus(); }catch(_){}
   });
 }
 async function printPhotos(set, opzioni){
