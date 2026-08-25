@@ -3275,14 +3275,10 @@ $("lbSend").onclick = async ()=>{ const p=fotoAperta(); if(p) await inviaDiretto
 /* INVIO DIRETTO DAL PC (stesso meccanismo del tablet).
    Diverso dalla lista "Da inviare": lì l'email arriva dal QR, qui la scrivi tu subito.
    Le foto NON passano dal PC: al server vanno solo gli indirizzi firmati. */
-async function inviaDiretto(set){
-  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
-  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
-  const email = (prompt(`Email del cliente — ${set.length} foto da inviare:`, "") || "").trim();
-  if(!email) return;
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){ alert("Indirizzo email non valido."); return; }
-
-  toast("Preparo gli originali…");
+/* Preparazione degli originali prima di un invio: vale sia per l'invio diretto dalla
+   barra selezione sia per il tasto Invia della lista "Da inviare". Prima questa parte
+   esisteva solo qui, e il pannello delle email spediva senza caricare niente. */
+async function assicuraOriginaliSulCloud(set){
   // assicura che gli originali siano sul cloud: quelli che ho su disco li carico subito,
   // per gli altri chiedo alla postazione che li possiede (stesso meccanismo della stampa)
   const daCaricare = set.filter(p=>!p.origUploaded);
@@ -3308,6 +3304,17 @@ async function inviaDiretto(set){
       await new Promise(r=>setTimeout(r,500));
     }
   }
+}
+
+async function inviaDiretto(set){
+  if(!set || !set.length){ toast("Nessuna foto selezionata"); return; }
+  if(!sb || !cloud.servizio){ toast("Apri prima una giornata"); return; }
+  const email = (prompt(`Email del cliente — ${set.length} foto da inviare:`, "") || "").trim();
+  if(!email) return;
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){ alert("Indirizzo email non valido."); return; }
+
+  toast("Preparo gli originali…");
+  await assicuraOriginaliSulCloud(set);
 
   const files=[], mancanti=[];
   for(const p of set){
@@ -7326,19 +7333,38 @@ async function inviaConFilemail(row, btn){
   const codici = (row.codici||"").split(/[\s,;]+/).filter(Boolean);
   if(!codici.length){ toast("Questa richiesta non ha codici foto associati"); return; }
 
-  // Gli originali NON sono pubblici: servono link firmati a scadenza breve,
-  // che la funzione su Vercel usa per scaricarli. Scadono da soli dopo 15 minuti.
-  const trovate = [], mancanti = [];
+  /* Le foto si prendono dall'elenco della giornata aperta e il percorso sullo storage si
+     chiede a origKeyDi, come fa tutto il resto dell'app. Prima qui il percorso veniva
+     ricostruito a mano come "servizio/codice.jpg": da quando nel nome e' entrato anche
+     l'identificativo del rullo (per non far sovrascrivere due giornate) quel file non
+     esiste piu', e ogni invio dal pannello finiva con "gli originali non sono sul cloud"
+     anche quando l'originale c'era eccome. */
+  const set = [], sconosciuti = [];
   for(const c of codici){
     const p = state.byCode.get(c);
-    if(!p){ mancanti.push(c); continue; }
-    const path = cloud.servizio ? cloud.servizio.id+"/"+p.code+".jpg" : null;
-    if(!path){ mancanti.push(c); continue; }
+    if(p) set.push(p); else sconosciuti.push(c);
+  }
+  if(!set.length){
+    toast("Le foto di questa richiesta non sono nella giornata aperta: aprila e riprova");
+    return;
+  }
+
+  /* Come per l'invio dalla barra selezione: gli originali che mancano sul cloud vengono
+     caricati (o chiesti alla postazione che li ha) invece di dare subito errore. */
+  const testoPrima = btn.textContent;
+  btn.disabled = true; btn.textContent = "Preparo…";
+  try{ await assicuraOriginaliSulCloud(set); }catch(_){}
+  btn.disabled = false; btn.textContent = testoPrima;
+
+  // Gli originali NON sono pubblici: servono link firmati a scadenza breve,
+  // che la funzione su Vercel usa per scaricarli. Scadono da soli dopo 15 minuti.
+  const trovate = [], mancanti = sconosciuti.slice();
+  for(const p of set){
     try{
-      const {data, error} = await sb.storage.from("originali").createSignedUrl(path, 900);
-      if(error || !data || !data.signedUrl){ mancanti.push(c); continue; }
-      trovate.push({nome: c+".jpg", url: data.signedUrl});
-    }catch(_){ mancanti.push(c); }
+      const {data, error} = await sb.storage.from("originali").createSignedUrl(origKeyDi(p), 900);
+      if(error || !data || !data.signedUrl){ mancanti.push(p.code); continue; }
+      trovate.push({nome: p.code+".jpg", url: data.signedUrl});
+    }catch(_){ mancanti.push(p.code); }
   }
   if(!trovate.length){
     toast("Gli originali non sono sul cloud: caricali (Altro → Carica originali) e riprova");
