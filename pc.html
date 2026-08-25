@@ -124,7 +124,7 @@
      dello schermo, sotto la barra del programma, e le prime righe sparivano. Ora ha un
      tetto di altezza e, se serve, scorre dentro di se'. */
   #lbAdjBar{position:absolute;left:16px;bottom:16px;top:auto;z-index:5;flex-direction:column;gap:10px;padding:15px;width:340px;display:flex;
-    max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    max-height:calc(100% - 84px);overflow-y:auto;overscroll-behavior:contain;
     background:rgba(11,14,20,.95);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbAdjBar::-webkit-scrollbar, #lbRitBar::-webkit-scrollbar{width:9px}
   #lbAdjBar::-webkit-scrollbar-thumb, #lbRitBar::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
@@ -150,6 +150,8 @@
   }
   @media (prefers-reduced-motion:reduce){ #btnMail.nuova, #btnPrintQueue.nuova{animation:none} }
   #lbFav.on{border-color:var(--fav,#e05a7a);color:var(--fav,#e05a7a);font-weight:700}
+  #lbAdjBar .az{display:flex;gap:7px;flex-wrap:wrap}
+  #lbAdjBar .az button{font-size:13px;padding:6px 10px}
   #lbAdjBar .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
   #lbAdjBar .row span{font-size:14px;color:var(--muted);min-width:84px}
   #lbAdjBar input[type=range]{flex:1;height:22px}
@@ -187,7 +189,7 @@
   #lbMigliora:disabled{opacity:.45;cursor:default}
   /* pannello del ritocco: sta a destra, il pannello luce e colore resta a sinistra */
   #lbRitBar{position:absolute;right:16px;bottom:16px;top:auto;z-index:6;flex-direction:column;gap:10px;padding:15px;
-    width:290px;display:flex;max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    width:290px;display:flex;max-height:calc(100% - 84px);overflow-y:auto;overscroll-behavior:contain;
     background:rgba(11,14,20,.96);border:1px solid var(--line);
     border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbRitBar > *{flex:0 0 auto}
@@ -204,7 +206,7 @@
   #lightbox.ritocco #lbCanvas{cursor:crosshair;touch-action:none}
   #lightbox.ritocco #lbNav{display:none}
   #lbCropBar{position:absolute;right:16px;bottom:16px;top:auto;z-index:6;flex-direction:column;gap:10px;padding:15px;
-    width:290px;display:flex;max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    width:290px;display:flex;max-height:calc(100% - 84px);overflow-y:auto;overscroll-behavior:contain;
     background:rgba(11,14,20,.96);border:1px solid var(--line);
     border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #lbCropBar[hidden]{display:none}
@@ -450,6 +452,10 @@
         </div>
       </div>
       <div id="lbAdjBar">
+        <div class="az">
+          <button id="adjTaglia" title="Ritaglia la foto: stampa solo la parte che serve">✂ Taglia</button>
+          <button id="adjRitocco2" title="Pennello correttivo e toppa">Ritocco</button>
+        </div>
         <div id="adjPresets"></div>
         <div class="row"><span>Luce</span><input type="range" id="adjB" min="50" max="150" step="1" value="100"></div>
         <div class="row"><span>Contrasto</span><input type="range" id="adjC" min="50" max="150" step="1" value="100"></div>
@@ -608,6 +614,7 @@
   </main>
 
   <div id="statusBar">
+    <span title="Versione di Fay Live caricata in questo momento. Se non corrisponde all'ultimo file caricato, la pagina è vecchia: ricaricare con Ctrl+F5">Versione: <b id="stVersione">—</b></span>
     <span>Foto: <b id="stTotal">0</b></span>
     <span>Archivio: <b id="stArch" style="cursor:pointer" title="Clicca per vedere dove vengono salvate le foto">non impostato</b></span>
     <span id="stArchPath" style="color:var(--muted);font-family:var(--mono);font-size:11px" hidden></span>
@@ -2644,20 +2651,12 @@ function logEvento(azione, o){
 
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
 let rulliScoperti = {};    // lettera del rullo -> quante richieste scoperte
-/* Avviso a scomparsa: dice QUALE rullo resta senza originali, cosi' si sa subito su quale
-   postazione andare a riagganciare l'archivio. Un rullo gia' segnalato non ripete l'avviso
-   prima di 3 minuti, altrimenti col controllo ogni 2 secondi sarebbe un tormento. */
-const avvisatoRullo = {};
-function avvisaRulliScoperti(perRullo){
-  const ora = Date.now();
-  for(const [L, n] of Object.entries(perRullo)){
-    if(avvisatoRullo[L] && ora - avvisatoRullo[L] < 180000) continue;
-    avvisatoRullo[L] = ora;
-    toast(`⚠ Rullo ${L}: ${n} originali richiesti che questo PC non ha — li deve caricare la postazione che ha scattato quel rullo`, 8000);
-  }
-  // rullo tornato a posto: se ricapita, l'avviso riparte subito
-  for(const L of Object.keys(avvisatoRullo)){ if(!perRullo[L]) delete avvisatoRullo[L]; }
-}
+/* AVVISO A SCOMPARSA TOLTO (25 ago). Compariva sulla postazione che NON puo' fare niente
+   per risolvere — gli originali li ha un altro PC — e tornava ogni 3 minuti davanti al
+   cliente. L'informazione non e' persa: resta scritta nella barra di stato in basso
+   ("richieste non servite: N (Q:7)"), dove si legge quando serve senza dare fastidio.
+   Chi sta aspettando la foto vede comunque il suo avviso "in attesa dell'originale". */
+function avvisaRulliScoperti(perRullo){ /* nessun popup: solo la barra di stato */ }
 const origFalliti = new Set();   // originali urgenti arresi dopo 8 tentativi
 /* Velocità reale di caricamento, media degli ultimi 20 file. Serve a distinguere
    "la linea è lenta stasera" da "l'app si è impiantata": due diagnosi opposte. */
@@ -4729,6 +4728,8 @@ function cropRidimensiona(dir, q){
   cv.addEventListener("pointercancel", su);
 })();
 $("lbTaglia").onclick = ()=>{ $("lbMenu").hidden = true; entraTaglio(); };
+$("adjTaglia").onclick = entraTaglio;
+$("adjRitocco2").onclick = ()=> entraRitocco();
 $("cropFine").onclick = applicaTaglio;
 $("cropEsci").onclick = ()=> esciTaglio(false);
 /* AZZERA: un colpo solo per tornare alla foto intera. Prima bisognava fare "Tutta la
@@ -6708,6 +6709,13 @@ document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) pullNuo
 addEventListener("focus", ()=>pullNuoveFoto());
 addEventListener("online", ()=>pullNuoveFoto());
 $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(true); };
+
+/* VERSIONE IN CHIARO. Serve a chiudere in due secondi la domanda "sto girando sull'ultimo
+   file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
+   o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
+   Va cambiata a ogni consegna. */
+const VERSIONE = "25 ago 2026 · 23:30";
+try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
