@@ -203,6 +203,20 @@
   #lightbox.ritocco #lbStage{overflow:hidden}
   #lightbox.ritocco #lbCanvas{cursor:crosshair;touch-action:none}
   #lightbox.ritocco #lbNav{display:none}
+  #lbCropBar{position:absolute;right:16px;bottom:16px;top:auto;z-index:6;flex-direction:column;gap:10px;padding:15px;
+    width:290px;display:flex;max-height:calc(100vh - 110px);overflow-y:auto;overscroll-behavior:contain;
+    background:rgba(11,14,20,.96);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+  #lbCropBar[hidden]{display:none}
+  #lbCropBar .tit{font-size:15px;font-weight:700;color:var(--ink)}
+  #lbCropBar label{display:flex;gap:7px;align-items:center;font-size:13.5px;color:var(--ink)}
+  #lbCropBar .az{display:flex;gap:7px;flex-wrap:wrap}
+  #lbCropBar .az button{font-size:13px;padding:6px 10px}
+  #cropInfo{font-size:13.5px;line-height:1.35;color:var(--accent);min-height:36px}
+  #cropInfo.avviso{color:#FF9F43}
+  #lightbox.tagliando #lbStage{overflow:hidden}
+  #lightbox.tagliando #lbCanvas{cursor:crosshair;touch-action:none}
+  #lightbox.tagliando #lbNav{display:none}
   #lbNav{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%)}
   #lbNav button{pointer-events:auto;font-size:26px;padding:14px 18px;background:rgba(20,25,38,.7);margin:0 10px;border-radius:12px}
 
@@ -431,6 +445,7 @@
           <button id="lbSend">✈ Invia</button>
           <button id="lbAdj">Luce e colore</button>
           <button id="lbRitocco">Ritocco (pennello)</button>
+          <button id="lbTaglia">✂ Taglia <kbd>t</kbd></button>
           <button id="lbRipristina">Ripristina originale</button>
         </div>
       </div>
@@ -467,6 +482,20 @@
           <button id="ritFine" class="primary">Fine</button>
         </div>
         <span class="hint">Maiusc + trascina sposta la foto ingrandita · Esc esce dal ritocco</span>
+      </div>
+      <div id="lbCropBar" hidden>
+        <div class="tit">✂ Taglia</div>
+        <div id="cropInfo"></div>
+        <label><input type="checkbox" id="cropLock" checked> Formato carta (proporzioni della stampa)</label>
+        <div class="az">
+          <button id="cropGira">Gira ⟳</button>
+          <button id="cropTutta">Tutta la foto</button>
+        </div>
+        <div class="az">
+          <button id="cropAnnulla">Annulla</button>
+          <button id="cropFine" class="primary">Applica <kbd>invio</kbd></button>
+        </div>
+        <span class="hint">Trascina dentro per spostare, dagli angoli per ridimensionare · Esc annulla</span>
       </div>
       <div id="lbStage"><canvas id="lbCanvas"></canvas>
         <div id="lbLoading">Carico la versione nitida…</div>
@@ -3459,7 +3488,11 @@ async function renderFull(p, withOverlay=true){
     src = await createImageBitmap(grande, {imageOrientation:"from-image"});
   }
   const ev = state.event || {};
-  const iw=src.width, ih=src.height, S=Math.min(iw,ih);
+  /* dimensioni della foto tagliata: se il taglio gira una orizzontale in verticale,
+     da qui in poi tutto (cornice, mascherina, banda della scritta) la tratta come
+     verticale, ed e' esattamente quello che deve succedere */
+  const dimS = dimCrop(src, p);
+  const iw=dimS.w, ih=dimS.h, S=Math.min(iw,ih);
   // cornice bianca: bordo sottile su 4 lati + banda extra sotto per la scritta
   const border = ev.frameOn===false ? 0 : Math.round(S * ((ev.frameBorder ?? 2.5)/100)); // % del lato corto
   const hasMask = (iw >= ih) ? !!ev.maskH : !!ev.maskV;
@@ -3687,6 +3720,25 @@ async function doPrint(set){
   // chiudi la foto aperta in grande dopo la stampa
   if($("lightbox").classList.contains("open")) closeLightbox();
 }
+/* File digitale di una foto MODIFICATA: si riscrive col taglio e le correzioni sopra,
+   altrimenti il cliente riceverebbe una foto diversa da quella che ha visto e comprato.
+   Le foto non toccate escono dall'originale com'e', senza ricomprimere niente. */
+async function blobModificato(blob, p){
+  if(!fotoModificata(p)) return blob;
+  let bmp = null;
+  try{
+    bmp = await createImageBitmap(blob, {imageOrientation:"from-image"});
+    const d = dimCrop(bmp, p);
+    const c = document.createElement("canvas");
+    c.width = d.w; c.height = d.h;
+    drawAdjusted(c.getContext("2d"), bmp, 0, 0, d.w, d.h, p);
+    const out = await toBlobAsync(c, 0.92);
+    return out || blob;
+  }catch(err){
+    console.warn("export foto modificata", p.code, err);
+    return blob;                       // meglio la foto intera che nessun file
+  }finally{ if(bmp) try{ bmp.close(); }catch(_){} }
+}
 async function exportPhotos(set){
   if(!set.length){ toast("Nessuna foto da esportare"); return; }
   set.forEach(p=>askOriginal(p));
@@ -3698,6 +3750,7 @@ async function exportPhotos(set){
     if(!blob){ const grande = await ensurePreview(p);
       if(grande){ blob=grande; name=p.code+"_anteprima.jpg"; fallback++; }
       else { toast(p.code+": originale non disponibile"); continue; } }
+    blob = await blobModificato(blob, p);   // taglio e correzioni anche nel file digitale
     if(dir){
       // scrive direttamente nella cartella scelta (niente popup download)
       try{
@@ -3855,7 +3908,7 @@ function ammorbidisciPelle(base, forza){
 function haRitocco(p){ return !!(p && (p.ritLayer || p.ritPatch)); }
 /* Una foto è "modificata" se ha cursori spostati o pennellate: serve alla griglia
    per il contrassegno e per capire cosa va ripristinato. */
-function fotoModificata(p){ return !!(adjOf(p) || haRitocco(p)); }
+function fotoModificata(p){ return !!(adjOf(p) || haRitocco(p) || cropOf(p)); }
 function fonteConRitocco(img, p, w, h){
   if(!haRitocco(p)) return null;
   const t = _tela("c", w, h);
@@ -3869,7 +3922,50 @@ function fonteConRitocco(img, p, w, h){
   }
   return t.cv;
 }
+/* ---------- taglio (ritaglio) ----------
+   Il taglio e' salvato come rettangolo in PROPORZIONE (0..1) sul fotogramma intero:
+   cosi' vale identico sull'anteprima da 1280 e sull'originale da 24 megapixel, non
+   dipende dalla risoluzione e viaggia sul cloud come tre numeri, non come una foto
+   nuova. Il file su disco non viene mai toccato: si toglie con Ripristina originale. */
+function cropOf(p){
+  const k = p && p.crop;
+  if(!k || !(k.w > 0) || !(k.h > 0)) return null;
+  if(k.w >= 0.999 && k.h >= 0.999) return null;    // "tutta la foto": come non averlo
+  return k;
+}
+/* dimensioni della foto COME SI VEDE (tagliata): tutti i punti che prima leggevano
+   img.width/img.height devono passare da qui, altrimenti la foto tagliata verrebbe
+   stirata dentro il riquadro del fotogramma intero. */
+function dimCrop(img, p){
+  const k = cropOf(p), w = img.width, h = img.height;
+  return k ? { w: Math.max(1, Math.round(w * k.w)), h: Math.max(1, Math.round(h * k.h)) }
+           : { w, h };
+}
 function drawAdjusted(ctx, img, dx, dy, dw, dh, p){
+  const k = cropOf(p);
+  if(!k){ drawAdjNoCrop(ctx, img, dx, dy, dw, dh, p); return; }
+  const iw = img.width, ih = img.height;
+  const sw = Math.max(1, Math.round(k.w * iw)), sh = Math.max(1, Math.round(k.h * ih));
+  const sx = Math.max(0, Math.min(iw - sw, Math.round(k.x * iw)));
+  const sy = Math.max(0, Math.min(ih - sh, Math.round(k.y * ih)));
+  /* Luce, colore e pennellate si calcolano sul fotogramma INTERO e solo dopo si
+     ritaglia: le pennellate del ritocco sono in coordinate della foto intera, e
+     ritagliando prima finirebbero spostate. La tela di lavoro non va mai oltre la
+     risoluzione della foto, cosi' un taglio piccolo non fa esplodere la memoria. */
+  const scala = Math.min(1, dw / sw);
+  const fw = Math.max(1, Math.round(iw * scala)), fh = Math.max(1, Math.round(ih * scala));
+  try{
+    const t = _tela("k", fw, fh);
+    drawAdjNoCrop(t.ctx, img, 0, 0, fw, fh, p);
+    ctx.drawImage(t.cv, Math.round(sx*scala), Math.round(sy*scala),
+                        Math.max(1, Math.round(sw*scala)), Math.max(1, Math.round(sh*scala)),
+                        dx, dy, dw, dh);
+  }catch(err){
+    console.warn("taglio", err);
+    drawAdjNoCrop(ctx, img, dx, dy, dw, dh, p);   // meglio la foto intera che nessuna foto
+  }
+}
+function drawAdjNoCrop(ctx, img, dx, dy, dw, dh, p){
   const w = Math.max(1, Math.round(dw)), h = Math.max(1, Math.round(dh));
   let fonte = img;
   if(haRitocco(p)){
@@ -3933,7 +4029,8 @@ function misuraFoto(src, w, h){
 }
 /* misura la foto COME LA SI VEDE ORA, correzioni comprese: serve per la taratura */
 function misuraConAdj(bmp, p){
-  const w = 150, h = Math.max(1, Math.round(150 * bmp.height / bmp.width));
+  const d0 = dimCrop(bmp, p);      // si misura la foto COME SI VEDE: se e' tagliata, il pezzo
+  const w = 150, h = Math.max(1, Math.round(150 * d0.h / d0.w));
   const t = _tela("t", w, h);      // tela sua: la "a" la usa gia' la pelle morbida
   drawAdjusted(t.ctx, bmp, 0, 0, w, h, p);
   return misuraFoto(t.cv, w, h);
@@ -4098,8 +4195,9 @@ async function aggiornaMiniatura(p){
   if(!p.thumb) return;
   try{
     const im = await loadImg(p.thumb);
+    const dm = dimCrop(im, p);
     const c = document.createElement("canvas");
-    c.width = im.width; c.height = im.height;
+    c.width = dm.w; c.height = dm.h;
     drawAdjusted(c.getContext("2d"), im, 0, 0, c.width, c.height, p);
     p.thumbMod = c.toDataURL("image/jpeg", 0.85);
     paintVisible();
@@ -4113,8 +4211,12 @@ function aggiornaMiniaturaTraPoco(p){
    l'anteprima originale. L'originale su disco non è mai stato toccato. */
 function ripristinaFoto(p){
   if(!p) return;
-  p.adj = null; p.autoApplicata = false; p.thumbMod = null;
+  const avevaTaglio = !!p.crop;
+  p.adj = null; p.autoApplicata = false; p.thumbMod = null; p.crop = null;
   ritLibera(p);
+  // il taglio sta anche sul cloud: va tolto li', altrimenti le altre postazioni e i
+  // tablet continuerebbero a vedere la foto tagliata
+  if(avevaTaglio) salvaCropCloud(p);
 }
 
 /* ---------- ritocco: pennello correttivo e toppa ----------
@@ -4237,6 +4339,7 @@ function ritAnnulla(){
 function entraRitocco(){
   const p = lbPhoto();
   if(!p){ return; }
+  if(tag.on){ toast("Applica o annulla prima il taglio"); return; }
   if(!lbBmp || lbBmpFor !== p.id){ toast("Aspetta che la foto sia caricata"); return; }
   if(!ritPrepara(p)) return;
   rit.on = true; rit.hasSrc = false; rit.undo = []; rit.z = 1; rit.px = 0; rit.py = 0;
@@ -4325,14 +4428,258 @@ $("lbMigliora").onclick = toggleMigliora;
 $("lbRipristina").onclick = ()=>{
   const p = lbPhoto(); if(!p) return;
   if(!fotoModificata(p)){ toast("Questa foto non ha modifiche"); return; }
-  if(!confirm("Tolgo tutte le modifiche da " + p.code + " (luce, colore, pelle e ritocco)?")) return;
-  esciRitocco();
+  if(!confirm("Tolgo tutte le modifiche da " + p.code + " (taglio, luce, colore, pelle e ritocco)?")) return;
+  esciTaglio(false); esciRitocco();
   ripristinaFoto(p);
   syncAdjBar(); ridisegnaFotoAperta(); monitorFollow(); paintVisible(); aggiornaTastoMigliora();
   $("adjNote").textContent = "";
   toast(p.code + " ripristinata come l'originale");
 };
 $("ritZoom").oninput = ()=>{ rit.z = +$("ritZoom").value; if(rit.z===1){ rit.px=0; rit.py=0; } ritTrasforma(); };
+
+/* =====================================================================
+   TAGLIO — ritagliare la foto e stampare solo il pezzo che serve
+   Il riquadro nasce BLOCCATO sulle proporzioni della foto, che sono quelle che
+   riempiono la carta 15x23 come le stampe di oggi: un taglio fuori proporzione
+   rimetterebbe i bordi bianchi sui lati corti e storcerebbe la mascherina.
+   Il lucchetto si toglie quando serve davvero, e "Gira" passa da orizzontale a
+   verticale (utile per cavare un ritratto in piedi da uno scatto orizzontale).
+   Il taglio e' un dato salvato sulla riga della foto: vale su questo PC, sulle
+   altre postazioni e sui tablet, e si toglie con Ripristina originale.
+   ===================================================================== */
+const tag = {on:false, box:null, prima:null, lock:true, r:1.5, W:0, H:0, azione:null, gx:0, gy:0};
+const CROP_MIN = 0.10;         // niente tagli sotto il 10% del lato: in stampa non reggono
+
+function cropSerializza(p){
+  const k = cropOf(p);
+  return k ? JSON.stringify({x:+k.x.toFixed(5), y:+k.y.toFixed(5), w:+k.w.toFixed(5), h:+k.h.toFixed(5)}) : null;
+}
+function cropLeggi(v){
+  if(!v) return null;
+  try{
+    const k = (typeof v === "string") ? JSON.parse(v) : v;
+    if(!k || !(k.w > 0) || !(k.h > 0)) return null;
+    return {x:+k.x || 0, y:+k.y || 0, w:+k.w, h:+k.h};
+  }catch(_){ return null; }
+}
+/* Il taglio viaggia sul cloud come tre numeri, non come una foto nuova: costa niente
+   di banda (importante sull'hotspot) e non puo' fare doppioni con l'anteprima. */
+let _cropAvvisato = false;
+async function salvaCropCloud(p){
+  if(!sb || !p || !p.dbId) return;
+  try{
+    const {error} = await sb.from("foto").update({ritaglio: cropSerializza(p)}).eq("id", p.dbId);
+    if(error) throw error;
+  }catch(err){
+    console.warn("taglio non salvato sul cloud", p.code, err);
+    if(!_cropAvvisato){
+      _cropAvvisato = true;
+      toast("Il taglio vale su questo PC ma non sale sul cloud: manca la colonna \"ritaglio\" sulla tabella foto", 9000);
+    }
+  }
+}
+
+function cropTolleranza(){
+  const cv = $("lbCanvas"), r = cv.getBoundingClientRect();
+  const sc = Math.min(r.width / cv.width, r.height / cv.height) || 1;
+  return Math.max(8, 16 / sc);              // maniglie comode anche con la foto rimpicciolita
+}
+function cropSistema(b){
+  const W = tag.W, H = tag.H;
+  let {x, y, w, h} = b;
+  const minW = Math.max(30, W * CROP_MIN), minH = Math.max(30, H * CROP_MIN);
+  if(tag.lock){
+    const r = tag.r;
+    if(w / h > r) w = h * r; else h = w / r;
+    const k = Math.min(1, W / w, H / h);        // dentro i bordi, senza storcere
+    w *= k; h *= k;
+    const k2 = Math.max(1, minW / w, minH / h); // ma nemmeno troppo piccolo
+    w = Math.min(W, w * k2); h = Math.min(H, h * k2);
+  }else{
+    w = Math.max(minW, Math.min(W, w));
+    h = Math.max(minH, Math.min(H, h));
+  }
+  x = Math.max(0, Math.min(W - w, x));
+  y = Math.max(0, Math.min(H - h, y));
+  return {x, y, w, h};
+}
+function cropPieno(){
+  const W = tag.W, H = tag.H;
+  if(!tag.lock) return {x:0, y:0, w:W, h:H};
+  let w = W, h = W / tag.r;
+  if(h > H){ h = H; w = H * tag.r; }
+  return {x:(W - w) / 2, y:(H - h) / 2, w, h};
+}
+function cropInfoAgg(){
+  const b = tag.box, el = $("cropInfo"); if(!b || !el) return;
+  const perc = Math.round(100 * Math.min(b.w / tag.W, b.h / tag.H));
+  const versoOk = tag.lock ? "" : " · fuori formato: la stampa avra' bordi bianchi";
+  el.textContent = "Taglio: " + perc + "% della foto" + versoOk;
+  // sotto meta' fotogramma la stampa 15x23 comincia a perdere definizione
+  el.classList.toggle("avviso", perc < 50 || !tag.lock);
+  if(perc < 50 && tag.lock) el.textContent = "Taglio: " + perc + "% della foto · molto stretto, controlla la nitidezza prima di stampare";
+}
+function paintTaglio(){
+  if(!tag.on) return;
+  const p = lbPhoto(); if(!p || !lbBmp) return;
+  const c = $("lbCanvas"), ctx = c.getContext("2d");
+  if(c.width !== tag.W || c.height !== tag.H){ c.width = tag.W; c.height = tag.H; }
+  drawAdjNoCrop(ctx, lbBmp, 0, 0, c.width, c.height, p);   // qui si vede il fotogramma INTERO
+  const b = tag.box;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,.58)";                        // fuori dal riquadro: spento
+  ctx.fillRect(0, 0, c.width, b.y);
+  ctx.fillRect(0, b.y + b.h, c.width, c.height - (b.y + b.h));
+  ctx.fillRect(0, b.y, b.x, b.h);
+  ctx.fillRect(b.x + b.w, b.y, c.width - (b.x + b.w), b.h);
+  const sp = Math.max(2, Math.round(Math.min(c.width, c.height) / 450));
+  ctx.strokeStyle = "rgba(255,255,255,.30)"; ctx.lineWidth = Math.max(1, sp / 2);
+  for(let i = 1; i < 3; i++){                               // terzi: aiutano a inquadrare
+    ctx.beginPath(); ctx.moveTo(b.x + b.w*i/3, b.y); ctx.lineTo(b.x + b.w*i/3, b.y + b.h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(b.x, b.y + b.h*i/3); ctx.lineTo(b.x + b.w, b.y + b.h*i/3); ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = sp;
+  ctx.strokeRect(b.x + sp/2, b.y + sp/2, b.w - sp, b.h - sp);
+  const L = Math.round(Math.min(b.w, b.h) * 0.13) + sp * 3, T = sp * 2.4;
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = T; ctx.lineCap = "round";
+  for(const [x, y, dx, dy] of [[b.x,b.y,1,1],[b.x+b.w,b.y,-1,1],[b.x,b.y+b.h,1,-1],[b.x+b.w,b.y+b.h,-1,-1]]){
+    ctx.beginPath(); ctx.moveTo(x + dx*T/2, y + dy*T/2); ctx.lineTo(x + dx*L, y + dy*T/2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + dx*T/2, y + dy*T/2); ctx.lineTo(x + dx*T/2, y + dy*L); ctx.stroke();
+  }
+  ctx.restore();
+  cropInfoAgg();
+}
+function entraTaglio(){
+  const p = lbPhoto(); if(!p) return;
+  if(rit.on){ toast("Chiudi prima il ritocco"); return; }
+  if(!lbBmp || lbBmpFor !== p.id){ toast("Aspetta che la foto sia caricata"); return; }
+  tag.on = true;
+  tag.W = lbBmp.width; tag.H = lbBmp.height;
+  const rFoto = tag.W / tag.H;
+  tag.lock = true;
+  const k = cropOf(p);
+  if(k){
+    // taglio gia' presente: si riapre dov'era, col verso che ha
+    const b = {x:k.x*tag.W, y:k.y*tag.H, w:k.w*tag.W, h:k.h*tag.H};
+    tag.r = (b.w / b.h > 1) ? Math.max(rFoto, 1/rFoto) : Math.min(rFoto, 1/rFoto);
+    tag.lock = Math.abs((b.w/b.h) - tag.r) < 0.02;
+    tag.box = cropSistema(b);
+  }else{
+    tag.r = rFoto;
+    tag.box = cropPieno();
+  }
+  tag.prima = k ? Object.assign({}, k) : null;
+  $("cropLock").checked = tag.lock;
+  $("lbCropBar").hidden = false;
+  $("lightbox").classList.add("tagliando");
+  paintTaglio();
+}
+function esciTaglio(applica){
+  if(!tag.on) return;
+  const p = lbPhoto();
+  tag.on = false; tag.azione = null;
+  $("lbCropBar").hidden = true;
+  $("lightbox").classList.remove("tagliando");
+  if(p){
+    if(applica){
+      const b = tag.box;
+      const pieno = (b.w >= tag.W - 1 && b.h >= tag.H - 1);
+      p.crop = pieno ? null : {x:b.x/tag.W, y:b.y/tag.H, w:b.w/tag.W, h:b.h/tag.H};
+      p.thumbMod = null;
+      salvaCropCloud(p);
+      aggiornaMiniatura(p);
+      toast(pieno ? p.code + ": foto intera" : p.code + " tagliata — vale anche in stampa e sul monitor");
+    }else{
+      p.crop = tag.prima;                    // si torna com'era, senza toccare il cloud
+    }
+    ridisegnaFotoAperta(); monitorFollow(); paintVisible();
+  }
+}
+/* dove ho messo il dito: bordo, angolo, dentro (sposta) o fuori (nuovo riquadro) */
+function cropDove(q){
+  const b = tag.box, t = cropTolleranza();
+  const dentroX = q.x > b.x - t && q.x < b.x + b.w + t;
+  const dentroY = q.y > b.y - t && q.y < b.y + b.h + t;
+  let d = "";
+  if(dentroX && dentroY){
+    if(Math.abs(q.y - b.y) <= t) d += "n";
+    else if(Math.abs(q.y - (b.y + b.h)) <= t) d += "s";
+    if(Math.abs(q.x - b.x) <= t) d += "w";
+    else if(Math.abs(q.x - (b.x + b.w)) <= t) d += "e";
+    if(d) return d;
+  }
+  if(q.x > b.x && q.x < b.x + b.w && q.y > b.y && q.y < b.y + b.h) return "move";
+  return "new";
+}
+function cropRidimensiona(dir, q){
+  const b = tag.box;
+  let x1 = b.x, y1 = b.y, x2 = b.x + b.w, y2 = b.y + b.h;
+  if(dir.includes("w")) x1 = Math.min(q.x, x2 - 20);
+  if(dir.includes("e")) x2 = Math.max(q.x, x1 + 20);
+  if(dir.includes("n")) y1 = Math.min(q.y, y2 - 20);
+  if(dir.includes("s")) y2 = Math.max(q.y, y1 + 20);
+  let nx = x1, ny = y1, nw = x2 - x1, nh = y2 - y1;
+  if(tag.lock){
+    const r = tag.r;
+    if(dir === "n" || dir === "s"){                 // lato: cresce anche in larghezza, dal centro
+      nw = nh * r; nx = (b.x + b.w/2) - nw/2;
+      ny = dir === "n" ? y2 - nh : y1;
+    }else if(dir === "w" || dir === "e"){
+      nh = nw / r; ny = (b.y + b.h/2) - nh/2;
+      nx = dir === "w" ? x2 - nw : x1;
+    }else{                                          // angolo: comanda il lato piu' lungo
+      if(nw / nh > r) nh = nw / r; else nw = nh * r;
+      nx = dir.includes("w") ? x2 - nw : x1;
+      ny = dir.includes("n") ? y2 - nh : y1;
+    }
+  }
+  tag.box = cropSistema({x:nx, y:ny, w:nw, h:nh});
+}
+(function cropEventi(){
+  const cv = $("lbCanvas");
+  cv.addEventListener("pointerdown", e=>{
+    if(!tag.on) return;
+    e.preventDefault(); e.stopPropagation();
+    const q = ritPunto(e);
+    const d = cropDove(q);
+    cv.setPointerCapture(e.pointerId);
+    if(d === "move"){ tag.azione = "move"; tag.gx = q.x - tag.box.x; tag.gy = q.y - tag.box.y; }
+    else if(d === "new"){ tag.azione = "se"; tag.box = cropSistema({x:q.x, y:q.y, w:30, h:30/(tag.lock?tag.r:1)}); paintTaglio(); }
+    else { tag.azione = d; }
+  });
+  cv.addEventListener("pointermove", e=>{
+    if(!tag.on || !tag.azione) return;
+    const q = ritPunto(e);
+    if(tag.azione === "move"){
+      tag.box = cropSistema({x:q.x - tag.gx, y:q.y - tag.gy, w:tag.box.w, h:tag.box.h});
+    }else{
+      cropRidimensiona(tag.azione, q);
+    }
+    paintTaglio();
+  });
+  const su = ()=>{ if(tag.on) tag.azione = null; };
+  cv.addEventListener("pointerup", su);
+  cv.addEventListener("pointercancel", su);
+})();
+$("lbTaglia").onclick = ()=>{ $("lbMenu").hidden = true; entraTaglio(); };
+$("cropFine").onclick = ()=> esciTaglio(true);
+$("cropAnnulla").onclick = ()=> esciTaglio(false);
+$("cropTutta").onclick = ()=>{ if(!tag.on) return; tag.box = cropPieno(); paintTaglio(); };
+$("cropGira").onclick = ()=>{
+  if(!tag.on) return;
+  tag.r = 1 / tag.r;
+  const cx = tag.box.x + tag.box.w/2, cy = tag.box.y + tag.box.h/2;
+  let w = tag.box.h, h = tag.box.w;                 // stesso ingombro, verso girato
+  tag.box = cropSistema({x:cx - w/2, y:cy - h/2, w, h});
+  paintTaglio();
+};
+$("cropLock").onchange = ()=>{
+  if(!tag.on) return;
+  tag.lock = $("cropLock").checked;
+  if(tag.lock) tag.box = cropSistema(tag.box);
+  paintTaglio();
+};
+
 
 /* ---------- lightbox operatore ---------- */
 function lbList(){ return state.lbCustom || filteredPhotos(); }
@@ -4412,7 +4759,8 @@ async function paintLightbox(){
     try{
       const t=await loadImg(p.thumb);
       if(my!==lbSeq) return;
-      c.width=t.width*4; c.height=t.height*4;
+      const dt=dimCrop(t,p);
+      c.width=dt.w*4; c.height=dt.h*4;
       ctx.imageSmoothingEnabled=true;
       drawAdjusted(ctx,t,0,0,c.width,c.height,p);
       drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
@@ -4431,13 +4779,14 @@ async function paintLightbox(){
     try{ bmp=await getBig(p); }
     catch(_){ await new Promise(r=>setTimeout(r,500)); bmp=await getBig(p); }
     if(my!==lbSeq) return;
-    c.width=bmp.width; c.height=bmp.height;
+    const db=dimCrop(bmp,p);
+    c.width=db.w; c.height=db.h;
     lbBmp = bmp; lbBmpFor = p.id;              // tenuta da parte per i cursori
     /* la luce automatica lavora sulla versione nitida, una volta sola per foto,
        e solo se l'operatore non ha già messo mano ai cursori */
     calcolaSuggerimento(p, bmp);          // pronta da applicare col tasto, non applicata
     aggiornaTastoMigliora();
-    drawAdjusted(ctx,bmp,0,0,bmp.width,bmp.height,p);
+    drawAdjusted(ctx,bmp,0,0,c.width,c.height,p);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }catch(err){
     if(my!==lbSeq) return;
@@ -4449,6 +4798,7 @@ async function paintLightbox(){
   const nx=list[state.lightboxIdx+1]; if(nx) getBig(nx).catch(()=>{});
 }
 function closeLightbox(){
+  esciTaglio(false);
   esciRitocco();
   /* Le modifiche NON si perdono più alla chiusura: devono vedersi in griglia e in stampa
      anche dopo. Restano in memoria per la giornata e si tolgono a mano con "Ripristina
@@ -4465,7 +4815,7 @@ $("lbMore").onclick = e=>{ e.stopPropagation(); $("lbMenu").hidden = !$("lbMenu"
 $("lbMenu").onclick = ()=>{ $("lbMenu").hidden = true; };   // scelta fatta: si richiude
 $("lbTop").onclick = e=>{ if(!e.target.closest("#lbMore,#lbMenu")) $("lbMenu").hidden = true; };
 $("lbClose").onclick=()=>{ $("lbMenu").hidden = true; closeLightbox(); };
-$("lbStage").onclick=e=>{ if(rit.on) return; if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
+$("lbStage").onclick=e=>{ if(rit.on || tag.on) return; if(e.target.id==="lbStage" || e.target.id==="lbCanvas") closeLightbox(); };
 // se il monitor cliente sta mostrando una foto, lo faccio scorrere insieme al visualizzatore
 function monitorFollow(){
   const M=state.monitor;
@@ -4509,10 +4859,12 @@ $("lbAdj").onclick = ()=>{
 /* ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto */
 function ridisegnaFotoAperta(){
   const p = lbPhoto(); if(!p) return;
+  if(tag.on){ paintTaglio(); return; }       // mentre si taglia comanda il riquadro
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
-    c.width=lbBmp.width; c.height=lbBmp.height;
-    drawAdjusted(ctx,lbBmp,0,0,lbBmp.width,lbBmp.height,p);
+    const dr=dimCrop(lbBmp,p);
+    c.width=dr.w; c.height=dr.h;
+    drawAdjusted(ctx,lbBmp,0,0,c.width,c.height,p);
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }else{
     paintLightbox();
@@ -4807,8 +5159,9 @@ async function paintMonitorPhoto(p, withCode){
   catch(err){ console.error("monitor", p.code, err); return; }
   if(!M.win || M.win.closed) return;
   const cw=M.canvas.width, ch=M.canvas.height;
-  const k=Math.min(cw/bmp.width, ch/bmp.height);
-  const dw=bmp.width*k, dh=bmp.height*k, dx=(cw-dw)/2, dy=(ch-dh)/2;
+  const dmn=dimCrop(bmp,p);
+  const k=Math.min(cw/dmn.w, ch/dmn.h);
+  const dw=dmn.w*k, dh=dmn.h*k, dx=(cw-dw)/2, dy=(ch-dh)/2;
   M.ctx.fillStyle="#000"; M.ctx.fillRect(0,0,cw,ch);
   drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
   M.ctx.save(); M.ctx.translate(dx,dy);
@@ -4853,8 +5206,9 @@ async function drawTilePage(page, expectMode, withInfo){
     if(!bmp) continue;                       // posizione mantenuta: le altre non si spostano
     try{
       const cx=gap+(i%cols)*(tw+gap), cy=gap+Math.floor(i/cols)*(th+gap);
-      const k=Math.min(tw/bmp.width, th/bmp.height);
-      const dw=bmp.width*k, dh=bmp.height*k;
+      const dmt=dimCrop(bmp,p);
+      const k=Math.min(tw/dmt.w, th/dmt.h);
+      const dw=dmt.w*k, dh=dmt.h*k;
       const dx=cx+(tw-dw)/2, dy=cy+(th-dh)/2;
       drawAdjusted(M.ctx,bmp,dx,dy,dw,dh,p);
       M.ctx.save(); M.ctx.translate(dx,dy);
@@ -4984,6 +5338,11 @@ addEventListener("keydown", e=>{
     if(e.key==="ArrowRight"){ presentNav(1); return; }
     if(e.key==="ArrowLeft"){ presentNav(-1); return; }
   }
+  if(lbOpen && tag.on){
+    if(e.key==="Escape"){ e.preventDefault(); esciTaglio(false); }
+    else if(e.key==="Enter"){ e.preventDefault(); esciTaglio(true); }
+    return;                       // mentre si taglia frecce e spazio restano fermi
+  }
   if(lbOpen && rit.on){
     if(e.key==="Escape"){ e.preventDefault(); esciRitocco(); }
     return;                       // durante il ritocco frecce, spazio e invio restano fermi
@@ -4994,6 +5353,7 @@ addEventListener("keydown", e=>{
     else if(e.key===" "){ e.preventDefault(); $("lbSelect").click(); }
     else if(e.key==="-") $("lbShow").click();
     else if(e.key==="m" || e.key==="M"){ e.preventDefault(); if(!$("lbMigliora").disabled) toggleMigliora(); }
+    else if(e.key==="t" || e.key==="T"){ e.preventDefault(); entraTaglio(); }
     else if(e.key==="Enter"){ e.preventDefault(); closeLightbox(); }
     return;
   }
@@ -6197,6 +6557,7 @@ async function riparaAnteprime(){
       const f = p.arch ? await p.arch.getFile() : p.file;
       if(!f) return;
       p.thumb = await blobToThumb(f);
+      if(fotoModificata(p)) aggiornaMiniatura(p);
       daDisco++;
     }catch(_){}
   }));
@@ -6233,6 +6594,7 @@ async function riparaAnteprime(){
           else { thumbCache.set(ckey(p.code), blob); p.preview=blob; }   // era la grande
         } else if(!p.miniUrl) p.preview=blob;
         try{ p.thumb=await blobToThumb(blob); }catch(_){}
+        if(fotoModificata(p)) aggiornaMiniatura(p);
         ok++;
       }catch(_){}
     }));
@@ -6398,7 +6760,8 @@ function addRemotePhotoFast(f, letter){
                questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
-            origKey: f.originale_url || null };
+            origKey: f.originale_url || null,
+            crop: cropLeggi(f.ritaglio) };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -6413,7 +6776,8 @@ async function addRemotePhoto(f, letter){
                questa e' l'unica fonte che dice se l'originale e' ancora sul cloud oppure no.
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
-            origKey: f.originale_url || null };
+            origKey: f.originale_url || null,
+            crop: cropLeggi(f.ritaglio) };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
   if(blob){ p.preview=blob; }                                  // la grande era già in cache
@@ -6428,6 +6792,7 @@ async function addRemotePhoto(f, letter){
     }
   }
   if(blob){ try{ p.thumb=await blobToThumb(blob); }catch(_){}}
+  if(fotoModificata(p)) aggiornaMiniatura(p);
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 /* PERCHE' IL CONTATORE SI FERMAVA FINCHE' NON SI RICARICAVA LA PAGINA.
@@ -6501,6 +6866,14 @@ function subscribeRealtime(){
       if(p){
         p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare;
         p.copie=f.copie||1;                       // quante copie ha chiesto il tablet
+        /* taglio deciso da un'altra postazione: si adotta subito, cosi' quello che il
+           cliente vede sul monitor e quello che esce dalla stampante coincidono ovunque */
+        const kNuovo = cropLeggi(f.ritaglio);
+        if(JSON.stringify(kNuovo||null) !== JSON.stringify(p.crop||null)){
+          p.crop = kNuovo; p.thumbMod = null;
+          aggiornaMiniatura(p);
+          if(!tag.on && lbPhoto() === p) ridisegnaFotoAperta();
+        }
         // anteprima o originale appena caricati da un'altra postazione: si adottano subito
         if(adottaUrlDalCloud(p, f)) updateThumbCloud();
         renderTabs(); paintVisible();

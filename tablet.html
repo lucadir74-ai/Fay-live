@@ -633,7 +633,7 @@ async function openServizio(sv){
     const foto = await caricaFotoDeiRulli(ids);
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
       S.photos.push(p); S.byId.set(p.id,p);
     });
     ordinaFoto(S.photos);
@@ -656,7 +656,7 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
@@ -670,6 +670,7 @@ function subscribe(){
            notifica arriva qui — ma non veniva copiata, quindi il tablet continuava a
            credere che la foto non fosse sul cloud. E' la via piu' rapida per saperlo. */
         if(f.originale_url) p.origPath = f.originale_url;
+        p.crop = cropLeggi(f.ritaglio);       // taglio deciso in postazione: si adotta subito
         aggiornaSpiaBadge();
         aggiornaClessidre();
         render();
@@ -679,6 +680,36 @@ function subscribe(){
       const id=payload.old.id; if(S.byId.has(id)){ S.byId.delete(id); S.photos=S.photos.filter(x=>x.id!==id); render(); }
     })
     .subscribe();
+}
+
+/* ---------- taglio ----------
+   Il PC puo' tagliare una foto per stampare solo un pezzo. Il taglio e' salvato sulla
+   riga come rettangolo in proporzione (0..1): qui si applica in fase di disegno, cosi'
+   il cliente al tavolo vede ESATTAMENTE l'inquadratura che esce dalla stampante, senza
+   scaricare nessuna immagine in piu'. */
+function cropOf(p){
+  const k = p && p.crop;
+  if(!k || !(k.w > 0) || !(k.h > 0)) return null;
+  if(k.w >= 0.999 && k.h >= 0.999) return null;
+  return k;
+}
+function cropLeggi(v){
+  if(!v) return null;
+  try{
+    const k = (typeof v === "string") ? JSON.parse(v) : v;
+    if(!k || !(k.w > 0) || !(k.h > 0)) return null;
+    return {x:+k.x || 0, y:+k.y || 0, w:+k.w, h:+k.h};
+  }catch(_){ return null; }
+}
+/* pezzo di immagine da disegnare + quanto misura: se non c'e' taglio, la foto intera */
+function fetta(img, p){
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const k = cropOf(p);
+  if(!k) return {sx:0, sy:0, sw:iw, sh:ih, w:iw, h:ih};
+  const sw = Math.max(1, Math.round(k.w*iw)), sh = Math.max(1, Math.round(k.h*ih));
+  return { sx: Math.max(0, Math.min(iw-sw, Math.round(k.x*iw))),
+           sy: Math.max(0, Math.min(ih-sh, Math.round(k.y*ih))),
+           sw, sh, w:sw, h:sh };
 }
 
 /* ---------- rendering griglia ---------- */
@@ -1257,7 +1288,8 @@ function queueDraw(cv, p){
 function disegnaSubito(cv, p, bmp){
   try{
     if(!cv.isConnected || cv.dataset.code !== p.code) return;
-    if(bmp.width > bmp.height*1.15){
+    const fe0 = fetta(bmp, p);
+    if(fe0.w > fe0.h*1.15){          // il taglio puo' girare il verso della foto
       p.wide = true;
       const cell=cv.closest(".cell"); if(cell && !cell.classList.contains("wide")) cell.classList.add("wide");
     }
@@ -1267,9 +1299,10 @@ function disegnaSubito(cv, p, bmp){
     cv.width=Math.round(rect.width*dpr); cv.height=Math.round(rect.height*dpr);
     const ctx=cv.getContext("2d");
     ctx.fillStyle="#1a1a1a"; ctx.fillRect(0,0,cv.width,cv.height);
-    const k=Math.min(cv.width/bmp.width, cv.height/bmp.height);
-    const w=bmp.width*k, h=bmp.height*k;
-    ctx.drawImage(bmp,(cv.width-w)/2,(cv.height-h)/2,w,h);
+    const fe=fetta(bmp, p);
+    const k=Math.min(cv.width/fe.w, cv.height/fe.h);
+    const w=fe.w*k, h=fe.h*k;
+    ctx.drawImage(bmp, fe.sx, fe.sy, fe.sw, fe.sh, (cv.width-w)/2, (cv.height-h)/2, w, h);
     cv.dataset.drawn="1";
   }catch(_){ drawQueue.push([cv,p]); pumpDraw(); }
 }
@@ -1412,9 +1445,10 @@ async function drawThumb(cv, p){
     cv.height=Math.round(rect.height*dpr);
     const ctx=cv.getContext("2d");
     ctx.fillStyle="#1a1a1a"; ctx.fillRect(0,0,cv.width,cv.height);
-    const k=Math.min(cv.width/bmp.width, cv.height/bmp.height);
-    const w=bmp.width*k, h=bmp.height*k;
-    ctx.drawImage(bmp, (cv.width-w)/2, (cv.height-h)/2, w, h);
+    const fe=fetta(bmp, p);
+    const k=Math.min(cv.width/fe.w, cv.height/fe.h);
+    const w=fe.w*k, h=fe.h*k;
+    ctx.drawImage(bmp, fe.sx, fe.sy, fe.sw, fe.sh, (cv.width-w)/2, (cv.height-h)/2, w, h);
     cv.dataset.drawn="1";
     p._thumbErr = 0;
     return true;
@@ -2244,17 +2278,17 @@ async function showCurrent(){
    attimo restava tutto lo schermo nero, che sembrava una tendina. */
 const STRISCIA = 18;          // larghezza della striscia nera, in px
 let slideX = 0;               // spostamento in corso, in px
-function disegnaFoto(img, off){
+function disegnaFoto(img, off, p0){
   if(!img) return;
   const c=V.canvas, ctx=V.ctx;
   const cw=c.width, ch=c.height;
-  const iw=img.naturalWidth || img.width, ih=img.naturalHeight || img.height;
-  const base=Math.min(cw/iw, ch/ih);
+  const fe = fetta(img, p0 || null);      // la foto accanto ha il SUO taglio, non quello di questa
+  const base=Math.min(cw/fe.w, ch/fe.h);
   const k=base*V.scale;
-  const w=iw*k, h=ih*k;
+  const w=fe.w*k, h=fe.h*k;
   const x=(cw-w)/2 + (V.tx + off)*devicePixelRatio;
   const y=(ch-h)/2 + V.ty*devicePixelRatio;
-  ctx.drawImage(img, x, y, w, h);
+  ctx.drawImage(img, fe.sx, fe.sy, fe.sw, fe.sh, x, y, w, h);
 }
 function immagineDi(p){
   if(!p) return null;
@@ -2265,11 +2299,11 @@ function draw(){
   const c=V.canvas, ctx=V.ctx; if(!ctx) return;
   ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,c.width,c.height);
   ctx.fillStyle="#000"; ctx.fillRect(0,0,c.width,c.height);
-  disegnaFoto(V.img, slideX);
+  disegnaFoto(V.img, slideX, V.list ? V.list[V.idx] : null);
   if(slideX){                                   // la foto accanto entra dallo stesso passo
     const passo = (c.clientWidth || 300) + STRISCIA;
     const vicina = slideX < 0 ? V.list[V.idx+1] : V.list[V.idx-1];
-    disegnaFoto(immagineDi(vicina), slideX + (slideX<0 ? passo : -passo));
+    disegnaFoto(immagineDi(vicina), slideX + (slideX<0 ? passo : -passo), vicina);
   }
 }
 $("vClose").onclick=closeViewer;
@@ -2386,7 +2420,7 @@ async function refresh(manuale){
       (foto||[]).forEach(f=>{
         const r = rmap[f.rullo_id]; if(!r) return;
         const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null,
-                    origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null };
+                    origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
         const vecchia = S.byId.get(f.id);
         if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile
         if(vecchia && vecchia.origPath && !p.origPath) p.origPath = vecchia.origPath;
