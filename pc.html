@@ -3048,7 +3048,7 @@ function renderTabs(){
     /* 🖨 conta i FOGLI usciti dalla stampante, copie comprese: una foto stampata 6 volte
        vale 6. Prima contava le foto diverse stampate (valeva 1), e il rullo diceva 6 dove
        la stampante aveva fatto 12 — mentre la singola foto contava giusto e il report pure. */
-    /* 💾 file venduti: non è un dato per foto (una vendita di soli file non lascia stampe),
+    /* ▤ file venduti: non è un dato per foto (una vendita di soli file non lascia stampe),
        è il contatore del rullo, lo stesso che finisce nella colonna "File" del report.
        Sul riepilogo giornata si sommano i contatori di tutti i rulli presenti. */
     const lettere = L ? [L] : [...new Set(state.photos.map(p=>p.letter))];
@@ -3069,7 +3069,7 @@ function renderTabs(){
       <span class="stat">${s.n} foto</span>
       <span class="stat pr" title="${s.pr} fogli stampati su ${s.prFoto} foto (copie comprese)">🖨 ${s.pr}</span>
       <span class="stat ex">⇩ ${s.ex}</span>
-      <span class="stat fl" title="${s.fl} vendute come solo file digitale (colonna File del report)">💾 ${s.fl}</span>
+      <span class="stat fl" title="${s.fl} vendute come solo file digitale (colonna File del report)">▤ ${s.fl}</span>
     </button>`;
   };
   // "Tutte" non è più una scheda apribile: su mille foto la griglia diventava pesante.
@@ -3083,7 +3083,7 @@ function renderTabs(){
       <span class="stat">${g.n} foto</span>
       <span class="stat pr" title="${g.pr} fogli stampati su ${g.prFoto} foto (copie comprese)">🖨 ${g.pr}</span>
       <span class="stat ex">⇩ ${g.ex}</span>
-      <span class="stat fl" title="${g.fl} vendute come solo file digitale (colonna File del report)">💾 ${g.fl}</span>
+      <span class="stat fl" title="${g.fl} vendute come solo file digitale (colonna File del report)">▤ ${g.fl}</span>
       <span class="stat vd" title="stampe − omaggi − scarti + file, stessa formula del report">✓ ${vdGiornata()} vendute</span>
     </div>` : "";
   nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
@@ -3297,7 +3297,7 @@ async function segnaStat(set, campo, etichetta){
       await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: n}), "report "+campo);
     }
   }
-  renderTabs();                                  // 💾 e vendute si aggiornano subito in cima
+  renderTabs();                                  // ▤ e vendute si aggiornano subito in cima
   const tot = set.length;
   const dove = Object.keys(perRullo).sort().join(", ");
   toastAnnulla(`${tot} ${etichetta} sul rullo ${dove}`, "Annulla", ()=> annullaStat(perRullo, campo));
@@ -7013,7 +7013,7 @@ function subscribeRealtime(){
       }
     })
     /* I file venduti (e omaggi/scarti) stanno sulla riga del RULLO, non sulle foto: senza
-       questo ascolto il 💾 segnato dal tablet o da un'altra postazione si vedeva qui solo
+       questo ascolto il ▤ segnato dal tablet o da un'altra postazione si vedeva qui solo
        ricaricando la pagina. NB: serve che la tabella rulli sia nella pubblicazione realtime. */
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"rulli"}, payload=>{
       const r = payload.new;
