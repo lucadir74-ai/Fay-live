@@ -2951,7 +2951,12 @@ async function getBig(p, maxSide=1920){
   /* La cache deve tenere almeno la pagina in corso + quella precaricata (12 su 6 riquadri),
      più le foto aperte nel visualizzatore: con 24 capitava che una foto della pagina venisse
      sfrattata (e chiusa) proprio mentre serviva. */
-  if(bigCache.size>32){ const [oldId, old]=bigCache.entries().next().value; old.close(); bigCache.delete(oldId); }
+  if(bigCache.size>32){
+    for(const [oldId, old] of bigCache){
+      if(oldId === lbBmpFor) continue;        // e' la foto aperta sul PC: si tiene
+      old.close(); bigCache.delete(oldId); break;
+    }
+  }
   return bmp;
 }
 
@@ -4519,12 +4524,32 @@ function cropInfoAgg(){
   el.classList.toggle("avviso", perc < 50 || !tag.lock);
   if(perc < 50 && tag.lock) el.textContent = "Taglio: " + perc + "% della foto · molto stretto, controlla la nitidezza prima di stampare";
 }
+let _tagliaRecupero = false;
+/* Se la foto non e' piu' in memoria (il browser puo' liberarla mentre il monitor cliente
+   macina lo slideshow) si ricarica al volo invece di piantarsi: il taglio in corso resta. */
+function tagliaRicarica(p){
+  if(_tagliaRecupero) return;
+  _tagliaRecupero = true;
+  getBig(p).then(b=>{
+    lbBmp = b; lbBmpFor = p.id; _tagliaRecupero = false;
+    if(tag.on) paintTaglio();
+  }).catch(err=>{
+    _tagliaRecupero = false;
+    console.warn("ricarica foto per il taglio", p.code, err);
+    toast("Foto da ricaricare: chiudi e riapri " + p.code);
+  });
+}
 function paintTaglio(){
   if(!tag.on) return;
   const p = lbPhoto(); if(!p || !lbBmp) return;
   const c = $("lbCanvas"), ctx = c.getContext("2d");
   if(c.width !== tag.W || c.height !== tag.H){ c.width = tag.W; c.height = tag.H; }
-  drawAdjNoCrop(ctx, lbBmp, 0, 0, c.width, c.height, p);   // qui si vede il fotogramma INTERO
+  try{
+    drawAdjNoCrop(ctx, lbBmp, 0, 0, c.width, c.height, p);   // qui si vede il fotogramma INTERO
+  }catch(err){
+    console.warn("taglio: foto non piu' in memoria", p.code, err);
+    tagliaRicarica(p); return;
+  }
   const b = tag.box;
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,.58)";                        // fuori dal riquadro: spento
@@ -4864,7 +4889,12 @@ function ridisegnaFotoAperta(){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     const dr=dimCrop(lbBmp,p);
     c.width=dr.w; c.height=dr.h;
-    drawAdjusted(ctx,lbBmp,0,0,c.width,c.height,p);
+    try{
+      drawAdjusted(ctx,lbBmp,0,0,c.width,c.height,p);
+    }catch(err){
+      console.warn("ridisegno: foto non piu' in memoria", p.code, err);
+      lbBmp = null; lbBmpFor = null; paintLightbox(); return;
+    }
     drawCodeBadge(ctx,c.width,c.height,p.code,statusOf(p));
   }else{
     paintLightbox();
