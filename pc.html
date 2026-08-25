@@ -4471,7 +4471,8 @@ $("ritZoom").oninput = ()=>{ rit.z = +$("ritZoom").value; if(rit.z===1){ rit.px=
    Il taglio e' un dato salvato sulla riga della foto: vale su questo PC, sulle
    altre postazioni e sui tablet, e si toglie con Ripristina originale.
    ===================================================================== */
-const tag = {on:false, box:null, prima:null, lock:true, r:1.5, W:0, H:0, azione:null, gx:0, gy:0};
+const tag = {on:false, box:null, prima:null, lock:true, r:1.5, W:0, H:0, azione:null, gx:0, gy:0,
+             vista:"modifica"};   // "modifica" = foto intera col riquadro · "risultato" = foto tagliata
 const CROP_MIN = 0.10;         // niente tagli sotto il 10% del lato: in stampa non reggono
 
 function cropSerializza(p){
@@ -4536,6 +4537,14 @@ function cropPieno(){
 }
 function cropInfoAgg(){
   const b = tag.box, el = $("cropInfo"); if(!b || !el) return;
+  if(tag.vista !== "modifica"){
+    const p0 = lbPhoto();
+    el.textContent = (p0 && cropOf(p0))
+      ? "Taglio applicato · clicca la foto per correggere il riquadro"
+      : "Foto intera · clicca la foto per rifare il riquadro";
+    el.classList.remove("avviso");
+    return;
+  }
   const perc = Math.round(100 * Math.min(b.w / tag.W, b.h / tag.H));
   const versoOk = tag.lock ? "" : " · fuori formato: la stampa avra' bordi bianchi";
   el.textContent = "Taglio: " + perc + "% della foto" + versoOk;
@@ -4560,6 +4569,7 @@ function tagliaRicarica(p){
 }
 function paintTaglio(){
   if(!tag.on) return;
+  if(tag.vista !== "modifica"){ ridisegnaFotoAperta(); cropInfoAgg(); return; }
   const p = lbPhoto(); if(!p || !lbBmp) return;
   const c = $("lbCanvas"), ctx = c.getContext("2d");
   if(c.width !== tag.W || c.height !== tag.H){ c.width = tag.W; c.height = tag.H; }
@@ -4595,6 +4605,7 @@ function paintTaglio(){
 }
 function entraTaglio(){
   const p = lbPhoto(); if(!p) return;
+  tag.vista = "modifica";
   if(rit.on){ toast("Chiudi prima il ritocco"); return; }
   if(!lbBmp || lbBmpFor !== p.id){ toast("Aspetta che la foto sia caricata"); return; }
   tag.on = true;
@@ -4631,7 +4642,8 @@ function applicaTaglio(){
   salvaCropCloud(p);
   aggiornaMiniatura(p);
   tag.prima = p.crop ? Object.assign({}, p.crop) : null;   // da adesso Esc torna a QUESTO
-  monitorFollow(); paintVisible(); paintTaglio();
+  tag.vista = "risultato";                 // si vede la foto come uscira' dalla stampante
+  monitorFollow(); paintVisible(); ridisegnaFotoAperta(); cropInfoAgg();
   toast(pieno ? p.code + ": foto intera" : p.code + " tagliata — vale anche in stampa e sul monitor");
 }
 function esciTaglio(applica){
@@ -4692,6 +4704,9 @@ function cropRidimensiona(dir, q){
   cv.addEventListener("pointerdown", e=>{
     if(!tag.on) return;
     e.preventDefault(); e.stopPropagation();
+    if(tag.vista !== "modifica"){        // si stava guardando il risultato: si torna a scegliere
+      tag.vista = "modifica"; paintTaglio(); return;
+    }
     const q = ritPunto(e);
     const d = cropDove(q);
     cv.setPointerCapture(e.pointerId);
@@ -4726,6 +4741,7 @@ $("cropTutta").onclick = ()=>{
 };
 $("cropGira").onclick = ()=>{
   if(!tag.on) return;
+  tag.vista = "modifica";
   tag.r = 1 / tag.r;
   const cx = tag.box.x + tag.box.w/2, cy = tag.box.y + tag.box.h/2;
   let w = tag.box.h, h = tag.box.w;                 // stesso ingombro, verso girato
@@ -4734,6 +4750,7 @@ $("cropGira").onclick = ()=>{
 };
 $("cropLock").onchange = ()=>{
   if(!tag.on) return;
+  tag.vista = "modifica";
   tag.lock = $("cropLock").checked;
   if(tag.lock) tag.box = cropSistema(tag.box);
   paintTaglio();
@@ -4918,7 +4935,7 @@ $("lbAdj").onclick = ()=>{
 /* ridisegno veloce dalla bitmap già caricata, senza ricaricare la foto */
 function ridisegnaFotoAperta(){
   const p = lbPhoto(); if(!p) return;
-  if(tag.on){ paintTaglio(); return; }       // mentre si taglia comanda il riquadro
+  if(tag.on && tag.vista === "modifica"){ paintTaglio(); return; }   // si sta scegliendo il riquadro
   if(lbBmp && lbBmpFor===p.id){
     const c=$("lbCanvas"), ctx=c.getContext("2d");
     const dr=dimCrop(lbBmp,p);
