@@ -490,9 +490,12 @@
         <div class="az">
           <button id="cropGira">Gira ⟳</button>
           <button id="cropTutta" title="Toglie il taglio: la foto torna intera">Azzera</button>
-          <button id="cropFine" class="primary">Applica <kbd>invio</kbd></button>
         </div>
-        <span class="hint">Trascina dentro per spostare, dagli angoli per ridimensionare</span>
+        <div class="az">
+          <button id="cropFine" class="primary">Applica <kbd>invio</kbd></button>
+          <button id="cropEsci">Esci <kbd>esc</kbd></button>
+        </div>
+        <span class="hint">Trascina dentro per spostare, dagli angoli per ridimensionare · il pannello resta aperto dopo Applica</span>
       </div>
       <div id="lbStage"><canvas id="lbCanvas"></canvas>
         <div id="lbLoading">Carico la versione nitida…</div>
@@ -4615,24 +4618,32 @@ function entraTaglio(){
   $("lightbox").classList.add("tagliando");
   paintTaglio();
 }
+/* Applica ma NON chiude: griglia, monitor cliente e stampa si aggiornano subito e il
+   riquadro resta li' per correggere l'inquadratura guardando il risultato. Si esce col
+   tasto Esci (o Esc), che lascia in piedi l'ultimo taglio applicato. */
+function applicaTaglio(){
+  if(!tag.on) return;
+  const p = lbPhoto(); if(!p) return;
+  const b = tag.box;
+  const pieno = (b.w >= tag.W - 1 && b.h >= tag.H - 1);
+  p.crop = pieno ? null : {x:b.x/tag.W, y:b.y/tag.H, w:b.w/tag.W, h:b.h/tag.H};
+  p.thumbMod = null;
+  salvaCropCloud(p);
+  aggiornaMiniatura(p);
+  tag.prima = p.crop ? Object.assign({}, p.crop) : null;   // da adesso Esc torna a QUESTO
+  monitorFollow(); paintVisible(); paintTaglio();
+  toast(pieno ? p.code + ": foto intera" : p.code + " tagliata — vale anche in stampa e sul monitor");
+}
 function esciTaglio(applica){
   if(!tag.on) return;
+  if(applica) applicaTaglio();
   const p = lbPhoto();
   tag.on = false; tag.azione = null;
   $("lbCropBar").hidden = true;
   $("lightbox").classList.remove("tagliando");
   if(p){
-    if(applica){
-      const b = tag.box;
-      const pieno = (b.w >= tag.W - 1 && b.h >= tag.H - 1);
-      p.crop = pieno ? null : {x:b.x/tag.W, y:b.y/tag.H, w:b.w/tag.W, h:b.h/tag.H};
-      p.thumbMod = null;
-      salvaCropCloud(p);
-      aggiornaMiniatura(p);
-      toast(pieno ? p.code + ": foto intera" : p.code + " tagliata — vale anche in stampa e sul monitor");
-    }else{
-      p.crop = tag.prima;                    // si torna com'era, senza toccare il cloud
-    }
+    // quello che era gia' stato applicato resta; si scarta solo il riquadro non confermato
+    p.crop = tag.prima;
     ridisegnaFotoAperta(); monitorFollow(); paintVisible();
   }
 }
@@ -4703,14 +4714,15 @@ function cropRidimensiona(dir, q){
   cv.addEventListener("pointercancel", su);
 })();
 $("lbTaglia").onclick = ()=>{ $("lbMenu").hidden = true; entraTaglio(); };
-$("cropFine").onclick = ()=> esciTaglio(true);
+$("cropFine").onclick = applicaTaglio;
+$("cropEsci").onclick = ()=> esciTaglio(false);
 /* AZZERA: un colpo solo per tornare alla foto intera. Prima bisognava fare "Tutta la
    foto" e poi "Applica", e nessuno ci arrivava. Il riquadro va a tutto il fotogramma
    anche se il verso e' stato girato, altrimenti resterebbe un taglio. */
 $("cropTutta").onclick = ()=>{
   if(!tag.on) return;
   tag.box = {x:0, y:0, w:tag.W, h:tag.H};
-  esciTaglio(true);
+  applicaTaglio();
 };
 $("cropGira").onclick = ()=>{
   if(!tag.on) return;
@@ -5392,7 +5404,7 @@ addEventListener("keydown", e=>{
   }
   if(lbOpen && tag.on){
     if(e.key==="Escape"){ e.preventDefault(); esciTaglio(false); }
-    else if(e.key==="Enter"){ e.preventDefault(); esciTaglio(true); }
+    else if(e.key==="Enter"){ e.preventDefault(); applicaTaglio(); }
     return;                       // mentre si taglia frecce e spazio restano fermi
   }
   if(lbOpen && rit.on){
