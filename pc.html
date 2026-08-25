@@ -489,13 +489,10 @@
         <label><input type="checkbox" id="cropLock" checked> Formato carta (proporzioni della stampa)</label>
         <div class="az">
           <button id="cropGira">Gira ⟳</button>
-          <button id="cropTutta">Tutta la foto</button>
-        </div>
-        <div class="az">
-          <button id="cropAnnulla">Annulla</button>
+          <button id="cropTutta" title="Toglie il taglio: la foto torna intera">Azzera</button>
           <button id="cropFine" class="primary">Applica <kbd>invio</kbd></button>
         </div>
-        <span class="hint">Trascina dentro per spostare, dagli angoli per ridimensionare · Esc annulla</span>
+        <span class="hint">Trascina dentro per spostare, dagli angoli per ridimensionare</span>
       </div>
       <div id="lbStage"><canvas id="lbCanvas"></canvas>
         <div id="lbLoading">Carico la versione nitida…</div>
@@ -4707,8 +4704,14 @@ function cropRidimensiona(dir, q){
 })();
 $("lbTaglia").onclick = ()=>{ $("lbMenu").hidden = true; entraTaglio(); };
 $("cropFine").onclick = ()=> esciTaglio(true);
-$("cropAnnulla").onclick = ()=> esciTaglio(false);
-$("cropTutta").onclick = ()=>{ if(!tag.on) return; tag.box = cropPieno(); paintTaglio(); };
+/* AZZERA: un colpo solo per tornare alla foto intera. Prima bisognava fare "Tutta la
+   foto" e poi "Applica", e nessuno ci arrivava. Il riquadro va a tutto il fotogramma
+   anche se il verso e' stato girato, altrimenti resterebbe un taglio. */
+$("cropTutta").onclick = ()=>{
+  if(!tag.on) return;
+  tag.box = {x:0, y:0, w:tag.W, h:tag.H};
+  esciTaglio(true);
+};
 $("cropGira").onclick = ()=>{
   if(!tag.on) return;
   tag.r = 1 / tag.r;
