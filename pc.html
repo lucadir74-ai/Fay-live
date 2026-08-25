@@ -63,13 +63,15 @@
   .ltab.active .ldesc{color:var(--accent-ink);opacity:.8}
   .ltab .stat.pr{color:var(--ok)}
   .ltab .stat.ex{color:#7FB8F0}
-  .ltab.active .stat.pr,.ltab.active .stat.ex{color:var(--accent-ink);opacity:.8}
+  .ltab .stat.fl{color:#E3B341}
+  .ltab.active .stat.pr,.ltab.active .stat.ex,.ltab.active .stat.fl{color:var(--accent-ink);opacity:.8}
   /* riepilogo giornata: solo numeri, non si clicca e non carica niente */
   .daysum{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:9px;
     background:transparent;border:1px dashed var(--line);white-space:nowrap;cursor:default;color:var(--muted)}
   .daysum .lt{font-weight:800;font-size:13px;letter-spacing:.5px;color:var(--muted)}
   .daysum .stat{font-size:11.5px;font-weight:600}
   .daysum .stat.pr{color:var(--ok)} .daysum .stat.ex{color:#7FB8F0}
+  .daysum .stat.fl{color:#E3B341} .daysum .stat.vd{color:var(--ink);font-weight:800}
   #statusBar b{color:var(--ink)}
   #monitorState{display:flex;align-items:center;gap:6px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--danger)}
@@ -3026,6 +3028,16 @@ function filteredPhotos(){
 }
 
 /* ---------- schede lettera ---------- */
+/* Vendute della giornata: stessa identica formula del report (venduteRullo), così il
+   numero in cima e quello della finestra Report non possono dire cose diverse.
+   Le ristampe fatte in altri giorni (state.stampeFuori) si scontano solo dopo aver
+   aperto il report almeno una volta: prima di allora valgono zero, come già succedeva. */
+function vdGiornata(){
+  try{
+    const righe = datiReport();
+    return Object.keys(righe).reduce((s,k)=> s + venduteRullo(righe[k]), 0);
+  }catch(_){ return 0; }
+}
 function renderTabs(){
   const nav=$("letterTabs");
   const letters=[...new Set(state.photos.map(p=>p.letter))].sort();
@@ -3036,10 +3048,16 @@ function renderTabs(){
     /* 🖨 conta i FOGLI usciti dalla stampante, copie comprese: una foto stampata 6 volte
        vale 6. Prima contava le foto diverse stampate (valeva 1), e il rullo diceva 6 dove
        la stampante aveva fatto 12 — mentre la singola foto contava giusto e il report pure. */
+    /* 💾 file venduti: non è un dato per foto (una vendita di soli file non lascia stampe),
+       è il contatore del rullo, lo stesso che finisce nella colonna "File" del report.
+       Sul riepilogo giornata si sommano i contatori di tutti i rulli presenti. */
+    const lettere = L ? [L] : [...new Set(state.photos.map(p=>p.letter))];
+    const fl = lettere.reduce((s,k)=> s + ((state.rulloStats[k]||{}).file_venduti||0), 0);
     return { n:ph.length,
              pr:ph.reduce((s,p)=>s+(p.prints||0),0),
              prFoto:ph.filter(p=>p.prints>0).length,
-             ex:ph.filter(p=>p.exported).length };
+             ex:ph.filter(p=>p.exported).length,
+             fl };
   };
   const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
   const tab=(L,label)=>{
@@ -3051,6 +3069,7 @@ function renderTabs(){
       <span class="stat">${s.n} foto</span>
       <span class="stat pr" title="${s.pr} fogli stampati su ${s.prFoto} foto (copie comprese)">🖨 ${s.pr}</span>
       <span class="stat ex">⇩ ${s.ex}</span>
+      <span class="stat fl" title="${s.fl} vendute come solo file digitale (colonna File del report)">💾 ${s.fl}</span>
     </button>`;
   };
   // "Tutte" non è più una scheda apribile: su mille foto la griglia diventava pesante.
@@ -3064,6 +3083,8 @@ function renderTabs(){
       <span class="stat">${g.n} foto</span>
       <span class="stat pr" title="${g.pr} fogli stampati su ${g.prFoto} foto (copie comprese)">🖨 ${g.pr}</span>
       <span class="stat ex">⇩ ${g.ex}</span>
+      <span class="stat fl" title="${g.fl} vendute come solo file digitale (colonna File del report)">💾 ${g.fl}</span>
+      <span class="stat vd" title="stampe − omaggi − scarti + file, stessa formula del report">✓ ${vdGiornata()} vendute</span>
     </div>` : "";
   nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
   nav.querySelectorAll(".ltab").forEach(b=>{
@@ -3276,6 +3297,7 @@ async function segnaStat(set, campo, etichetta){
       await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: n}), "report "+campo);
     }
   }
+  renderTabs();                                  // 💾 e vendute si aggiornano subito in cima
   const tot = set.length;
   const dove = Object.keys(perRullo).sort().join(", ");
   toastAnnulla(`${tot} ${etichetta} sul rullo ${dove}`, "Annulla", ()=> annullaStat(perRullo, campo));
@@ -3289,6 +3311,7 @@ async function annullaStat(perRullo, campo){
       await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: -n}), "report annulla");
     }
   }
+  renderTabs();
   toast("Annullato");
 }
 $("selFile").onclick    = async ()=>{ const set=selSet(); await segnaStat(set,"file_venduti","vendute come file"); fineVendita(set); };
@@ -6128,6 +6151,7 @@ async function salvaStat(L, campo, valore){
   if(sb && cloud.rulli[L]){
     await sbTry(()=>sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id), "report rullo");
   }
+  renderTabs();                    // numero corretto a mano nel report: si allinea anche in cima
 }
 
 async function apriStats(){
@@ -6987,6 +7011,17 @@ function subscribeRealtime(){
         }
         updatePrintQueueBadge();
       }
+    })
+    /* I file venduti (e omaggi/scarti) stanno sulla riga del RULLO, non sulle foto: senza
+       questo ascolto il 💾 segnato dal tablet o da un'altra postazione si vedeva qui solo
+       ricaricando la pagina. NB: serve che la tabella rulli sia nella pubblicazione realtime. */
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"rulli"}, payload=>{
+      const r = payload.new;
+      if(!cloud.servizio || String(r.servizio_id)!==String(cloud.servizio.id)) return;
+      state.rulloStats[r.lettera] = {omaggi:r.omaggi||0, scarti:r.scarti||0, file_venduti:r.file_venduti||0};
+      if(r.descrizione!=null) state.letterDesc[r.lettera] = r.descrizione;
+      renderTabs();
+      if($("statsDlg") && $("statsDlg").open) aggiornaVendute();
     })
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"attivita"}, ()=>{ /* report si aggiorna all'apertura */ })
     .on("postgres_changes", {event:"INSERT", schema:"public", table:"richieste_email"}, payload=>{
