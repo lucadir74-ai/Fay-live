@@ -1347,6 +1347,9 @@ $("btnImport").onclick = async ()=>{
   try{ dir = await showDirectoryPicker({mode:"read", id:"fayimport"}); }
   catch(_){ return; }                                                  // annullato
   if(!(await cartelleCompatibili(dir))) return;
+  /* Teniamo da parte la cartella da cui stiamo importando: a import finito serve per
+     accorgersi che la scheda è stata tolta (vedi vegliaScheda in fineImport). */
+  state.importSrc = dir;
   try{
     toast("Leggo la cartella…");
     importaFiles(await leggiCartellaFoto(dir));
@@ -1529,12 +1532,15 @@ function detectLetter(f){
 $("fileInput").onchange = async e=>{
   const files=[...e.target.files].filter(isImage);
   e.target.value="";
+  state.importSrc = null;   // finestra classica: nessuna cartella da sorvegliare
   importaFiles(files);
 };
 
 // stesso percorso di import sia dal tasto "Importa cartella" sia dal lettore schede sorvegliato
 let importInCorso = false;
 async function importaFiles(files){
+  // se è ancora a schermo l'avviso verde dell'import precedente, sparisce qui
+  if(fineImport._attivo && fineImport._chiudi) fineImport._chiudi();
   if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
   if(importInCorso){ toast("C'è già un import in corso"); return; }
   importInCorso = true;
@@ -1617,9 +1623,10 @@ function progUpdate(){
   $("progLabel").textContent = `Anteprime ${prog.done}/${prog.total}`;
   $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
 }
-$("progCancel").onclick = ()=>{
-  // a import finito lo stesso tasto serve solo a togliere l'avviso verde
-  if(fineImport._h){ fineImport._chiudi(); return; }
+$("progCancel").onclick = (ev)=>{
+  ev.stopPropagation();   // il clic sulla barra la chiude: qui invece si annulla davvero
+  // a import finito il tasto è nascosto: se per qualche motivo lo si preme, toglie l'avviso
+  if(fineImport._attivo){ fineImport._chiudi(); return; }
   prog.cancel = true;
   // ferma anche le code cloud in sospeso
   origQueue.length = 0; origSet.clear();
@@ -1629,6 +1636,7 @@ $("progCancel").onclick = ()=>{
   toast("Import interrotto");
 };
 /* ---------- archivio su cartella dedicata ---------- */
+state.importSrc = null; // cartella (scheda SD) dell'ultimo import: serve solo a capire quando viene tolta
 state.archive = null; // DirectoryHandle scelto (una volta) dall'utente
 state.senzaArchivio = false; // true solo se l'operatore sceglie di lavorare senza archivio locale
 state.archiveName = null; // nome della cartella ricordata, anche quando il permesso è da riattivare
@@ -2335,10 +2343,26 @@ async function processBatchInterno(batch){
   return { fails };
 }
 
+/* La scheda SD non si può "sentire" dal browser. Però la cartella da cui abbiamo importato
+   sta sulla scheda: finché la scheda è dentro si legge, appena viene tolta ogni accesso
+   fallisce. È questo il segnale che usiamo per azzerare l'avviso di fine import. */
+async function cartellaAncoraLeggibile(dir){
+  if(!dir) return true;
+  try{
+    if(dir.queryPermission){
+      const st = await dir.queryPermission({mode:"read"});
+      if(st !== "granted") return false;
+    }
+    for await (const _ of dir.values()) break;   // basta toccarla: se non c'è più, lancia
+    return true;
+  }catch(_){ return false; }
+}
+
 /* FINE IMPORT — l'avviso resta dove l'operatore stava già guardando, cioè nella barra di
-   caricamento: diventa verde, dice quanto ha importato e si chiude da sola dopo 10 secondi
-   (o al primo clic). Il toast in basso da solo non bastava: passa in 6 secondi e chi stava
-   guardando la barra non lo vedeva. */
+   caricamento: diventa verde e dice quanto ha importato. NESSUN tasto da premere per
+   andare avanti: si toglie da solo quando si sfila la scheda (o al primo clic sulla barra,
+   o quando parte l'import successivo). Il toast in basso da solo non bastava: passa in
+   6 secondi e chi stava guardando la barra non lo vedeva. */
 function fineImport(batch, esito){
   esito = esito || {};
   if(esito.annullato || prog.cancel) return;      // "Import interrotto" l'ha già detto il tasto Annulla
@@ -2355,17 +2379,37 @@ function fineImport(batch, esito){
   fill.style.background = esito.errore ? "var(--danger)" : "var(--ok)";
   lab.textContent = msg;
   lab.style.color = esito.errore ? "var(--danger)" : "var(--ok)";
-  btn.textContent = "Ho capito";
+  btn.style.display = "none";        // niente "Ho capito": non c'è nulla da confermare
   w.classList.add("show");
-  clearTimeout(fineImport._h);
+  fineImport._attivo = true;
+
   const chiudi = ()=>{
-    clearTimeout(fineImport._h);
+    fineImport._attivo = false;
+    clearTimeout(fineImport._h);      fineImport._h = 0;
+    clearInterval(fineImport._veglia); fineImport._veglia = 0;
+    w.onclick = null;
     w.classList.remove("show");
     fill.style.background = ""; fill.style.width = "0%";
-    lab.style.color = ""; btn.textContent = "Annulla";
+    lab.style.color = ""; btn.style.display = ""; btn.textContent = "Annulla";
   };
   fineImport._chiudi = chiudi;
-  fineImport._h = setTimeout(chiudi, 10000);
+  w.onclick = chiudi;                 // valvola: un clic qualunque sulla barra la toglie
+
+  clearTimeout(fineImport._h);
+  fineImport._h = setTimeout(chiudi, 10*60*1000);   // rete di sicurezza, non si usa quasi mai
+
+  // sorveglianza della scheda: due secondi di intervallo, si spegne appena scatta
+  clearInterval(fineImport._veglia);
+  const src = state.importSrc;
+  if(src){
+    fineImport._veglia = setInterval(async ()=>{
+      if(!fineImport._attivo) return;
+      if(await cartellaAncoraLeggibile(src)) return;
+      state.importSrc = null;
+      chiudi();
+      toast("Scheda tolta — pronto per il prossimo rullo", 3500);
+    }, 2000);
+  }
   toast(msg, 6000);
 }
 
