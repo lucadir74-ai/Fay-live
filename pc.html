@@ -632,8 +632,8 @@
     <span>Archivio: <b id="stArch" style="cursor:pointer" title="Clicca per vedere dove vengono salvate le foto">non impostato</b></span>
     <span id="stArchPath" style="color:var(--muted);font-family:var(--mono);font-size:11px" hidden></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
-    <span>Originali cloud: <b id="stOrigCloud" title="Quante foto del rullo attivo hanno l'originale a piena risoluzione sul cloud">—</b></span>
-    <span>Export: <b id="stExport">Download</b></span>
+    <span id="stOrigWrap" hidden>Originali: <b id="stOrigCloud" title="Compare solo quando qualche foto non è stampabile in alta qualità">—</b></span>
+    <span>Export: <b id="stExport" style="cursor:pointer" title="Clicca per scegliere o riattivare la cartella di esportazione">Download</b></span>
     <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
     <span id="stRipristino" hidden style="color:var(--accent);font-weight:700;cursor:pointer" title="Clicca per fermare il ripristino"></span>
     <b id="stThumbs" hidden></b>
@@ -2173,11 +2173,17 @@ $("doveArch").onclick = async ()=>{
 };
 
 $("btnExportDir").onclick = async ()=>{
-  state.exportDir=null;                 // forza una nuova scelta
-  const d=await ensureExportDir();
+  const d=await ensureExportDir(true);              // forza la finestra di scelta
   if(d) toast(`Cartella export: ${d.name}`);
 };
-idb.get("exportDir").then(h=>{ if(h) $("stExport").textContent = h.name+" (da riattivare)"; }).catch(()=>{});
+/* Un clic sulla voce Export riattiva la cartella ricordata (il permesso scade a ogni
+   ricarica) senza dover passare dal menu: il gesto del clic è proprio quello che Chrome
+   pretende per riconcedere l'accesso. */
+$("stExport").onclick = async ()=>{
+  const d = await ensureExportDir();
+  if(d) toast(`Export in "${d.name}"`);
+};
+idb.get("exportDir").then(h=>{ if(h) segnaExport(h.name, false); }).catch(()=>{});
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
 idb.get("archiveDir").then(h=>{ if(h && !state.archive) segnaArchivio(h.name, false); }).catch(()=>{});
 
@@ -2788,6 +2794,7 @@ function logEvento(azione, o){
 }
 
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
+let richiesteVecchieScoperte = 0;   // richieste di giornate vecchie non trovate in questo archivio
 let rulliScoperti = {};    // lettera del rullo -> quante richieste scoperte
 /* AVVISO A SCOMPARSA TOLTO (25 ago). Compariva sulla postazione che NON puo' fare niente
    per risolvere — gli originali li ha un altro PC — e tornava ogni 3 minuti davanti al
@@ -2825,6 +2832,7 @@ function updateOrigCount(){
     txt += " · ⚠ richieste non servite: "+richiesteAperte + (det ? " ("+det+")" : "");
   }
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
+  if(richiesteVecchieScoperte) txt += " · ⚠ "+richiesteVecchieScoperte+" richieste di giornate vecchie non in questo archivio";
   $("stArch").textContent = txt;
   $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
   /* Il percorso completo accanto al nome: il browser non lo sa, ma la postazione se l'è
@@ -2951,27 +2959,39 @@ let serviAltreInCorso = false, avvisoAltreGiornate = 0;
 async function serviRichiesteAltreGiornate(){
   if(serviAltreInCorso) return;
   if(!sb || !cloud.sede || !state.archive || state.senzaArchivio) return;
-  if(origQueue.length || origUrgActive) return;          // prima la giornata in corso
+  /* PRIMA: si usciva se c'era ANCHE UNA SOLA foto in coda per la giornata aperta. In una
+     serata vera quella coda non è quasi mai vuota, quindi le richieste delle giornate
+     vecchie non arrivavano mai al proprio turno e dal tablet sembrava che PC1 dovesse
+     per forza spostarsi su quella data. La giornata in corso resta prioritaria, ma non
+     blocca: quando è impegnata passa comunque una foto vecchia per giro. */
+  const occupato = origUrgActive >= ORIG_PARALLEL;
+  if(occupato) return;                                   // corsia urgente piena: si aspetta
+  const quante = (origQueue.length || origUrgActive) ? 1 : 2;
   serviAltreInCorso = true;
   try{
+    /* Il filtro va fatto NELLA query, non dopo: chiedendo le prime 60 righe con la
+       richiesta accesa e scartandole qui, dopo qualche ora le già servite e quelle di
+       altre sedi riempivano tutta la finestra e le richieste nuove non le leggeva più
+       nessuno. È lo stesso difetto già corretto su serviRichieste(). */
     const {data, error} = await sb.from("foto")
       .select("id,codice,originale_url,rulli!inner(servizi!inner(id,data_servizio,sede_id))")
-      .eq("richiesta_originale", true).limit(60);
+      .eq("richiesta_originale", true)
+      .is("originale_url", null)
+      .eq("rulli.servizi.sede_id", cloud.sede.id)
+      .limit(200);
     if(error) throw error;
     const aperta = cloud.servizio ? String(cloud.servizio.id) : "";
     const righe = (data||[]).filter(f=>{
       const sv = f.rulli && f.rulli.servizi;
-      return sv && !f.originale_url &&
-             String(sv.sede_id) === String(cloud.sede.id) &&
-             String(sv.id) !== aperta;                   // quella aperta la serve già serviRichieste()
+      return sv && String(sv.id) !== aperta;             // quella aperta la serve già serviRichieste()
     });
-    let fatte = 0;
+    let fatte = 0, scoperte = 0;
     for(const f of righe){
-      if(fatte >= 2) break;                              // due per giro: non si affoga l'hotspot
       const sv = f.rulli.servizi;
       const files = await indiceGiornata(sv.data_servizio);
       const h = files && files.get(f.codice);
-      if(!h) continue;                                   // non è roba di questo archivio
+      if(!h){ scoperte++; continue; }                    // non è roba di questo archivio
+      if(fatte >= quante) continue;                      // le altre al giro dopo
       f._data = sv.data_servizio;
       try{
         if(Date.now()-avvisoAltreGiornate > 15000){
@@ -2982,6 +3002,10 @@ async function serviRichiesteAltreGiornate(){
         fatte++;
       }catch(err){ console.warn("originale altra giornata", f.codice, err); }
     }
+    /* Se nessuno ha quei file, il tablet resterebbe ad aspettare in silenzio per sempre:
+       meglio dirlo in barra di stato, così si sa che va preso dall'archivio a mano. */
+    richiesteVecchieScoperte = scoperte;
+    if(scoperte) updateOrigCount();
   }catch(err){ console.warn("serviRichiesteAltreGiornate", err); }
   finally{ serviAltreInCorso = false; }
 }
@@ -3954,24 +3978,38 @@ async function exportPhotos(set){
 
 // cartella di esportazione fissa (scelta una volta, ricordata tra le sessioni)
 state.exportDir = null;
-async function ensureExportDir(){
-  if(state.exportDir) return state.exportDir;
+/* forza=true: l'operatore vuole CAMBIARE cartella, quindi si apre sempre la finestra.
+   Prima bastava azzerare state.exportDir, ma qui sotto si rileggeva subito quella salvata
+   e — se il permesso era ancora valido — tornava la vecchia senza chiedere niente. */
+async function ensureExportDir(forza){
+  if(state.exportDir && !forza) return state.exportDir;
   if(!window.showDirectoryPicker) return null; // browser senza supporto → download classico
-  try{
-    const saved = await idb.get("exportDir");
-    if(saved){
-      let perm=await saved.queryPermission({mode:"readwrite"});
-      if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
-      if(perm==="granted"){ state.exportDir=saved; $("stExport").textContent=saved.name; return saved; }
-    }
-  }catch(_){}
-  toast("Scegli la cartella dove salvare le foto esportate (una volta sola)");
+  if(!forza){
+    try{
+      const saved = await idb.get("exportDir");
+      if(saved){
+        let perm=await saved.queryPermission({mode:"readwrite"});
+        if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
+        if(perm==="granted"){ state.exportDir=saved; segnaExport(saved.name, true); return saved; }
+      }
+    }catch(_){}
+  }
+  toast(forza ? "Scegli la nuova cartella di esportazione" : "Scegli la cartella dove salvare le foto esportate (una volta sola)");
   try{
     state.exportDir = await showDirectoryPicker({mode:"readwrite"});
-    $("stExport").textContent = state.exportDir.name;
+    segnaExport(state.exportDir.name, true);
     idb.set("exportDir", state.exportDir).catch(()=>{});
     return state.exportDir;
   }catch(_){ return null; }
+}
+/* La voce Export della barra di stato dice sempre dove finiscono i file, e soprattutto
+   avvisa quando la cartella è ricordata ma il permesso è scaduto (succede a ogni
+   aggiornamento della pagina, se Fay Live non è installata come app). */
+function segnaExport(nome, attiva){
+  const el = $("stExport"); if(!el) return;
+  if(!nome){ el.textContent = "Download"; el.style.color = "var(--accent)"; return; }
+  el.textContent = attiva ? nome : nome + " (da riattivare)";
+  el.style.color = attiva ? "" : "var(--danger)";
 }
 function statusOf(p){ return p.prints>0 ? "pr" : (p.exported ? "ex" : null); }
 function setLbStatus(p){
@@ -6871,7 +6909,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "25 ago 2026 · 23:45";
+const VERSIONE = "26 ago 2026 · 21:00";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
@@ -6905,7 +6943,10 @@ function updateOrigCloud(){
   const L = state.activeLetter;
   const scope = L ? state.photos.filter(p=>p.letter===L) : state.photos;
   const tot = scope.length;
-  if(!cloud.servizio || !tot){ el.textContent = "—"; el.style.color = ""; return; }
+  if(!cloud.servizio || !tot){
+    const wrap0 = $("stOrigWrap"); if(wrap0) wrap0.hidden = true;
+    el.textContent = "—"; el.style.color = ""; return;
+  }
   const suCloud = scope.filter(p=>p.origUploaded || p.origReadyCloud).length;
   const inLocale = scope.filter(p=>p.file || p.arch).length;
   // pronte davvero = originale sul cloud OPPURE su questo disco
@@ -6920,10 +6961,22 @@ function updateOrigCloud(){
      per le foto che non ha nessuno: quelle sì che sono un problema. */
   const suRichiesta = !autoOrigOn();
   const orfane = tot - pronte;                       // né sul cloud né su questo PC
-  el.textContent = (L ? L + ": " : "giornata: ") + suCloud + "/" + tot
-                 + (suCloud >= tot ? " ✓" : (suRichiesta ? " · su richiesta" : " ⏳"))
-                 + (suCloud < tot && inLocale ? "  ·  su questo PC: " + inLocale + "/" + tot : "");
-  el.style.color = orfane ? "var(--danger)" : (suCloud >= tot ? "var(--ok)" : (suRichiesta ? "" : "var(--accent)"));
+  /* PARLA SOLO QUANDO C'È DA FARE QUALCOSA.
+     Con il caricamento su richiesta "Z: 0/48 · su richiesta · su questo PC: 48/48" è la
+     condizione normale di ogni serata: scritta sempre, non la legge più nessuno e il giorno
+     che c'è un guaio vero passa inosservato. Quindi in condizioni normali la voce sparisce
+     del tutto e resta solo quando qualche foto NON è stampabile in alta qualità. */
+  const wrap = $("stOrigWrap");
+  if(!orfane){
+    if(wrap) wrap.hidden = true;
+    el.textContent = ""; el.style.color = "";
+  } else {
+    if(wrap) wrap.hidden = false;
+    el.textContent = "⚠ " + orfane + " senza originale"
+                   + (L ? " (rullo " + L + ")" : "")
+                   + (inLocale ? "  ·  su questo PC: " + inLocale + "/" + tot : "");
+    el.style.color = "var(--danger)";
+  }
 
   const dove = L ? ("rullo " + L) : "tutta la giornata";
   let nota;
