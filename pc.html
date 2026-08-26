@@ -1587,6 +1587,8 @@ function progUpdate(){
   $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
 }
 $("progCancel").onclick = ()=>{
+  // a import finito lo stesso tasto serve solo a togliere l'avviso verde
+  if(fineImport._h){ fineImport._chiudi(); return; }
   prog.cancel = true;
   // ferma anche le code cloud in sospeso
   origQueue.length = 0; origSet.clear();
@@ -2212,7 +2214,22 @@ async function decodeScaled(blob, maxSide, portrait=false){
   }finally{ URL.revokeObjectURL(url); }
 }
 
+/* Il messaggio di fine import prima stava in fondo a processBatch: se qualcosa lungo la
+   strada sollevava un errore (cartella d'archivio persa, file illeggibile) la funzione
+   usciva prima e non compariva niente — la barra spariva e basta, che è esattamente il
+   dubbio da togliere. Ora l'avviso sta in un involucro con finally: esce comunque. */
 async function processBatch(batch){
+  let esito = null;
+  try{
+    esito = await processBatchInterno(batch);
+  }catch(err){
+    console.error("import", err);
+    esito = { errore: err };
+  }finally{
+    fineImport(batch, esito);
+  }
+}
+async function processBatchInterno(batch){
   const TH=260, PV=1280, MINI=420;
   prog.cancel=false;
   prog.total += batch.length*2; progUpdate();
@@ -2220,7 +2237,7 @@ async function processBatch(batch){
 
   // FASE 1 — miniature veloci: la griglia si riempie subito
   for(const p of batch){
-    if(prog.cancel) return;
+    if(prog.cancel) return { annullato:true };
     try{
       const bmp = await decodeScaled(p.file, TH);
       const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
@@ -2243,7 +2260,7 @@ async function processBatch(batch){
   // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
   const evDir = await getImportDir(batch[0].letter);
   for(const p of batch){
-    if(prog.cancel) return;
+    if(prog.cancel) return { annullato:true };
     let buf=null;
     try{ buf = await p.file.arrayBuffer(); }
     catch(err){ console.warn("lettura", p.code, err); }
@@ -2284,15 +2301,41 @@ async function processBatch(batch){
   // gli originali salgono da soli sul cloud (dalla più recente): le altre postazioni stampano
   // anche se questo PC viene chiuso o perde l'accesso all'archivio
   if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
-  if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
-  /* FINE IMPORT: prima la barra spariva e basta, e non si capiva se avesse finito davvero
-     o si fosse piantata. Il messaggio dice rullo, quantità e primo/ultimo codice.
-     NB: la scheda di memoria si può togliere adesso — quello che continua in sottofondo
-     (anteprime e originali verso il cloud) lavora su copie già scritte nell'archivio. */
-  if(!prog.cancel){
-    const L = batch[0].letter;
-    toast(`Import rullo ${L} completato — ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code}). Puoi togliere la scheda.`, 6000);
-  }
+  return { fails };
+}
+
+/* FINE IMPORT — l'avviso resta dove l'operatore stava già guardando, cioè nella barra di
+   caricamento: diventa verde, dice quanto ha importato e si chiude da sola dopo 10 secondi
+   (o al primo clic). Il toast in basso da solo non bastava: passa in 6 secondi e chi stava
+   guardando la barra non lo vedeva. */
+function fineImport(batch, esito){
+  esito = esito || {};
+  if(esito.annullato || prog.cancel) return;      // "Import interrotto" l'ha già detto il tasto Annulla
+  const L = batch[0].letter;
+  const w = $("progWrap"), lab = $("progLabel"), fill = $("progFill"), btn = $("progCancel");
+  const quante = batch.length;
+  const da = batch[0].code, a = batch[batch.length-1].code;
+  const msg = esito.errore
+    ? `⚠ Import rullo ${L} finito con errori — controlla la griglia`
+    : `✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a}) · puoi togliere la scheda`
+      + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : "");
+  prog.total = 0; prog.done = 0;
+  fill.style.width = "100%";
+  fill.style.background = esito.errore ? "var(--danger)" : "var(--ok)";
+  lab.textContent = msg;
+  lab.style.color = esito.errore ? "var(--danger)" : "var(--ok)";
+  btn.textContent = "Ho capito";
+  w.classList.add("show");
+  clearTimeout(fineImport._h);
+  const chiudi = ()=>{
+    clearTimeout(fineImport._h);
+    w.classList.remove("show");
+    fill.style.background = ""; fill.style.width = "0%";
+    lab.style.color = ""; btn.textContent = "Annulla";
+  };
+  fineImport._chiudi = chiudi;
+  fineImport._h = setTimeout(chiudi, 10000);
+  toast(msg, 6000);
 }
 
 /* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
