@@ -66,6 +66,9 @@
 <header>
   <h1>Fay Live <small id="hSede">—</small></h1>
   <div class="sub" id="hSub">sola lettura</div>
+  <div class="barra" id="barraSede" hidden>
+    <select id="selSede"></select>
+  </div>
   <div class="barra">
     <select id="selGiornata"><option>Carico…</option></select>
     <button id="btnRicarica" title="Ricarica">↻</button>
@@ -134,25 +137,50 @@ async function avvia(){
     const {data:sedi, error:e1} = await sb.from("sedi").select("id,nome").order("nome");
     if(e1) throw e1;
     if(!sedi || !sedi.length){ avviso("Nessuna sede sul cloud.", true); return; }
-    sede = sedi[0];
-    $("hSede").textContent = pulito(sede.nome);
 
-    const {data:sv, error:e2} = await sb.from("servizi")
-      .select("id,data_servizio").eq("sede_id", sede.id)
-      .order("data_servizio",{ascending:false}).limit(120);
-    if(e2) throw e2;
-    servizi = sv || [];
-    if(!servizi.length){ avviso("Nessuna giornata registrata."); return; }
-
-    $("selGiornata").innerHTML = servizi
-      .map(s=>`<option value="${s.id}">${dataLunga(s.data_servizio)}</option>`).join("");
-    $("selGiornata").onchange = ()=>carica($("selGiornata").value);
-    $("btnRicarica").onclick  = ()=>carica($("selGiornata").value);
-    carica(servizi[0].id);
+    /* Con una sola sede il menu non si vede nemmeno: comparirebbe una tendina con una
+       voce sola. Da due in su si sceglie, e la scelta resta su questo telefono. */
+    if(sedi.length > 1){
+      const ultima = localStorage.getItem("reportSede");
+      $("selSede").innerHTML = sedi
+        .map(x=>`<option value="${x.id}">${pulito(x.nome)}</option>`).join("");
+      if(ultima && sedi.some(x=>String(x.id)===ultima)) $("selSede").value = ultima;
+      $("barraSede").hidden = false;
+      $("selSede").onchange = ()=>{
+        localStorage.setItem("reportSede", $("selSede").value);
+        apriSede(sedi.find(x=>String(x.id)===String($("selSede").value)));
+      };
+      await apriSede(sedi.find(x=>String(x.id)===String($("selSede").value)));
+    } else {
+      await apriSede(sedi[0]);
+    }
+    $("btnRicarica").onclick = ()=>carica($("selGiornata").value);
   }catch(err){
     console.error(err);
     avviso("Errore nel collegamento: "+(err.message||err), true);
   }
+}
+
+async function apriSede(s){
+  if(!s) return;
+  sede = s;
+  $("hSede").textContent = pulito(sede.nome);
+  avviso("Carico…");
+  const {data:sv, error} = await sb.from("servizi")
+    .select("id,data_servizio").eq("sede_id", sede.id)
+    .order("data_servizio",{ascending:false}).limit(120);
+  if(error) throw error;
+  servizi = sv || [];
+  if(!servizi.length){
+    $("selGiornata").innerHTML = "";
+    avviso("Nessuna giornata registrata per "+pulito(sede.nome)+".");
+    $("piede").textContent = "";
+    return;
+  }
+  $("selGiornata").innerHTML = servizi
+    .map(x=>`<option value="${x.id}">${dataLunga(x.data_servizio)}</option>`).join("");
+  $("selGiornata").onchange = ()=>carica($("selGiornata").value);
+  carica(servizi[0].id);
 }
 
 async function carica(sid){
