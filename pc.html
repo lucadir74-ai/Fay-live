@@ -7305,21 +7305,67 @@ $("reportList").onclick = e=>{
    sabato le foto sono partite davvero?"). */
 const invii = { righe: [], giorni: {} };
 
+/* Le funzioni qui sotto sono le STESSE del tablet (stessi nomi, stessa logica): i due
+   registri devono raccontare la stessa cosa, prima il PC raggruppava per giornata delle
+   FOTO e nascondeva gli invii vecchi, il tablet per giorno dell'INVIO. Vince il tablet. */
+function invPulito(x){ return String(x==null?"":x).replace(/[<>&"]/g,""); }
+/* Il dettaglio non ha un formato unico: il PC scrive "email — motivo", il tablet
+   "3/4 foto a email — saltate: …". L'indirizzo si pesca comunque. */
+function invEmailDi(riga){
+  const m = String(riga.dettaglio||"").match(/[^\s,;<>()]+@[^\s,;<>()]+\.[^\s,;<>()]+/);
+  return m ? m[0] : "";
+}
+function invMotivoDi(riga){
+  if(riga.esito !== "errore") return "";
+  const pezzi = String(riga.dettaglio||"").split(" — ");
+  return pezzi.length > 1 ? pezzi.slice(1).join(" — ") : String(riga.dettaglio||"");
+}
+function invCodiciDi(riga){
+  return String(riga.codici||"").split(/[,\s]+/).map(c=>c.trim()).filter(Boolean);
+}
+/* Il rullo non è sempre salvato sulla riga, ma la lettera del codice È il rullo:
+   M-433 -> rullo M. Un invio che mescola più rulli finisce sotto "misti". */
+function invRulloDi(riga){
+  if(riga.rullo_lettera) return riga.rullo_lettera;
+  const l = [...new Set(invCodiciDi(riga).map(c=>(c.split("-")[0]||"").toUpperCase()).filter(Boolean))];
+  return !l.length ? "—" : (l.length===1 ? l[0] : "misti");
+}
+/* La giornata sotto cui compare un invio è quella in cui l'invio È PARTITO, con lo stesso
+   taglio delle 6:00: se stanotte mando le foto di ieri, l'invio sta nella serata in corso. */
+function invGiornoInvio(a){
+  const t = new Date(a.creato_il);
+  if(isNaN(t.getTime())) return String(a.creato_il||"").slice(0,10);
+  const d = new Date(t.getTime() - SERVICE_DAY_CUTOFF_H*3600*1000);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function invGiornoFoto(a){ return invii.giorni[a.servizio_id] || ""; }
+function invDataLunga(g){
+  const d = new Date(g+"T12:00:00");
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+}
+function invDataCorta(g){
+  const d = new Date(g+"T12:00:00");
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{day:"numeric",month:"long"});
+}
+
 async function caricaInvii(){
   const box = $("invioList"), riep = $("invioRiepilogo");
   invii.righe = []; invii.giorni = {};
   if(!sb || !cloud.sede){ box.innerHTML = '<p style="color:var(--muted)">Serve una sede aperta.</p>'; riep.textContent=""; return; }
   const gg = parseInt($("invioGiorni").value, 10) || 30;
-  const limite = new Date(Date.now() - gg*24*3600*1000).toISOString().slice(0,10);
   try{
-    // le giornate della SEDE: senza questo filtro comparirebbero gli invii degli altri locali
-    const {data:servizi} = await sb.from("servizi").select("id,data_servizio")
-      .eq("sede_id", cloud.sede.id).gte("data_servizio", limite);
-    if(!servizi || !servizi.length){ box.innerHTML='<p style="color:var(--muted)">Nessuna giornata in questo periodo.</p>'; riep.textContent=""; return; }
+    /* Le giornate della sede si prendono TUTTE, senza limite di data: un invio fatto oggi
+       può riguardare le foto di un mese fa, e prima quelle righe sparivano dal registro del
+       PC perché la loro giornata era fuori finestra. Il periodo scelto in alto filtra la
+       data dell'INVIO, non quella delle foto. */
+    const {data:servizi} = await sb.from("servizi").select("id,data_servizio").eq("sede_id", cloud.sede.id);
+    if(!servizi || !servizi.length){ box.innerHTML='<p style="color:var(--muted)">Questa sede non ha ancora giornate.</p>'; riep.textContent=""; return; }
     servizi.forEach(s=>{ invii.giorni[s.id] = s.data_servizio; });
+    const daQuando = new Date(Date.now() - gg*24*3600*1000 - SERVICE_DAY_CUTOFF_H*3600*1000).toISOString();
     const {data} = await sb.from("attivita").select("*")
       .in("servizio_id", servizi.map(s=>s.id))
       .eq("azione", "~invio")
+      .gte("creato_il", daQuando)
       .order("creato_il", {ascending:false}).limit(1000);
     invii.righe = data || [];
   }catch(err){
@@ -7347,40 +7393,151 @@ function renderInvii(){
     return;
   }
 
-  // raggruppo per giornata di servizio, dalla più recente
+  // raggruppo per GIORNO DELL'INVIO, e dentro per rullo — come il tablet
   const perGiorno = {};
-  righe.forEach(a=>{
-    const g = invii.giorni[a.servizio_id] || String(a.creato_il).slice(0,10);
-    (perGiorno[g] = perGiorno[g] || []).push(a);
-  });
+  righe.forEach(a=>{ const g = invGiornoInvio(a); (perGiorno[g] = perGiorno[g] || []).push(a); });
 
   box.innerHTML = Object.keys(perGiorno).sort().reverse().map(g=>{
     const lista = perGiorno[g];
     const kog = lista.filter(a=>a.esito==="errore").length;
-    const d = new Date(g+"T12:00:00");
-    const titolo = isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long", day:"numeric", month:"long"});
-    const voci = lista.map(a=>{
-      const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
-      const err = a.esito==="errore";
-      // dettaglio = "email" oppure "email — motivo dell'errore"
-      const pezzi = String(a.dettaglio||"").split(" — ");
-      const email = (pezzi.shift()||"—").replace(/[<>&"]/g,"");
-      const motivo = pezzi.join(" — ").replace(/[<>&"]/g,"");
-      return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
-        <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
-        <b style="color:${err?"var(--danger)":"var(--ok)"}"> ${err?"✕ non riuscito":"✔ inviato"}</b>
-        <span style="color:var(--muted)"> · ${a.quante||0} foto · ${(a.postazione||"?").replace(/[<>&"]/g,"")}</span>
-        <div style="word-break:break-all"><b>${email}</b></div>
-        ${motivo? `<div style="color:var(--danger);font-size:12px">${motivo}</div>` : ""}
-        <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${(a.codici||"").replace(/[<>&"]/g,"")}</div>
-      </div>`;
+    const titolo = invDataLunga(g);
+
+    const perRullo = {};
+    lista.forEach(a=>{ const r = invRulloDi(a); (perRullo[r] = perRullo[r] || []).push(a); });
+
+    const blocchi = Object.keys(perRullo).sort().map(r=>{
+      const kor = perRullo[r].filter(a=>a.esito==="errore").length;
+      const voci = perRullo[r].map(a=>{
+        const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+        const err = a.esito==="errore";
+        const email = invPulito(invEmailDi(a));
+        const motivo = invPulito(invMotivoDi(a));
+        const gFoto = invGiornoFoto(a);
+        /* Invio fallito dal tablet (linea del privé assente, quota Filemail, email sbagliata):
+           da qui la postazione lo rifà per conto suo, senza farsi ridettare l'indirizzo. */
+        const tasto = err
+          ? `<button class="primary" data-inv="${a.id}" style="margin-top:6px;font-size:13px;padding:5px 12px">Invio io da qui</button>`
+          : "";
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+          <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
+          <b style="color:${err?"var(--danger)":"var(--ok)"}"> ${err?"✕ non riuscito":"✔ inviato"}</b>
+          <span style="color:var(--muted)"> · ${a.quante||0} foto · ${invPulito(a.postazione||"?")}</span>
+          <div style="word-break:break-all"><b>${email||"email non registrata"}</b></div>
+          ${motivo? `<div style="color:var(--danger);font-size:12px">${motivo}</div>` : ""}
+          <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${invPulito(a.codici)||"—"}</div>
+          ${gFoto && gFoto!==g ? `<div style="color:var(--muted);font-size:12px">foto della giornata del ${invDataCorta(gFoto)}</div>` : ""}
+          ${tasto}
+        </div>`;
+      }).join("");
+      return `<div style="margin:6px 0 10px">
+        <div style="font-family:var(--mono);font-weight:800;font-size:13px;color:var(--muted);padding:2px 0">
+          RULLO ${invPulito(r)} <span style="font-family:inherit;font-weight:600">— ${perRullo[r].length} invii${kor?`, <span style="color:var(--danger)">${kor} da rifare</span>`:""}</span>
+        </div>${voci}</div>`;
     }).join("");
+
     return `<div style="margin-bottom:16px">
       <div style="position:sticky;top:0;background:var(--surface);padding:6px 0;border-bottom:1px solid var(--accent);margin-bottom:4px">
         <b style="text-transform:capitalize">${titolo}</b>
         <span style="color:var(--muted);font-size:12.5px"> — ${lista.length} invii${kog?`, <span style="color:var(--danger)">${kog} falliti</span>`:""}</span>
-      </div>${voci}</div>`;
+      </div>${blocchi}</div>`;
   }).join("");
+
+  box.querySelectorAll("button[data-inv]").forEach(b=>{
+    b.onclick = ()=>{
+      const a = invii.righe.find(x=>String(x.id)===b.dataset.inv);
+      if(a) reinviaDalRegistro(a, b);
+    };
+  });
+}
+
+/* RIPRESA DI UN INVIO FALLITO DAL TABLET.
+   Non passa da state.byCode (che contiene solo la giornata aperta): le foto si cercano sul
+   cloud partendo dai rulli della giornata a cui appartiene la riga di registro, così si
+   rimedia anche a un invio di due settimane fa senza aprire quella giornata.
+   L'indirizzo si può correggere prima di partire: il caso tipico è l'email capita male
+   nella musica, e rifare l'invio identico non servirebbe a niente. */
+async function reinviaDalRegistro(a, btn){
+  if(!sb){ toast("Serve la connessione"); return; }
+  const codici = invCodiciDi(a);
+  if(!codici.length){ toast("Questa riga non ha codici foto: l'invio non si può rifare da qui"); return; }
+
+  const email = (prompt("Invio io queste foto.\n\nControlla l'indirizzo (correggilo se era stato capito male):", invEmailDi(a)) || "").trim();
+  if(!email) return;
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Indirizzo non valido"); return; }
+
+  const testo = btn.textContent;
+  btn.disabled = true; btn.textContent = "Preparo…";
+  try{
+    /* Se le foto sono della giornata aperta si prova prima a spingere su gli originali
+       mancanti, come fa l'invio dal pannello email: spesso è proprio quello che mancava. */
+    if(cloud.servizio && String(cloud.servizio.id)===String(a.servizio_id)){
+      const set = codici.map(c=>state.byCode.get(c)).filter(Boolean);
+      if(set.length){ try{ await assicuraOriginaliSulCloud(set); }catch(_){} }
+    }
+
+    const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", a.servizio_id);
+    const ids = (rulli||[]).map(r=>r.id);
+    if(!ids.length){ toast("Non trovo il rullo di questa riga sul cloud"); return; }
+    const {data:foto} = await sb.from("foto").select("codice,originale_url")
+      .in("rullo_id", ids).in("codice", codici);
+
+    const trovate = [], mancanti = [];
+    for(const c of codici){
+      const f = (foto||[]).find(x=>x.codice===c);
+      if(!f || !f.originale_url){ mancanti.push(c); continue; }
+      try{
+        const {data, error} = await sb.storage.from("originali").createSignedUrl(f.originale_url, 900);
+        if(error || !data || !data.signedUrl){ mancanti.push(c); continue; }
+        trovate.push({nome: c+".jpg", url: data.signedUrl});
+      }catch(_){ mancanti.push(c); }
+    }
+    if(!trovate.length){
+      toast("Gli originali di queste foto non sono sul cloud: apri quella giornata sul PC che le ha importate e usa Altro → Carica originali", 7000);
+      return;
+    }
+    const avviso = mancanti.length
+      ? `\n\nATTENZIONE: ${mancanti.length} foto non sono sul cloud e NON partiranno (${mancanti.join(", ")}).`
+      : "";
+    if(!confirm(`Invio ${trovate.length} foto a ${email} tramite Filemail.${avviso}\n\nProcedo?`)) return;
+
+    btn.textContent = "Invio…";
+    const r = await fetch("/api/invia", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        email,
+        files: trovate,
+        oggetto: "Le tue foto — Frame About You",
+        messaggio: "Grazie per la serata! Ecco le tue foto."
+      })
+    });
+    const out = await r.json().catch(()=>({}));
+    const riuscito = r.ok && out.ok;
+    /* La riga nuova resta attaccata alla giornata delle FOTO (come tutte le altre), ma
+       comparirà sotto OGGI, perché il registro raggruppa per data dell'invio. */
+    await sbTry(()=>sb.from("attivita").insert({
+      servizio_id: a.servizio_id,
+      rullo_lettera: a.rullo_lettera || invRulloDi(a),
+      codici: trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+      azione: "~invio",
+      quante: riuscito ? (out.inviate||trovate.length) : trovate.length,
+      postazione: nomePostazione(),
+      esito: riuscito ? "ok" : "errore",
+      dettaglio: riuscito ? email : (email+" — "+(out.dettaglio||out.errore||("HTTP "+r.status)))
+    }), "registro reinvio");
+
+    if(riuscito){
+      toast(`✔ Inviate ${out.inviate||trovate.length} foto a ${email}`, 6000);
+    }else{
+      console.warn("filemail reinvio", out);
+      alert("Invio non riuscito\n\n"+(out.dettaglio||out.errore||("HTTP "+r.status)));
+    }
+    await caricaInvii();
+  }catch(err){
+    console.warn("reinvio dal registro", err);
+    toast("Invio non riuscito: controlla la connessione");
+  }finally{
+    btn.disabled = false; btn.textContent = testo;
+  }
 }
 
 $("btnInvii").onclick = async ()=>{
