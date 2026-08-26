@@ -724,6 +724,8 @@
     <label style="display:flex;gap:6px;align-items:center;font-size:13px">
       <input type="checkbox" id="invioSoloErrori"> Solo quelli non riusciti
     </label>
+    <input id="invioCerca" type="search" placeholder="Cerca rullo, codice o email"
+           style="flex:1;min-width:200px;max-width:320px" autocomplete="off">
     <div class="spacer"></div>
     <span id="invioRiepilogo" style="font-size:13px;color:var(--muted)"></span>
   </div>
@@ -7423,7 +7425,17 @@ function renderInvii(){
   const box = $("invioList"), riep = $("invioRiepilogo");
   const soloErrori = $("invioSoloErrori").checked;
   const tutte = invii.righe;
-  const righe = soloErrori ? tutte.filter(a=>a.esito==="errore") : tutte;
+  /* Ricerca: una sola casella che guarda rullo, codici ed email. Con dieci rulli a serata
+     scorrere per trovarne uno era il modo peggiore; qui si scrive "M" o mezzo indirizzo. */
+  const q = ($("invioCerca").value||"").trim().toLowerCase();
+  let righe = soloErrori ? tutte.filter(a=>a.esito==="errore") : tutte;
+  if(q){
+    righe = righe.filter(a=>
+      invRulloDi(a).toLowerCase().includes(q) ||
+      String(a.codici||"").toLowerCase().includes(q) ||
+      String(a.dettaglio||"").toLowerCase().includes(q) ||
+      String(a.postazione||"").toLowerCase().includes(q));
+  }
 
   const ko = tutte.filter(a=>a.esito==="errore").length;
   const foto = tutte.filter(a=>a.esito!=="errore").reduce((n,a)=>n+(a.quante||0),0);
@@ -7432,7 +7444,9 @@ function renderInvii(){
     : "";
 
   if(!righe.length){
-    box.innerHTML = `<p style="color:var(--muted)">${soloErrori? "Nessun invio fallito: tutti andati a buon fine." : "Nessun invio registrato in questo periodo."}</p>`;
+    const vuoto = q ? `Nessun invio trovato per "${invPulito(q)}".`
+      : (soloErrori? "Nessun invio fallito: tutti andati a buon fine." : "Nessun invio registrato in questo periodo.");
+    box.innerHTML = `<p style="color:var(--muted)">${vuoto}</p>`;
     return;
   }
 
@@ -7448,7 +7462,11 @@ function renderInvii(){
     const perRullo = {};
     lista.forEach(a=>{ const r = invRulloDi(a); (perRullo[r] = perRullo[r] || []).push(a); });
 
-    const blocchi = Object.keys(perRullo).sort().map(r=>{
+    /* I rulli NON in ordine alfabetico: prima quello con l'invio più recente. Di sera si
+       cerca sempre l'ultima cosa fatta, non la lettera A. */
+    const ordineRulli = Object.keys(perRullo).sort((x,y)=>
+      new Date(perRullo[y][0].creato_il) - new Date(perRullo[x][0].creato_il));
+    const blocchi = ordineRulli.map(r=>{
       const kor = perRullo[r].filter(a=>a.esito==="errore").length;
       const voci = perRullo[r].map(a=>{
         const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
@@ -7472,9 +7490,11 @@ function renderInvii(){
           ${tasto}
         </div>`;
       }).join("");
-      return `<div style="margin:6px 0 10px">
-        <div style="font-family:var(--mono);font-weight:800;font-size:13px;color:var(--muted);padding:2px 0">
-          RULLO ${invPulito(r)} <span style="font-family:inherit;font-weight:600">— ${perRullo[r].length} invii${kor?`, <span style="color:var(--danger)">${kor} da rifare</span>`:""}</span>
+      const ultimo = new Date(perRullo[r][0].creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+      return `<div style="margin:10px 0 14px">
+        <div style="display:flex;align-items:baseline;gap:10px;padding:4px 0 6px;border-bottom:1px solid var(--line)">
+          <span style="font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:.5px;color:var(--ink)">RULLO ${invPulito(r)}</span>
+          <span style="font-size:12.5px;color:var(--muted)">${perRullo[r].length} invii · ultimo alle ${ultimo}${kor?` · <span style="color:var(--danger)">${kor} da rifare</span>`:""}</span>
         </div>${voci}</div>`;
     }).join("");
 
@@ -7591,6 +7611,7 @@ $("btnInvii").onclick = async ()=>{
 };
 $("invioGiorni").onchange = ()=>caricaInvii();
 $("invioSoloErrori").onchange = ()=>renderInvii();
+$("invioCerca").oninput = ()=>renderInvii();
 $("invioClose").onclick = ()=>$("invioDlg").close();
 
 /* Registro tecnico: riusa la stessa finestra, mostrando solo le righe "~" e in cima
