@@ -2794,7 +2794,6 @@ function logEvento(azione, o){
 }
 
 let richiesteAperte = 0;   // richieste di originali che questo PC non riesce a servire
-let richiesteVecchieScoperte = 0;   // richieste di giornate vecchie non trovate in questo archivio
 let rulliScoperti = {};    // lettera del rullo -> quante richieste scoperte
 /* AVVISO A SCOMPARSA TOLTO (25 ago). Compariva sulla postazione che NON puo' fare niente
    per risolvere — gli originali li ha un altro PC — e tornava ogni 3 minuti davanti al
@@ -2832,7 +2831,6 @@ function updateOrigCount(){
     txt += " · ⚠ richieste non servite: "+richiesteAperte + (det ? " ("+det+")" : "");
   }
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
-  if(richiesteVecchieScoperte) txt += " · ⚠ "+richiesteVecchieScoperte+" richieste di giornate vecchie non in questo archivio";
   $("stArch").textContent = txt;
   $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
   /* Il percorso completo accanto al nome: il browser non lo sa, ma la postazione se l'è
@@ -2985,12 +2983,12 @@ async function serviRichiesteAltreGiornate(){
       const sv = f.rulli && f.rulli.servizi;
       return sv && String(sv.id) !== aperta;             // quella aperta la serve già serviRichieste()
     });
-    let fatte = 0, scoperte = 0;
+    let fatte = 0;
     for(const f of righe){
       const sv = f.rulli.servizi;
       const files = await indiceGiornata(sv.data_servizio);
       const h = files && files.get(f.codice);
-      if(!h){ scoperte++; continue; }                    // non è roba di questo archivio
+      if(!h) continue;                                   // non è roba di questo archivio
       if(fatte >= quante) continue;                      // le altre al giro dopo
       f._data = sv.data_servizio;
       try{
@@ -3002,10 +3000,6 @@ async function serviRichiesteAltreGiornate(){
         fatte++;
       }catch(err){ console.warn("originale altra giornata", f.codice, err); }
     }
-    /* Se nessuno ha quei file, il tablet resterebbe ad aspettare in silenzio per sempre:
-       meglio dirlo in barra di stato, così si sa che va preso dall'archivio a mano. */
-    richiesteVecchieScoperte = scoperte;
-    if(scoperte) updateOrigCount();
   }catch(err){ console.warn("serviRichiesteAltreGiornate", err); }
   finally{ serviAltreInCorso = false; }
 }
