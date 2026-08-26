@@ -6663,13 +6663,30 @@ async function clearCurrentDay(onlyLetter){
     const {data:rulli} = await sb.from("rulli").select("id,lettera").eq("servizio_id",sid);
     const target = (rulli||[]).filter(r=>!onlyLetter || r.lettera===onlyLetter);
     const ids = target.map(r=>r.id);
-    // cancella i file storage delle foto interessate
-    const codici = state.photos.filter(p=>!onlyLetter || p.letter===onlyLetter).map(p=>p.code);
+    /* I FILE VANNO CERCATI CON IL PERCORSO GIUSTO.
+       Qui si costruivano gli indirizzi come <giornata>/<codice>.jpg, che è il formato
+       VECCHIO: da quando gli indirizzi hanno il prefisso del rullo
+       (<giornata>/<idrullo>-<codice>.jpg) quelle cancellazioni non trovavano niente e i
+       file restavano sul cloud a occupare spazio. Il ripasso della cartella li prendeva,
+       ma solo svuotando tutta la giornata: svuotando un rullo solo restava tutto lì.
+       Ora si cancellano entrambi i formati, più l'indirizzo davvero salvato sulla riga
+       della foto (p.origKey) quando c'è. Restano comunque indirizzi che contengono il
+       codice del rullo che si sta svuotando: gli altri rulli non vengono mai toccati. */
+    const foto = state.photos.filter(p=>!onlyLetter || p.letter===onlyLetter);
+    const perBucket = { anteprime:new Set(), originali:new Set() };
+    for(const p of foto){
+      perBucket.anteprime.add(sid+"/"+p.code+".jpg");        // formato vecchio
+      perBucket.anteprime.add(sid+"/"+p.code+"_m.jpg");
+      perBucket.anteprime.add(pathAnteprima(p, sid));        // formato con prefisso rullo
+      perBucket.anteprime.add(pathMini(p, sid));
+      perBucket.originali.add(sid+"/"+p.code+".jpg");
+      perBucket.originali.add(origPath(p));
+      if(p.origKey) perBucket.originali.add(p.origKey);
+    }
     for(const bucket of ["anteprime","originali"]){
       try{
-        const paths = codici.map(c=>sid+"/"+c+".jpg");
-        if(bucket==="anteprime") paths.push(...codici.map(c=>sid+"/"+c+"_m.jpg"));   // anche le miniature
-        if(paths.length) await sb.storage.from(bucket).remove(paths);
+        const paths = [...perBucket[bucket]].filter(Boolean);
+        for(let i=0; i<paths.length; i+=500) await sb.storage.from(bucket).remove(paths.slice(i, i+500));
         // se sto svuotando tutta la giornata, ripasso la cartella: i path espliciti coprono
         // solo le foto caricate in questa postazione, il resto restava sul cloud
         if(!onlyLetter) await svuotaPrefisso(bucket, String(sid));
@@ -6986,7 +7003,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 ago 2026 · 22:20";
+const VERSIONE = "26 ago 2026 · 23:10";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
