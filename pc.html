@@ -368,6 +368,7 @@
       <button id="btnReport">Report attività</button>
       <button id="btnInvii" title="Giorno per giorno: a chi sono state inviate le foto, quali codici e se l'invio è riuscito">Registro invii</button>
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
+      <button id="btnEsportate" title="Quante foto sono state esportate, rullo per rullo">Foto esportate…</button>
       <button id="btnArchive" title="Riattiva la cartella archivio di questa postazione (il permesso si perde a ogni ricaricamento della pagina)">Archivio…</button>
       <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
@@ -749,6 +750,17 @@
     <button id="invDetSalva">Salva correzione</button>
     <button id="invDetInvia" class="primary">Invia ora</button>
     <button id="invDetClose">Chiudi</button>
+  </div>
+</dialog>
+
+<!-- Le esportate non servono davanti agli occhi tutta la sera (non sono una vendita):
+     stanno qui, rullo per rullo, per quando serve controllare. -->
+<dialog id="esportateDlg">
+  <h3 style="margin-bottom:4px">Foto esportate</h3>
+  <p class="hint" style="margin-bottom:12px">Scaricate sulla cartella di export di una postazione. È un'operazione, non una vendita: per quelle guarda il Report giornata.</p>
+  <div id="esportateBody"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <button id="esportateClose" class="primary">Chiudi</button>
   </div>
 </dialog>
 
@@ -3126,7 +3138,6 @@ function renderTabs(){
     return { n:ph.length,
              pr:ph.reduce((s,p)=>s+(p.prints||0),0),
              prFoto:ph.filter(p=>p.prints>0).length,
-             ex:ph.filter(p=>p.exported).length,
              fl };
   };
   const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
@@ -3138,7 +3149,6 @@ function renderTabs(){
       <span class="lt">${label}</span>${desc}
       <span class="stat">${s.n} foto</span>
       <span class="stat pr" title="${s.pr} fogli stampati su ${s.prFoto} foto (copie comprese)">🖨 ${s.pr}</span>
-      <span class="stat ex">⇩ ${s.ex}</span>
       <span class="stat fl" title="${s.fl} vendute come solo file digitale (colonna File del report)">▤ ${s.fl}</span>
     </button>`;
   };
@@ -3152,7 +3162,6 @@ function renderTabs(){
       <span class="lt">GIORNATA</span>
       <span class="stat">${g.n} foto</span>
       <span class="stat pr" title="${g.pr} fogli stampati su ${g.prFoto} foto (copie comprese)">🖨 ${g.pr}</span>
-      <span class="stat ex">⇩ ${g.ex}</span>
       <span class="stat fl" title="${g.fl} vendute come solo file digitale (colonna File del report)">▤ ${g.fl}</span>
       <span class="stat vd" title="stampe − omaggi − scarti + file, stessa formula del report">✓ ${vdGiornata()} vendute</span>
     </div>` : "";
@@ -7681,6 +7690,37 @@ $("invDetInvia").onclick = async (e)=>{
 };
 
 $("invDetClose").onclick = ()=> $("invDetDlg").close();
+
+/* Esportate per rullo. Il dato sta gia' sulle foto (p.exported), non serve chiedere
+   niente al cloud: si contano quelle della giornata aperta. */
+$("btnEsportate").onclick = ()=>{
+  $("toolsMenu").hidden = true;
+  const per = {};
+  for(const p of state.photos){
+    const r = per[p.letter] || (per[p.letter] = {foto:0, ex:0});
+    r.foto++; if(p.exported) r.ex++;
+  }
+  const L = Object.keys(per).sort();
+  const tot = L.reduce((a,k)=>({foto:a.foto+per[k].foto, ex:a.ex+per[k].ex}), {foto:0, ex:0});
+  const td = 'style="padding:7px 10px;border-bottom:1px solid var(--line)"';
+  $("esportateBody").innerHTML = !L.length
+    ? '<p style="color:var(--muted)">Nessuna foto in questa giornata.</p>'
+    : `<table style="width:100%;border-collapse:collapse">
+        <tr style="color:var(--muted);font-size:12.5px;text-align:left">
+          <th ${td}>Rullo</th><th ${td}>Foto</th><th ${td}>Esportate</th>
+        </tr>
+        ${L.map(k=>`<tr>
+          <td ${td} style="font-family:var(--mono);font-weight:800">${k}</td>
+          <td ${td} style="color:var(--muted)">${per[k].foto}</td>
+          <td ${td}>${per[k].ex}</td>
+        </tr>`).join("")}
+        <tr style="font-weight:800">
+          <td ${td}>TOTALE</td><td ${td} style="color:var(--muted)">${tot.foto}</td><td ${td}>${tot.ex}</td>
+        </tr>
+      </table>`;
+  $("esportateDlg").showModal();
+};
+$("esportateClose").onclick = ()=> $("esportateDlg").close();
 
 $("btnInvii").onclick = async ()=>{
   $("invioList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
