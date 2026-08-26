@@ -2285,6 +2285,14 @@ async function processBatch(batch){
   // anche se questo PC viene chiuso o perde l'accesso all'archivio
   if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
   if(fails) toast(fails+" foto senza miniatura — premi F12 e dimmi cosa scrive la console");
+  /* FINE IMPORT: prima la barra spariva e basta, e non si capiva se avesse finito davvero
+     o si fosse piantata. Il messaggio dice rullo, quantità e primo/ultimo codice.
+     NB: la scheda di memoria si può togliere adesso — quello che continua in sottofondo
+     (anteprime e originali verso il cloud) lavora su copie già scritte nell'archivio. */
+  if(!prog.cancel){
+    const L = batch[0].letter;
+    toast(`Import rullo ${L} completato — ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code}). Puoi togliere la scheda.`, 6000);
+  }
 }
 
 /* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
