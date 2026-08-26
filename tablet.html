@@ -372,7 +372,7 @@
           <option value="30" selected>Ultimi 30 giorni</option>
           <option value="90">Ultimi 90 giorni</option>
         </select>
-        <input id="invCerca" type="search" placeholder="Cerca email o codice">
+        <input id="invCerca" type="search" placeholder="Cerca rullo, email o codice">
       </div>
       <div id="invChips">
         <button class="ichip on" data-f="tutti">Tutti <span class="n" id="invNT"></span></button>
@@ -2588,9 +2588,12 @@ function invRender(){
   let righe = INV.righe;
   if(INV.filtro==="ko") righe = righe.filter(a=>a.esito==="errore");
   if(INV.filtro==="ok") righe = righe.filter(a=>a.esito!=="errore");
+  /* La ricerca guarda anche il RULLO: con dieci rulli a serata scorrere per trovarne uno
+     era il modo peggiore, basta scrivere la lettera. */
   if(q) righe = righe.filter(a=>
     String(a.dettaglio||"").toLowerCase().includes(q) ||
-    String(a.codici||"").toLowerCase().includes(q));
+    String(a.codici||"").toLowerCase().includes(q) ||
+    invRulloDi(a).toLowerCase().includes(q));
 
   if(!righe.length){
     const m = q ? "<b>Nessun risultato</b>Nessun invio con quello che hai scritto."
@@ -2615,7 +2618,11 @@ function invRender(){
     const perRullo = {};
     lista.forEach(a=>{ const r=invRulloDi(a); (perRullo[r]=perRullo[r]||[]).push(a); });
 
-    const blocchi = Object.keys(perRullo).sort().map(r=>{
+    /* I rulli NON in ordine alfabetico: prima quello con l'invio piu' recente, perche' di
+       sera si cerca sempre l'ultima cosa fatta, non la lettera A. */
+    const ordineRulli = Object.keys(perRullo).sort((x,y)=>
+      new Date(perRullo[y][0].creato_il) - new Date(perRullo[x][0].creato_il));
+    const blocchi = ordineRulli.map(r=>{
       const voci = perRullo[r].map(a=>{
         const t = new Date(a.creato_il).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
         const err = a.esito==="errore";

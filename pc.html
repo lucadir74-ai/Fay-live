@@ -735,6 +735,23 @@
   </div>
 </dialog>
 
+<!-- Dettaglio di una riga del registro: si apre cliccando l'invio, riuscito o no.
+     L'indirizzo e i codici si possono correggere, e da qui si rimanda. -->
+<dialog id="invDetDlg">
+  <h3 style="margin-bottom:4px">Invio</h3>
+  <div id="invDetInfo" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
+  <label style="display:block;font-size:13px;margin-bottom:4px">Indirizzo email</label>
+  <input id="invDetEmail" type="email" style="width:100%;margin-bottom:12px" autocomplete="off">
+  <label style="display:block;font-size:13px;margin-bottom:4px">Codici foto (separati da virgola)</label>
+  <input id="invDetCodici" type="text" style="width:100%;font-family:var(--mono)" autocomplete="off">
+  <p class="hint" style="margin:6px 0 14px">Correggendo l'indirizzo si aggiorna anche il registro, così resta scritto quello giusto.</p>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="invDetSalva">Salva correzione</button>
+    <button id="invDetInvia" class="primary">Invia ora</button>
+    <button id="invDetClose">Chiudi</button>
+  </div>
+</dialog>
+
 <dialog id="statsDlg">
   <h3 style="margin-bottom:4px">Report giornata</h3>
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
@@ -7474,12 +7491,12 @@ function renderInvii(){
         const email = invPulito(invEmailDi(a));
         const motivo = invPulito(invMotivoDi(a));
         const gFoto = invGiornoFoto(a);
-        /* Invio fallito dal tablet (linea del privé assente, quota Filemail, email sbagliata):
-           da qui la postazione lo rifà per conto suo, senza farsi ridettare l'indirizzo. */
-        const tasto = err
-          ? `<button class="primary" data-inv="${a.id}" style="margin-top:6px;font-size:13px;padding:5px 12px">Invio io da qui</button>`
-          : "";
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        /* OGNI riga si clicca, riuscita o no: si apre il dettaglio, dove si corregge
+           l'indirizzo (dettato male nella musica) o l'elenco dei codici e si rimanda.
+           Prima il tasto c'era solo sui falliti, ma l'errore più frequente è l'invio
+           "riuscito" finito all'indirizzo sbagliato, che da qui non si poteva rimediare. */
+        const tasto = `<div style="margin-top:6px;font-size:12.5px;color:var(--accent)">${err? "Clicca per correggere e rimandare" : "Clicca per correggere o rimandare"}</div>`;
+        return `<div class="invRiga" data-inv="${a.id}" style="padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">
           <span style="color:var(--muted);font-family:var(--mono)">${t}</span>
           <b style="color:${err?"var(--danger)":"var(--ok)"}"> ${err?"✕ non riuscito":"✔ inviato"}</b>
           <span style="color:var(--muted)"> · ${a.quante||0} foto · ${invPulito(a.postazione||"?")}</span>
@@ -7505,10 +7522,10 @@ function renderInvii(){
       </div>${blocchi}</div>`;
   }).join("");
 
-  box.querySelectorAll("button[data-inv]").forEach(b=>{
-    b.onclick = ()=>{
-      const a = invii.righe.find(x=>String(x.id)===b.dataset.inv);
-      if(a) reinviaDalRegistro(a, b);
+  box.querySelectorAll(".invRiga").forEach(el=>{
+    el.onclick = ()=>{
+      const a = invii.righe.find(x=>String(x.id)===el.dataset.inv);
+      if(a) apriDettaglioInvio(a);
     };
   });
 }
@@ -7519,12 +7536,14 @@ function renderInvii(){
    rimedia anche a un invio di due settimane fa senza aprire quella giornata.
    L'indirizzo si può correggere prima di partire: il caso tipico è l'email capita male
    nella musica, e rifare l'invio identico non servirebbe a niente. */
-async function reinviaDalRegistro(a, btn){
+async function reinviaDalRegistro(a, btn, scelte){
   if(!sb){ toast("Serve la connessione"); return; }
-  const codici = invCodiciDi(a);
+  scelte = scelte || {};
+  const codici = scelte.codici && scelte.codici.length ? scelte.codici : invCodiciDi(a);
   if(!codici.length){ toast("Questa riga non ha codici foto: l'invio non si può rifare da qui"); return; }
 
-  const email = (prompt("Invio io queste foto.\n\nControlla l'indirizzo (correggilo se era stato capito male):", invEmailDi(a)) || "").trim();
+  const email = (scelte.email != null ? scelte.email
+                 : (prompt("Invio io queste foto.\n\nControlla l'indirizzo (correggilo se era stato capito male):", invEmailDi(a)) || "")).trim();
   if(!email) return;
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Indirizzo non valido"); return; }
 
@@ -7602,6 +7621,66 @@ async function reinviaDalRegistro(a, btn){
     btn.disabled = false; btn.textContent = testo;
   }
 }
+
+/* DETTAGLIO DI UN INVIO — si apre cliccando qualsiasi riga del registro.
+   Due cose diverse, tenute separate apposta:
+   · "Salva correzione" tocca SOLO la riga di registro (indirizzo o codici scritti male);
+   · "Invia ora" fa partire un invio nuovo, che lascia la sua riga con la sua ora.
+   Non si cancella mai nulla: la storia di cosa è successo resta leggibile. */
+const invDet = { riga:null };
+
+function apriDettaglioInvio(a){
+  invDet.riga = a;
+  const err = a.esito==="errore";
+  const quando = new Date(a.creato_il).toLocaleString("it-IT",{weekday:"long",day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"});
+  const gFoto = invGiornoFoto(a);
+  $("invDetInfo").innerHTML =
+    `<b style="color:${err?"var(--danger)":"var(--ok)"}">${err?"✕ non riuscito":"✔ inviato"}</b>`
+    + ` · ${quando} · rullo ${invPulito(invRulloDi(a))} · ${invPulito(a.postazione||"?")}`
+    + (gFoto? ` · foto della giornata del ${invDataCorta(gFoto)}` : "")
+    + (err && invMotivoDi(a) ? `<div style="color:var(--danger);margin-top:4px">${invPulito(invMotivoDi(a))}</div>` : "");
+  $("invDetEmail").value = invEmailDi(a);
+  $("invDetCodici").value = invCodiciDi(a).join(", ");
+  $("invDetDlg").showModal();
+}
+
+function invDetLetti(){
+  const email = ($("invDetEmail").value||"").trim();
+  const codici = ($("invDetCodici").value||"").split(/[,\s]+/).map(c=>c.trim().toUpperCase()).filter(Boolean);
+  return { email, codici };
+}
+
+$("invDetSalva").onclick = async ()=>{
+  const a = invDet.riga; if(!a || !sb) return;
+  const {email, codici} = invDetLetti();
+  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Indirizzo non valido"); return; }
+  /* Il dettaglio conserva il motivo dell'errore: si sostituisce solo l'indirizzo, così
+     non si perde il perché quell'invio non era partito. */
+  const motivo = invMotivoDi(a);
+  const dettaglio = email ? (motivo ? email+" — "+motivo : email) : a.dettaglio;
+  /* sbTry ingoia l'errore e torna null: qui la correzione DEVE essere confermata,
+     altrimenti si chiude la finestra convinti di aver sistemato e non è cambiato niente. */
+  const res = await sbTry(()=>sb.from("attivita").update({
+      dettaglio, codici: codici.join(", "), quante: codici.length || a.quante
+    }).eq("id", a.id).select("id"), "correzione registro");
+  if(!res || res.error || !res.data || !res.data.length){
+    toast("Correzione non salvata: controlla la connessione e riprova", 5000);
+    return;
+  }
+  $("invDetDlg").close();
+  toast("Registro aggiornato");
+  await caricaInvii();
+};
+
+$("invDetInvia").onclick = async (e)=>{
+  const a = invDet.riga; if(!a) return;
+  const {email, codici} = invDetLetti();
+  if(!email){ toast("Manca l'indirizzo"); return; }
+  $("invDetDlg").close();
+  await reinviaDalRegistro(a, e.currentTarget, {email, codici});
+};
+
+$("invDetClose").onclick = ()=> $("invDetDlg").close();
 
 $("btnInvii").onclick = async ()=>{
   $("invioList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
