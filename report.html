@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fay Live — Report</title>
+<style>
+  :root{
+    --bg:#0B0E14; --surface:#141926; --surface2:#1B2233; --line:#252E44;
+    --ink:#E8ECF4; --muted:#8A94A8; --accent:#F5B942;
+    --ok:#5BC98A; --danger:#E4574F;
+    --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:env(safe-area-inset-top) 0 calc(24px + env(safe-area-inset-bottom));
+  }
+  header{
+    position:sticky; top:0; z-index:5; background:var(--surface);
+    border-bottom:1px solid var(--line); padding:12px 14px;
+  }
+  h1{margin:0 0 2px; font-size:17px; letter-spacing:.3px}
+  h1 small{color:var(--accent); font-weight:600}
+  .sub{color:var(--muted); font-size:12px}
+  .barra{display:flex; gap:8px; margin-top:10px}
+  select{
+    flex:1; min-width:0; background:var(--surface2); color:var(--ink);
+    border:1px solid var(--line); border-radius:9px; padding:9px 10px; font-size:15px;
+  }
+  button{
+    background:var(--surface2); color:var(--ink); border:1px solid var(--line);
+    border-radius:9px; padding:9px 13px; font-size:15px;
+  }
+  button:active{background:var(--line)}
+  main{padding:14px}
+  .tot{
+    background:var(--surface); border:1px solid var(--line); border-radius:13px;
+    padding:14px; margin-bottom:14px;
+  }
+  .tot .grande{font-size:34px; font-weight:700; color:var(--ok); line-height:1.1}
+  .tot .etichetta{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.6px}
+  .griglia{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:12px}
+  .griglia div{background:var(--surface2); border-radius:9px; padding:9px}
+  .griglia b{display:block; font-size:19px; font-weight:700}
+  .griglia span{color:var(--muted); font-size:11px}
+  .rullo{
+    background:var(--surface); border:1px solid var(--line); border-radius:13px;
+    padding:12px 14px; margin-bottom:10px;
+  }
+  .rullo .capo{display:flex; align-items:baseline; gap:9px; margin-bottom:9px}
+  .rullo .sigla{font-family:var(--mono); font-size:20px; font-weight:700; color:var(--accent)}
+  .rullo .desc{color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rullo .vendute{margin-left:auto; font-size:19px; font-weight:700; color:var(--ok); white-space:nowrap}
+  .voci{display:flex; flex-wrap:wrap; gap:7px}
+  .voce{background:var(--surface2); border-radius:8px; padding:5px 9px; font-size:13px; white-space:nowrap}
+  .voce s{color:var(--muted); text-decoration:none; font-size:11px}
+  .avviso{color:var(--muted); text-align:center; padding:30px 16px; font-size:14px}
+  .avviso.brutto{color:var(--danger)}
+  footer{color:var(--muted); font-size:11px; text-align:center; padding:6px 16px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Fay Live <small id="hSede">—</small></h1>
+  <div class="sub" id="hSub">sola lettura</div>
+  <div class="barra">
+    <select id="selGiornata"><option>Carico…</option></select>
+    <button id="btnRicarica" title="Ricarica">↻</button>
+  </div>
+</header>
+
+<main id="corpo">
+  <p class="avviso">Carico…</p>
+</main>
+<footer id="piede"></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* =====================================================================
+   FAY LIVE — REPORT DA TELEFONO, SOLA LETTURA
+   Pagina separata da pc.html: non importa, non stampa, non scrive MAI.
+   Fa solo select su servizi / rulli / foto / attivita.
+
+   ACCESSO: serve il codice nell'indirizzo, per esempio
+     https://fay-live.vercel.app/report.html?k=CODICE
+   Non è una vera protezione (la chiave anon sta comunque dentro la pagina, come in
+   tablet.html): serve solo a tenere fuori chi ci finisce per caso. La protezione seria
+   sono le regole di scrittura su Supabase, che stanno lato database.
+   ===================================================================== */
+const CODICE = "smeralda26";          // <-- cambialo quando vuoi
+
+const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
+
+const $ = id => document.getElementById(id);
+const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+
+function avviso(testo, brutto){
+  $("corpo").innerHTML = `<p class="avviso${brutto?" brutto":""}">${testo}</p>`;
+}
+function dataLunga(g){
+  const d = new Date(g+"T12:00:00");
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+}
+function pulito(x){ return String(x==null?"":x).replace(/[<>&"]/g,""); }
+
+/* --- porta chiusa ------------------------------------------------------ */
+const chiave = new URLSearchParams(location.search).get("k") || "";
+if(chiave !== CODICE){
+  $("hSub").textContent = "accesso non valido";
+  avviso("Indirizzo incompleto: manca il codice di accesso.", true);
+  throw new Error("codice mancante");
+}
+if(!sb){
+  avviso("Non riesco a collegarmi al cloud.", true);
+  throw new Error("supabase assente");
+}
+
+/* --- stesse formule del report sul PC ---------------------------------
+   stampeGiornata: le ristampe fatte in un altro giorno non contano qui, contano nel
+   giorno in cui sono uscite dalla stampante.
+   venduteRullo:   stampe della giornata − omaggi − scarti + file venduti.
+   Se cambiano di là, vanno cambiate anche qui: sono la stessa cosa detta due volte. */
+function stampeGiornata(r){ return Math.max(0, (r.stampe||0) - (r.fuori||0)); }
+function venduteRullo(r){ return Math.max(0, stampeGiornata(r) - (r.omaggi||0) - (r.scarti||0)) + (r.file||0); }
+
+let sede = null, servizi = [];
+
+async function avvia(){
+  try{
+    const {data:sedi, error:e1} = await sb.from("sedi").select("id,nome").order("nome");
+    if(e1) throw e1;
+    if(!sedi || !sedi.length){ avviso("Nessuna sede sul cloud.", true); return; }
+    sede = sedi[0];
+    $("hSede").textContent = pulito(sede.nome);
+
+    const {data:sv, error:e2} = await sb.from("servizi")
+      .select("id,data_servizio").eq("sede_id", sede.id)
+      .order("data_servizio",{ascending:false}).limit(120);
+    if(e2) throw e2;
+    servizi = sv || [];
+    if(!servizi.length){ avviso("Nessuna giornata registrata."); return; }
+
+    $("selGiornata").innerHTML = servizi
+      .map(s=>`<option value="${s.id}">${dataLunga(s.data_servizio)}</option>`).join("");
+    $("selGiornata").onchange = ()=>carica($("selGiornata").value);
+    $("btnRicarica").onclick  = ()=>carica($("selGiornata").value);
+    carica(servizi[0].id);
+  }catch(err){
+    console.error(err);
+    avviso("Errore nel collegamento: "+(err.message||err), true);
+  }
+}
+
+async function carica(sid){
+  const sv = servizi.find(s=>String(s.id)===String(sid));
+  if(!sv) return;
+  avviso("Carico…");
+  $("hSub").textContent = "sola lettura · " + dataLunga(sv.data_servizio);
+  try{
+    const {data:rulli, error:e1} = await sb.from("rulli")
+      .select("id,lettera,descrizione,omaggi,scarti,file_venduti").eq("servizio_id", sv.id);
+    if(e1) throw e1;
+    if(!rulli || !rulli.length){ avviso("Nessun rullo in questa giornata."); $("piede").textContent=""; return; }
+
+    /* Le foto si contano a pagine: una giornata piena supera il limite di righe che il
+       cloud restituisce in una volta, e senza paginazione i numeri uscirebbero tagliati. */
+    const perRullo = {};
+    rulli.forEach(r=> perRullo[r.id] = {
+      lettera:r.lettera, desc:r.descrizione||"", foto:0, stampe:0, esportate:0,
+      omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file_venduti||0, fuori:0
+    });
+    const ids = rulli.map(r=>r.id);
+    let da = 0;
+    for(;;){
+      const {data:foto, error:e2} = await sb.from("foto")
+        .select("rullo_id,stampe,esportata").in("rullo_id", ids).range(da, da+999);
+      if(e2) throw e2;
+      (foto||[]).forEach(f=>{
+        const r = perRullo[f.rullo_id]; if(!r) return;
+        r.foto++; r.stampe += (f.stampe||0); if(f.esportata) r.esportate++;
+      });
+      if(!foto || foto.length < 1000) break;
+      da += 1000;
+      if(da > 20000) break;               // rete di sicurezza
+    }
+
+    /* Ristampe fatte in un ALTRO giorno su foto di questa giornata: vanno tolte, come nel
+       report del PC, altrimenti le vendute risultano gonfiate. */
+    const {data:stampe} = await sb.from("attivita")
+      .select("rullo_lettera,quante,dettaglio").eq("servizio_id", sv.id).eq("azione","~stampa");
+    (stampe||[]).forEach(a=>{
+      const m = /giorno=(\d{4}-\d{2}-\d{2})/.exec(a.dettaglio||"");
+      if(!m || m[1] === sv.data_servizio) return;
+      const r = Object.values(perRullo).find(x=>x.lettera === a.rullo_lettera);
+      if(r) r.fuori += (a.quante||0);
+    });
+
+    disegna(Object.values(perRullo).sort((a,b)=>a.lettera.localeCompare(b.lettera)), sv);
+  }catch(err){
+    console.error(err);
+    avviso("Errore nel caricare la giornata: "+(err.message||err), true);
+  }
+}
+
+function disegna(righe, sv){
+  const somma = c => righe.reduce((s,r)=>s+(c(r)||0), 0);
+  const tFoto    = somma(r=>r.foto);
+  const tStampe  = somma(r=>stampeGiornata(r));
+  const tEsport  = somma(r=>r.esportate);
+  const tFile    = somma(r=>r.file);
+  const tOmaggi  = somma(r=>r.omaggi);
+  const tScarti  = somma(r=>r.scarti);
+  const tVendute = somma(r=>venduteRullo(r));
+
+  const testa = `
+    <div class="tot">
+      <div class="etichetta">Vendute</div>
+      <div class="grande">${tVendute}</div>
+      <div class="griglia">
+        <div><b>${tFoto}</b><span>foto</span></div>
+        <div><b>${tStampe}</b><span>stampe</span></div>
+        <div><b>${tFile}</b><span>file venduti</span></div>
+        <div><b>${tEsport}</b><span>esportate</span></div>
+        <div><b>${tOmaggi}</b><span>omaggi</span></div>
+        <div><b>${tScarti}</b><span>scarti</span></div>
+      </div>
+    </div>`;
+
+  const carte = righe.map(r=>{
+    const voci = [
+      `<span class="voce">${r.foto} <s>foto</s></span>`,
+      `<span class="voce">🖨 ${stampeGiornata(r)} <s>stampe</s></span>`,
+      r.file    ? `<span class="voce">▤ ${r.file} <s>file</s></span>` : "",
+      r.esportate ? `<span class="voce">⇩ ${r.esportate} <s>esportate</s></span>` : "",
+      r.omaggi  ? `<span class="voce">${r.omaggi} <s>omaggi</s></span>` : "",
+      r.scarti  ? `<span class="voce">${r.scarti} <s>scarti</s></span>` : "",
+      r.fuori   ? `<span class="voce">${r.fuori} <s>altri giorni</s></span>` : ""
+    ].filter(Boolean).join("");
+    return `<div class="rullo">
+      <div class="capo">
+        <span class="sigla">${pulito(r.lettera)}</span>
+        <span class="desc">${pulito(r.desc)}</span>
+        <span class="vendute">✓ ${venduteRullo(r)}</span>
+      </div>
+      <div class="voci">${voci}</div>
+    </div>`;
+  }).join("");
+
+  $("corpo").innerHTML = testa + carte;
+  $("piede").textContent = "aggiornato alle " +
+    new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}) +
+    " · vendute = stampe − omaggi − scarti + file";
+}
+
+avvia();
+</script>
+</body>
+</html>
