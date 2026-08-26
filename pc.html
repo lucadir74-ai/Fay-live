@@ -1578,45 +1578,46 @@ async function importaFiles(files){
   catch(err){ console.warn("archivio all'import", err); toast("Archivio non disponibile: importo lo stesso"); }
 
   /* RIPRESA DI UN IMPORT INTERROTTO.
-     Se la scheda viene sfilata a metà (o l'import si pianta), rimettendo la stessa scheda
-     e scegliendo LA STESSA SIGLA si riprende da dove ci si era fermati: i file già dentro
-     si saltano e si importano solo i mancanti, in coda alla numerazione.
-     La firma è nome + dimensione + data di scatto del file.
+     Se la scheda viene sfilata a metà, rimettendola e scegliendo LA STESSA SIGLA si riprende.
+     ATTENZIONE al criterio: "la foto c'è già in griglia" NON vuol dire "è a posto". Quando
+     la scheda sparisce a metà restano foto con riga, miniatura e anteprima ma SENZA
+     originale — ed è proprio l'originale quello che manca e che serve per stampare.
+     Quindi:
+       · foto già completa (originale in archivio, o già sul cloud) → si salta davvero;
+       · foto senza originale → NON si reimporta con un codice nuovo (farebbe doppioni):
+         si riaggancia il file a quella che c'è già, si copia in archivio e si carica;
+       · file mai visto → import normale, numerato in coda.
 
-     ATTENZIONE — perché questo NON può mescolare giornate: le macchine fotografiche
-     riusano gli stessi nomi (DSC_0001.JPG torna ogni sera), quindi il confronto è ristretto
-     alla GIORNATA APERTA e a QUEL rullo, mai a tutto l'archivio. Una foto di ieri che si
-     chiama uguale non c'entra e non viene mai vista come "già importata". Se invece si
-     vuole reimportare tutto da zero, basta usare una sigla diversa (Q2 invece di Q):
-     rullo diverso, nessun confronto, import completo. */
+     Perché questo NON può mescolare giornate: le macchine riusano gli stessi nomi
+     (DSC_0001.JPG torna ogni sera), quindi il confronto è ristretto alla GIORNATA APERTA e
+     a QUEL rullo, e la firma comprende anche dimensione e data di scatto. Per reimportare
+     tutto da zero basta una sigla diversa (Q2 invece di Q): rullo diverso, nessun confronto. */
   const firmaDi = f => `${f.name}|${f.size}|${f.lastModified}`;
+  const daRiagganciare = [];
   let saltate = 0;
   try{
-    const gia = new Set();
-    // quello che è già in memoria per questo rullo di QUESTA giornata
-    const srvOra = cloud.servizio ? String(cloud.servizio.id) : null;
+    const srvOra = cloud.servizio ? String(cloud.servizio.id) : "";
+    const perFirma = new Map();
     state.photos.forEach(p=>{
-      if(p.letter === L && String(p.srvId||"") === String(srvOra||"") && p.sig) gia.add(p.sig);
+      if(p.letter === L && String(p.srvId||"") === srvOra && p.sig) perFirma.set(p.sig, p);
     });
-    // e quello già sul cloud, sempre e solo di questa giornata e di questo rullo
-    if(sb && cloud.servizio){
-      const {data} = await sb.from("foto")
-        .select("file_origine,rulli!inner(lettera,servizio_id)")
-        .eq("rulli.servizio_id", cloud.servizio.id)
-        .eq("rulli.lettera", L)
-        .not("file_origine","is",null)
-        .limit(5000);
-      (data||[]).forEach(r=>{ if(r.file_origine) gia.add(r.file_origine); });
-    }
-    if(gia.size){
-      const prima = files.length;
-      files = files.filter(f=>!gia.has(firmaDi(f)));
-      saltate = prima - files.length;
-      if(saltate && !files.length){
-        toast(`Tutte le ${saltate} foto erano già importate nel rullo ${L}: non c'è niente da riprendere`, 6000);
+    if(perFirma.size){
+      const restano = [];
+      for(const f of files){
+        const p = perFirma.get(firmaDi(f));
+        if(!p){ restano.push(f); continue; }
+        const haOriginale = !!(p.arch || p.file || p.origUploaded || p.origReadyCloud);
+        if(haOriginale){ saltate++; continue; }
+        p.file = f; p.remote = false;          // riaggancio: stesso codice, niente doppioni
+        daRiagganciare.push(p);
+      }
+      files = restano;
+      if(daRiagganciare.length)
+        toast(`Riprendo: ${daRiagganciare.length} foto erano senza originale, le recupero`, 5000);
+      else if(saltate && !files.length){
+        toast(`Le ${saltate} foto del rullo ${L} sono già complete: non c'è niente da riprendere`, 6000);
         return;
       }
-      if(saltate) toast(`Riprendo l'import: ${saltate} già dentro, ne mancano ${files.length}`, 5000);
     }
   }catch(err){
     // se il controllo non riesce si importa tutto, come prima: meglio doppie che mancanti
@@ -1627,7 +1628,10 @@ async function importaFiles(files){
   // se online, riserva i numeri dal cloud (atomico tra postazioni); altrimenti locali
   const startN = await nextNumber(L, files.length);
   let n = (startN!=null) ? startN : (state.counters[L]||0);
-  const batch=[];
+  /* Le foto recuperate entrano nello stesso lotto: hanno gia' codice e numero, quello che
+     manca e' la copia in archivio e il caricamento dell'originale — cioe' esattamente quello
+     che fa processBatch. Vanno per prime perche' hanno i numeri piu' bassi. */
+  const batch=[...daRiagganciare];
   for(const f of files){
     n++;
     const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
@@ -1636,6 +1640,7 @@ async function importaFiles(files){
               file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
+  if(!batch.length){ toast("Niente da importare"); return; }
   state.counters[L]=n;
   ordinaFoto();
   // ci si sposta sul rullo appena importato: prima, senza più la scheda "Tutte",
@@ -1652,7 +1657,9 @@ async function importaFiles(files){
   }
   $("stTotal").textContent = state.photos.length;
   renderTabs(); layoutGrid(); updateThumbCloud();
-  toast(`Importate ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code})`);
+  toast(daRiagganciare.length
+    ? `${daRiagganciare.length} recuperate + ${files.length} nuove (${batch[0].code} → ${batch[batch.length-1].code})`
+    : `Importate ${batch.length} foto (${batch[0].code} → ${batch[batch.length-1].code})`);
   const M=state.monitor;
   M.queue = buildSlideshowQueue();
   processBatch(batch);
@@ -2329,6 +2336,7 @@ async function processBatchInterno(batch){
   let fails=0;
 
   // FASE 1 — miniature veloci: la griglia si riempie subito
+  let miniKo = 0;
   for(const p of batch){
     if(prog.cancel) return { annullato:true };
     try{
@@ -2337,7 +2345,11 @@ async function processBatchInterno(batch){
       c.getContext("2d").drawImage(bmp,0,0); bmp.close();
       p.thumb = c.toDataURL("image/jpeg",0.78);
       p.w=c.width; p.h=c.height;
-    }catch(err){ fails++; console.warn("miniatura", p.code, err); }
+      miniKo = 0;
+    }catch(err){
+      fails++; console.warn("miniatura", p.code, err);
+      if(++miniKo >= 3) return { schedaPersa:true, fino:p.code };   // scheda sfilata
+    }
     prog.done++;
     if((prog.done & 7)===0){
       progUpdate();
@@ -2352,11 +2364,21 @@ async function processBatchInterno(batch){
 
   // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
   const evDir = await getImportDir(batch[0].letter);
+  /* SE LA SCHEDA VIENE SFILATA A METÀ l'import DEVE fermarsi. Prima andava avanti fino in
+     fondo: la lettura del file falliva, l'errore finiva solo nella console, la copia in
+     archivio veniva saltata in silenzio e l'anteprima si faceva lo stesso da quello che
+     Chrome aveva ancora in memoria. Risultato: griglia piena di foto senza originale, e
+     nessun avviso. Tre letture fallite di fila = la scheda non c'è più, ci si ferma. */
+  let letturaKo = 0;
   for(const p of batch){
     if(prog.cancel) return { annullato:true };
     let buf=null;
-    try{ buf = await p.file.arrayBuffer(); }
-    catch(err){ console.warn("lettura", p.code, err); }
+    try{ buf = await p.file.arrayBuffer(); letturaKo = 0; }
+    catch(err){
+      console.warn("lettura", p.code, err);
+      if(++letturaKo >= 3) return { schedaPersa:true, fino:p.code };
+      continue;                    // niente anteprima da un file che non si legge
+    }
     if(evDir && buf){
       try{
         const ext = (p.file.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
@@ -2424,15 +2446,18 @@ function fineImport(batch, esito){
   const w = $("progWrap"), lab = $("progLabel"), fill = $("progFill"), btn = $("progCancel");
   const quante = batch.length;
   const da = batch[0].code, a = batch[batch.length-1].code;
-  const msg = esito.errore
+  const msg = esito.schedaPersa
+    ? `⛔ Import rullo ${L} INTERROTTO a ${esito.fino}: la scheda non è più leggibile — rimettila e reimporta con la stessa sigla ${L} per riprendere`
+    : esito.errore
     ? `⚠ Import rullo ${L} finito con errori — controlla la griglia`
     : `✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a}) · puoi togliere la scheda`
       + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : "");
   prog.total = 0; prog.done = 0;
   fill.style.width = "100%";
-  fill.style.background = esito.errore ? "var(--danger)" : "var(--ok)";
+  const guaio = esito.errore || esito.schedaPersa;
+  fill.style.background = guaio ? "var(--danger)" : "var(--ok)";
   lab.textContent = msg;
-  lab.style.color = esito.errore ? "var(--danger)" : "var(--ok)";
+  lab.style.color = guaio ? "var(--danger)" : "var(--ok)";
   btn.style.display = "none";        // niente "Ho capito": non c'è nulla da confermare
   w.classList.add("show");
   fineImport._attivo = true;
@@ -6961,7 +6986,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 ago 2026 · 21:40";
+const VERSIONE = "26 ago 2026 · 22:20";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
