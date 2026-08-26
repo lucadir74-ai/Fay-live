@@ -776,8 +776,8 @@ function render(){
   // griglia
   const list=visible(); const g=$("grid");
   $("empty").hidden = !!S.sede;
-  if(!S.sede){ g.innerHTML=""; lastGrid=""; return; }
-  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; lastGrid=""; return; }
+  if(!S.sede){ g.innerHTML=""; lastGrid=""; lastIds=[]; lastTesta=""; return; }
+  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; lastGrid=""; lastIds=[]; lastTesta=""; return; }
   // se la griglia è identica a quella già disegnata, non la rifaccio: il controllo automatico
   // ogni 25 secondi ricostruiva tutto e faceva ridisegnare le anteprime da capo
   /* PERCHE' LA GRIGLIA TORNAVA IN CIMA MENTRE SI SCORREVA.
@@ -786,60 +786,109 @@ function render(){
      da zero — e ricostruire #grid, che e' il contenitore che scorre, riporta lo
      scorrimento a zero. Durante l'invio degli originali succedeva decine di volte.
      Ora la clessidra si toglie dalla singola cella, senza rifare niente. */
-  const firma = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0")+"|"+
-                list.map(p=>p.id+(p.fav?"♥":"")+(p.gruppo||"")+(p.wide?"w":"")).join(",");
-  if(firma===lastGrid && g.childElementCount){ aggiornaClessidre(); updateSelBar(); return; }
-  lastGrid = firma;
-  // e quando la ricostruzione serve davvero (foto nuove, cambio rullo), il punto in cui
+  /* PERCHE' LE MINIATURE "BALLAVANO" SCORRENDO.
+     La firma della griglia comprendeva cuori, gruppo e verso della foto. Sono tutte cose
+     che cambiano di continuo durante la serata — un cuore messo al tavolo, il verso deciso
+     dal taglio DOPO che la miniatura e' stata disegnata, una foto nuova del fotografo —
+     e a ogni cambio la griglia veniva ricostruita da zero: tutte le anteprime tornavano
+     nere e si ridisegnavano sotto il dito del cliente.
+     Ora la firma guarda SOLO quali foto ci sono e in che ordine. Cuori, selezione e
+     clessidra si sistemano sulle celle gia' disegnate, e le foto nuove si aggiungono in
+     coda senza toccare quelle sopra. */
+  const testa = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0");
+  const ids = list.map(p=>p.id);
+  const firma = testa+"|"+ids.join(",");
+  if(firma===lastGrid && g.childElementCount){ aggiornaCelle(); return; }
+
+  /* Caso piu' frequente della serata: stesse foto di prima piu' qualcuna nuova in fondo.
+     Si aggiungono soltanto quelle, cosi' chi sta scorrendo non vede sfarfallare niente. */
+  const soloAggiunte = lastTesta===testa && lastIds.length && ids.length>lastIds.length &&
+                       g.childElementCount===lastIds.length &&
+                       lastIds.every((id,i)=>ids[i]===id);
+  if(soloAggiunte){
+    const nuove = list.slice(lastIds.length);
+    g.insertAdjacentHTML("beforeend", nuove.map(cellaHTML).join(""));
+    [...g.querySelectorAll(".cell")].slice(lastIds.length).forEach(agganciaCella);
+    lastGrid=firma; lastTesta=testa; lastIds=ids;
+    aggiornaCelle();
+    return;
+  }
+
+  lastGrid=firma; lastTesta=testa; lastIds=ids;
+  // quando la ricostruzione serve davvero (cambio rullo, filtro preferiti), il punto in cui
   // si stava guardando viene rimesso dov'era invece di ripartire dall'alto
   const scrollPrima = g.scrollTop;
   resetLazy();
-  g.innerHTML = list.map((p,i)=>`
-    <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-i="${i}" data-id="${p.id}">
+  g.innerHTML = list.map(cellaHTML).join("");
+  g.querySelectorAll(".cell").forEach(agganciaCella);
+  if(scrollPrima){
+    g.scrollTop = scrollPrima;
+    requestAnimationFrame(()=>{ g.scrollTop = scrollPrima; });
+  }
+  updateSelBar();
+}
+
+function cellaHTML(p){
+  return `
+    <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
       ${haOriginale(p)?"":`<span class="orig">⏳</span>`}
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
-    </div>`).join("");
+    </div>`;
+}
+
+/* La foto si ricava dall'id scritto sulla cella, non piu' dalla posizione nell'elenco:
+   aggiungendo celle in coda gli indici non tornerebbero piu'. */
+function agganciaCella(c){
+  const p = S.byId.get(c.dataset.id);
+  if(!p) return;
+  c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(p); };
+  const cv=c.querySelector("canvas");
+  const codeEl=c.querySelector(".code");
+  const onTap=()=>{
+    // il dito che si stacca dopo un tocco lungo genererebbe un tocco normale:
+    // qui si ignora, altrimenti l'ultima foto si toglieva da sola
+    if(Date.now() - intervalloFinito < 500) return;
+    if(S.selmode){ toggleSelect(p, c); }
+    else openViewer(p);
+  };
+  cv.onclick=onTap;
+  codeEl.onclick=onTap;
+  /* Tocco prolungato a due livelli: a 400 ms entra in selezione con questa foto,
+     tenendo premuto ancora (900 ms) si segna il PUNTO DI PARTENZA (spunta verde).
+     Poi si scorre liberamente e si tiene premuta l'ultima foto: vengono prese tutte
+     quelle in mezzo. */
+  let lpTimer=null, rangeTimer=null;
+  const startLP=()=>{
+    if(!S.selmode) lpTimer=setTimeout(()=>{ enterSelMode(p, c); lpTimer=null; }, 400);
+    rangeTimer=setTimeout(()=>{ rangeTimer=null; toccoLungoIntervallo(p, c); }, 900);
+  };
+  const cancelLP=()=>{
+    if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
+    if(rangeTimer){ clearTimeout(rangeTimer); rangeTimer=null; }
+  };
+  c.addEventListener("touchstart", startLP, {passive:true});
+  c.addEventListener("touchmove", cancelLP, {passive:true});
+  c.addEventListener("touchend", cancelLP, {passive:true});
+  // la foto si scarica solo quando la cella sta per entrare in vista
+  observeCell(c);
+}
+
+/* Rimette in pari cuore, selezione, verso e clessidra sulle celle GIA' disegnate:
+   nessun canvas viene toccato, quindi niente sfarfallio. */
+function aggiornaCelle(){
+  const g=$("grid"); if(!g) return;
   g.querySelectorAll(".cell").forEach(c=>{
-    const i=+c.dataset.i;
-    const p=list[i];
-    c.querySelector(".fav").onclick=ev=>{ ev.stopPropagation(); toggleFav(p); };
-    const cv=c.querySelector("canvas");
-    const codeEl=c.querySelector(".code");
-    const onTap=()=>{
-      // il dito che si stacca dopo un tocco lungo genererebbe un tocco normale:
-      // qui si ignora, altrimenti l'ultima foto si toglieva da sola
-      if(Date.now() - intervalloFinito < 500) return;
-      if(S.selmode){ toggleSelect(p, c); }
-      else openViewer(p);
-    };
-    cv.onclick=onTap;
-    codeEl.onclick=onTap;
-    /* Tocco prolungato a due livelli: a 400 ms entra in selezione con questa foto,
-       tenendo premuto ancora (900 ms) si segna il PUNTO DI PARTENZA (spunta verde).
-       Poi si scorre liberamente e si tiene premuta l'ultima foto: vengono prese tutte
-       quelle in mezzo. */
-    let lpTimer=null, rangeTimer=null;
-    const startLP=()=>{
-      if(!S.selmode) lpTimer=setTimeout(()=>{ enterSelMode(p, c); lpTimer=null; }, 400);
-      rangeTimer=setTimeout(()=>{ rangeTimer=null; toccoLungoIntervallo(p, c); }, 900);
-    };
-    const cancelLP=()=>{
-      if(lpTimer){ clearTimeout(lpTimer); lpTimer=null; }
-      if(rangeTimer){ clearTimeout(rangeTimer); rangeTimer=null; }
-    };
-    c.addEventListener("touchstart", startLP, {passive:true});
-    c.addEventListener("touchmove", cancelLP, {passive:true});
-    c.addEventListener("touchend", cancelLP, {passive:true});
-    // la foto si scarica solo quando la cella sta per entrare in vista
-    observeCell(c);
+    const p = S.byId.get(c.dataset.id); if(!p) return;
+    c.classList.toggle("isfav", !!p.fav);
+    c.classList.toggle("sel", S.selected.has(p.id));
+    if(p.wide) c.classList.add("wide");
+    const fav=c.querySelector(".fav");
+    if(fav){ fav.classList.toggle("on", !!p.fav); fav.textContent = p.fav?"♥":"♡"; }
   });
-  if(scrollPrima){
-    g.scrollTop = scrollPrima;
-    requestAnimationFrame(()=>{ g.scrollTop = scrollPrima; });
-  }
+  aggiornaClessidre();
   updateSelBar();
 }
 
@@ -1256,6 +1305,8 @@ function logTecnico(list, azione, extra){ return logActivity(list, "~"+azione, e
    Ora si carica solo quello che sta per entrare in vista, poche alla volta. */
 let lazyObs = null;
 let lastGrid = "";              // firma della griglia già disegnata
+let lastTesta = "";             // rullo/gruppo/preferiti dell'ultimo disegno
+let lastIds = [];               // id delle foto già in griglia, in ordine
 const drawQueue = [];
 let drawActive = 0;
 const DRAW_PARALLEL = 8;        // quante miniature scarico/disegno insieme (sono ~25 KB)
@@ -1511,8 +1562,11 @@ async function toggleFav(p){
   const scope = S.letter ? S.photos.filter(x=>x.letter===S.letter) : S.photos;
   aggiornaSpiaBadge();
   // se sto guardando solo i preferiti e ne tolgo uno, aggiorno la vista
+  /* Nella vista preferiti togliere un cuore cambia l'elenco, quindi si ridisegna. Fuori
+     da li' NON si tocca la firma: la cella e' gia' aggiornata a mano, e invalidarla
+     costringeva il controllo automatico a ricostruire tutta la griglia (e a far
+     ridisegnare ogni anteprima) al primo cuore messo al tavolo. */
   if(S.favOnly && !p.fav){ lastGrid=""; render(); }
-  else lastGrid="";   // la cella è già aggiornata a mano, ma la firma non deve restare vecchia
   if(sb){
     try{
       /* PREFETCH: mettendo il cuore chiedo GIA' ORA l'originale a PC1, nella stessa
