@@ -1539,6 +1539,7 @@ $("fileInput").onchange = async e=>{
 // stesso percorso di import sia dal tasto "Importa cartella" sia dal lettore schede sorvegliato
 let importInCorso = false;
 async function importaFiles(files){
+  files = [...files];   // copia: la ripresa import può scartarne alcuni
   // se è ancora a schermo l'avviso verde dell'import precedente, sparisce qui
   if(fineImport._attivo && fineImport._chiudi) fineImport._chiudi();
   if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
@@ -1576,6 +1577,52 @@ async function importaFiles(files){
   try{ await ensureArchive(); }
   catch(err){ console.warn("archivio all'import", err); toast("Archivio non disponibile: importo lo stesso"); }
 
+  /* RIPRESA DI UN IMPORT INTERROTTO.
+     Se la scheda viene sfilata a metà (o l'import si pianta), rimettendo la stessa scheda
+     e scegliendo LA STESSA SIGLA si riprende da dove ci si era fermati: i file già dentro
+     si saltano e si importano solo i mancanti, in coda alla numerazione.
+     La firma è nome + dimensione + data di scatto del file.
+
+     ATTENZIONE — perché questo NON può mescolare giornate: le macchine fotografiche
+     riusano gli stessi nomi (DSC_0001.JPG torna ogni sera), quindi il confronto è ristretto
+     alla GIORNATA APERTA e a QUEL rullo, mai a tutto l'archivio. Una foto di ieri che si
+     chiama uguale non c'entra e non viene mai vista come "già importata". Se invece si
+     vuole reimportare tutto da zero, basta usare una sigla diversa (Q2 invece di Q):
+     rullo diverso, nessun confronto, import completo. */
+  const firmaDi = f => `${f.name}|${f.size}|${f.lastModified}`;
+  let saltate = 0;
+  try{
+    const gia = new Set();
+    // quello che è già in memoria per questo rullo di QUESTA giornata
+    const srvOra = cloud.servizio ? String(cloud.servizio.id) : null;
+    state.photos.forEach(p=>{
+      if(p.letter === L && String(p.srvId||"") === String(srvOra||"") && p.sig) gia.add(p.sig);
+    });
+    // e quello già sul cloud, sempre e solo di questa giornata e di questo rullo
+    if(sb && cloud.servizio){
+      const {data} = await sb.from("foto")
+        .select("file_origine,rulli!inner(lettera,servizio_id)")
+        .eq("rulli.servizio_id", cloud.servizio.id)
+        .eq("rulli.lettera", L)
+        .not("file_origine","is",null)
+        .limit(5000);
+      (data||[]).forEach(r=>{ if(r.file_origine) gia.add(r.file_origine); });
+    }
+    if(gia.size){
+      const prima = files.length;
+      files = files.filter(f=>!gia.has(firmaDi(f)));
+      saltate = prima - files.length;
+      if(saltate && !files.length){
+        toast(`Tutte le ${saltate} foto erano già importate nel rullo ${L}: non c'è niente da riprendere`, 6000);
+        return;
+      }
+      if(saltate) toast(`Riprendo l'import: ${saltate} già dentro, ne mancano ${files.length}`, 5000);
+    }
+  }catch(err){
+    // se il controllo non riesce si importa tutto, come prima: meglio doppie che mancanti
+    console.warn("ripresa import", err);
+  }
+
   files.sort((a,b)=>a.lastModified-b.lastModified || a.name.localeCompare(b.name));
   // se online, riserva i numeri dal cloud (atomico tra postazioni); altrimenti locali
   const startN = await nextNumber(L, files.length);
@@ -1585,6 +1632,7 @@ async function importaFiles(files){
     n++;
     const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
               srvId: cloud.servizio? cloud.servizio.id : null,
+              sig: firmaDi(f),
               file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
     state.photos.push(p); state.byCode.set(p.code,p); batch.push(p);
   }
@@ -2536,11 +2584,21 @@ async function syncPhotoUp(p){
     const mioSrv = srvOf(p);
     if(p.miniUrl && !String(p.miniUrl).includes(mioSrv)) p.miniUrl = null;
     if(p.anteprimaUrl && !String(p.anteprimaUrl).includes(mioSrv)) p.anteprimaUrl = null;
-    const {data,error} = await sb.from("foto").upsert({
+    /* La colonna file_origine (ripresa degli import interrotti) potrebbe non essere ancora
+       stata creata sul database: in quel caso si riprova senza, invece di far fallire il
+       salvataggio di tutte le foto. */
+    const riga = {
       rullo_id: cloud.rulli[p.letter].id, codice: p.code,
       scattata_il: new Date(p.ts).toISOString(),
       mini_url: p.miniUrl, anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
-    }, {onConflict:"rullo_id,codice"}).select().single();
+    };
+    if(cloud.senzaFileOrigine !== true) riga.file_origine = p.sig || null;
+    let {data,error} = await sb.from("foto").upsert(riga, {onConflict:"rullo_id,codice"}).select().single();
+    if(error && String(error.message||"").includes("file_origine")){
+      cloud.senzaFileOrigine = true;
+      delete riga.file_origine;
+      ({data,error} = await sb.from("foto").upsert(riga, {onConflict:"rullo_id,codice"}).select().single());
+    }
     if(error) throw error;
     p.dbId = data.id;
     cloud.online=true;
@@ -6903,7 +6961,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 ago 2026 · 21:00";
+const VERSIONE = "26 ago 2026 · 21:40";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
@@ -7054,6 +7112,7 @@ function addRemotePhotoFast(f, letter){
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
             origKey: f.originale_url || null,
+            sig: f.file_origine || null,   // serve alla ripresa di un import interrotto
             crop: cropLeggi(f.ritaglio) };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
@@ -7070,6 +7129,7 @@ async function addRemotePhoto(f, letter){
                La pulizia automatica azzera originale_url insieme al file, quindi e' affidabile. */
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
             origKey: f.originale_url || null,
+            sig: f.file_origine || null,   // serve alla ripresa di un import interrotto
             crop: cropLeggi(f.ritaglio) };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
