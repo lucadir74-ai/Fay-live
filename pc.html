@@ -3025,7 +3025,12 @@ async function caricaOriginaleDaArchivio(riga, handle, servizioId){
   const f = await handle.getFile();
   const buf = await f.arrayBuffer();
   const blob = new Blob([buf], {type:f.type||"image/jpeg"});
-  const path = servizioId+"/"+riga.codice+".jpg";
+  /* Il percorso va composto come lo compone origPath() per tutto il resto dell'app:
+     <servizio>/<sigla rullo>-<codice>.jpg. Qui era rimasta la forma vecchia, senza rullo,
+     da prima del 24 agosto: la foto finiva su un percorso che nessun altro pezzo di codice
+     sa ricostruire. E' lo stesso difetto gia' corretto nel pannello "Da inviare". */
+  const rid = riga.rullo_id ? String(riga.rullo_id).replace(/-/g,"").slice(0,8) : "";
+  const path = servizioId+"/"+(rid?rid+"-":"")+riga.codice+".jpg";
   const limite = Math.min(240000, Math.max(90000, Math.round(blob.size/1048576*60000)));
   const up = await conScadenzaUpload(
     sb.storage.from("originali").upload(path, blob, {contentType:blob.type, upsert:true}),
@@ -3055,7 +3060,7 @@ async function serviRichiesteAltreGiornate(){
        altre sedi riempivano tutta la finestra e le richieste nuove non le leggeva più
        nessuno. È lo stesso difetto già corretto su serviRichieste(). */
     const {data, error} = await sb.from("foto")
-      .select("id,codice,originale_url,rulli!inner(servizi!inner(id,data_servizio,sede_id))")
+      .select("id,codice,originale_url,rullo_id,rulli!inner(servizi!inner(id,data_servizio,sede_id))")
       .eq("richiesta_originale", true)
       .is("originale_url", null)
       .eq("rulli.servizi.sede_id", cloud.sede.id)
