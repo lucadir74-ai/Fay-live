@@ -3050,9 +3050,15 @@ async function serviRichiesteAltreGiornate(){
      vecchie non arrivavano mai al proprio turno e dal tablet sembrava che PC1 dovesse
      per forza spostarsi su quella data. La giornata in corso resta prioritaria, ma non
      blocca: quando è impegnata passa comunque una foto vecchia per giro. */
+  /* PRIMA: con la corsia urgente piena si usciva e non passava nulla. Ma in una serata
+     vera i tre posti urgenti sono occupati spessissimo, quindi le richieste delle giornate
+     vecchie restavano ferme per tutto il servizio e dal tablet si vedeva solo l'errore.
+     La giornata in corso resta prioritaria - le lascio sempre i suoi posti - ma adesso
+     una foto vecchia passa comunque a ogni giro, come diceva gia' il commento sopra. */
   const occupato = origUrgActive >= ORIG_PARALLEL;
-  if(occupato) return;                                   // corsia urgente piena: si aspetta
-  const quante = (origQueue.length || origUrgActive) ? 1 : 2;
+  /* E quando la corsia e' libera ne servo di piu': un invio vero sono otto o dieci foto,
+     e a due per giro il venditore e' ancora al tavolo che aspetta. */
+  const quante = occupato ? 1 : ((origQueue.length || origUrgActive) ? 2 : 5);
   serviAltreInCorso = true;
   try{
     /* Il filtro va fatto NELLA query, non dopo: chiedendo le prime 60 righe con la
@@ -3092,6 +3098,15 @@ async function serviRichiesteAltreGiornate(){
   finally{ serviAltreInCorso = false; }
 }
 setInterval(serviRichiesteAltreGiornate, 8000);
+/* Stesso motivo per cui serviRichieste() ha il suo worker: quando resta aperta a lungo la
+   finestra di stampa questa scheda passa in secondo piano e Chrome rallenta i timer a circa
+   uno al minuto. Il worker vive in un thread separato e il rallentamento non lo tocca.
+   La funzione ha gia' la sua guardia (serviAltreInCorso), quindi il doppio richiamo e' innocuo. */
+try{
+  const codiceAltre = "setInterval(()=>postMessage(0), 8000)";
+  const wAltre = new Worker(URL.createObjectURL(new Blob([codiceAltre], {type:"text/javascript"})));
+  wAltre.onmessage = ()=> serviRichiesteAltreGiornate();
+}catch(err){ console.warn("worker altre giornate non disponibile", err); }
 
 /* ---------- originali on-demand (usato per le foto vecchie, fuori dalla finestra cloud) ----------
    Per stampa/esportazione ad alta qualità serve l'originale a piena risoluzione.
