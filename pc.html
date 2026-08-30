@@ -3088,7 +3088,16 @@ async function serviRichiesteAltreGiornate(){
       try{
         if(Date.now()-avvisoAltreGiornate > 15000){
           avvisoAltreGiornate = Date.now();
-          toast(`Carico ${f.codice} del ${sv.data_servizio}: lo chiede un'altra postazione`, 4000);
+          /* PRIMA era un toast a schermo. Ma su questo PC non c'e' nessuno che debba reagire:
+             serviva solo a verificare che la funzione girasse, e con dieci foto chieste
+             diventavano dieci avvisi sopra il lavoro di chi stampa. Ora resta una traccia
+             silenziosa nel Registro tecnico, con il nome della postazione che ha servito.
+             Nota: l'evento viene agganciato alla giornata aperta, non a quella della foto,
+             percio' la data vera della foto la scrivo nel dettaglio. */
+          logEvento("originale-altra-giornata", {
+            codici: f.codice,
+            dettaglio: `originale del ${sv.data_servizio} caricato su richiesta di un'altra postazione`
+          });
         }
         await caricaOriginaleDaArchivio(f, h, sv.id);
         fatte++;

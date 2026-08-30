@@ -2117,7 +2117,27 @@ async function inviaConFilemail(list, ctx, opz){
     }
   }
   if(!files.length){
-    mostraEsito("Gli originali di queste foto non sono ancora sul cloud.\nAspetta che PC1 finisca di caricarli e riprova.","Invio non riuscito");
+    /* PRIMA si usciva di qui mostrando solo l'errore: nessuna riga nel registro invii.
+       Il risultato era che i tentativi falliti sparivano e, guardando il registro, sembrava
+       che nessuno avesse mai provato a mandare quelle foto. Ora il tentativo resta scritto,
+       con esito errore e il motivo che il tablet conosce.
+       La riga finisce sotto la giornata APERTA anche quando le foto sono di un'altra data:
+       il registro raggruppa per servizio e il tablet non ne ha altri. La data vera delle
+       foto e' nel dettaglio. */
+    const ora = new Date().toLocaleTimeString("it-IT", {hour:"2-digit", minute:"2-digit"});
+    try{
+      await logActivity(list, "~invio", {
+        esito: "errore",
+        dettaglio: `originali non ancora sul cloud: ${list.length} foto richieste al PC base alle ${ora}, nessuna disponibile`
+      });
+    }catch(_){}
+    mostraEsito(
+      "Gli originali di queste foto non sono ancora sul cloud.\n\n"
+      + `Sono stati richiesti al PC base alle ${ora}. Le foto delle giornate passate `
+      + "vengono caricate su richiesta, quindi ci vuole qualche istante: aspetta e riprova.\n\n"
+      + "Se dopo qualche minuto non cambia nulla, avvisa: il PC base potrebbe non avere "
+      + "l'archivio collegato.",
+      "Invio non riuscito");
     return;
   }
   /* Un invio parziale non si fa di nascosto: il cliente riceverebbe meno foto di quelle
