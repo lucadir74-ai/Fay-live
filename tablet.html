@@ -116,6 +116,23 @@
     background:#222836;border:1px solid #39415a;display:block}
   #cpFoto .cpF span{display:block;font-size:11px;color:#c7cede;margin-top:3px;
     font-family:ui-monospace,Menlo,Consolas,monospace}
+  /* Dove portare le stampe. Sta SOPRA i tasti 1-5 perché quelli mandano al primo tocco:
+     se stesse sotto, si spedirebbe prima di aver detto dove. Non indicare niente resta
+     lecito — è lo stato di partenza. */
+  #cpCons{margin:0 0 14px}
+  #cpCons .lab{font-size:13px;color:var(--muted);margin:0 0 7px}
+  #cpScelta{display:flex;gap:8px;margin-bottom:9px}
+  #cpScelta button{flex:1;background:#222836;border:1px solid #39415a;color:#e8ecf5;
+    padding:12px 4px;border-radius:12px;font-size:14px;font-family:inherit;line-height:1.25}
+  #cpScelta button b{display:block;font-size:19px;font-weight:400}
+  #cpScelta button.on{background:#F5B942;border-color:#F5B942;color:#151109;font-weight:700}
+  #cpDove{width:100%;box-sizing:border-box;background:#1b202b;border:1px solid #39415a;
+    color:#e8ecf5;padding:14px 12px;border-radius:12px;font-size:17px;font-family:inherit}
+  #cpDove:disabled{opacity:.4}
+  #cpRecenti{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  #cpRecenti button{background:#222836;border:1px solid #39415a;color:#c7cede;
+    padding:8px 13px;border-radius:999px;font-size:14px;font-family:inherit}
+  #cpRecenti button:active{background:#2f3849}
   #cpQuick{display:flex;gap:10px;margin-bottom:16px}
   #cpQuick button{flex:1;background:#222836;border:1px solid #39415a;color:#e8ecf5;
     padding:18px 0;border-radius:14px;font-size:24px;font-weight:700;font-family:inherit}
@@ -408,6 +425,16 @@
       <h3>Mando in stampa queste foto</h3>
       <p id="cpSub"></p>
       <div id="cpFoto"></div>
+      <div id="cpCons">
+        <p class="lab">Le stampe come le prendi?</p>
+        <div id="cpScelta">
+          <button data-c="tavolo"><b>🙋</b>Portamele</button>
+          <button data-c="desk"><b>🚶</b>Le ritiro io</button>
+          <button data-c=""><b>—</b>Non indico</button>
+        </div>
+        <input id="cpDove" placeholder="Dove portarle? (es. privé 3)" autocomplete="off" enterkeyhint="done">
+        <div id="cpRecenti"></div>
+      </div>
       <div id="cpQuick">
         <button data-n="1">1</button>
         <button data-n="2">2</button>
@@ -1155,13 +1182,65 @@ $("selExport").onclick=()=> { const ps=selectedPhotos(); exportPhotos(ps); logAc
 /* Quante copie stampare. Il foglio si apre a ogni "manda in stampa": i tasti 1-5 mandano
    subito (un tocco solo), il − + serve per numeri più alti. Chiudendo si annulla tutto.
    Il numero viaggia sul cloud nella colonna `copie` e il PC lo mostra nella lista. */
-const CP = { risolvi:null, n:1 };
+const CP = { risolvi:null, n:1, consegna:"", dove:"" };
+
+/* Posti scritti di recente su QUESTO tablet: chi lavora sempre negli stessi privé li
+   ritrova come pillole e non digita niente. Restano sul tablet, non sul cloud. */
+const CP_RECENTI = "faylive_posti_recenti";
+function postiRecenti(){
+  try{ const v = JSON.parse(localStorage.getItem(CP_RECENTI)||"[]"); return Array.isArray(v)?v:[]; }
+  catch(_){ return []; }
+}
+function ricordaPosto(dove){
+  const d = String(dove||"").trim(); if(!d) return;
+  const l = postiRecenti().filter(x=>x.toLowerCase()!==d.toLowerCase());
+  l.unshift(d);
+  try{ localStorage.setItem(CP_RECENTI, JSON.stringify(l.slice(0,6))); }catch(_){}
+}
+function disegnaRecenti(){
+  const box = $("cpRecenti"); if(!box) return;
+  const l = postiRecenti();
+  box.innerHTML = l.map(d=>`<button type="button" data-d="${String(d).replace(/[<>&"]/g,"")}">${String(d).replace(/[<>&"]/g,"")}</button>`).join("");
+}
+/* Tre stati, e "non indico" è quello di partenza: mandare in stampa senza dire niente
+   deve restare la strada più corta, com'era prima. */
+function cpAggiornaScelta(){
+  [...$("cpScelta").querySelectorAll("button")].forEach(b=>{
+    b.classList.toggle("on", (b.dataset.c||"") === CP.consegna);
+  });
+  const inp = $("cpDove");
+  inp.disabled = (CP.consegna === "desk");
+  if(CP.consegna === "desk"){ inp.value = ""; CP.dove = ""; }
+}
+$("cpScelta").onclick = e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  CP.consegna = b.dataset.c || "";
+  cpAggiornaScelta();
+  if(CP.consegna === "tavolo") $("cpDove").focus();
+};
+/* Scrivere il posto VALE come scelta: chi digita "privé 3" e poi tocca 2 non deve
+   accorgersi di aver saltato un tasto. */
+$("cpDove").oninput = e=>{
+  CP.dove = e.target.value;
+  if(CP.dove.trim() && CP.consegna !== "tavolo"){ CP.consegna = "tavolo"; cpAggiornaScelta(); }
+};
+$("cpRecenti").onclick = e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  CP.dove = b.dataset.d || "";
+  $("cpDove").value = CP.dove;
+  CP.consegna = "tavolo";
+  cpAggiornaScelta();
+};
+const testoConsegna = c => !c || !c.consegna ? ""
+  : c.consegna === "desk" ? " · ritiri tu al banco"
+  : c.dove ? ` · da portare in ${c.dove}` : " · da portare";
 /* `ps` = le foto che stanno per partire: si mostrano in miniatura con il loro codice.
    Non è un passaggio in più — è lo stesso foglio delle copie, che adesso dice anche COSA
    si sta mandando. Chi ha selezionato male se ne accorge qui e chiude senza inviare. */
 function chiediCopie(sub, ps){
   return new Promise(res=>{
-    CP.risolvi = res; CP.n = 1;
+    CP.risolvi = res; CP.n = 1; CP.consegna = ""; CP.dove = "";
+    $("cpDove").value = ""; disegnaRecenti(); cpAggiornaScelta();
     $("cpSub").textContent = sub || "";
     const box = $("cpFoto");
     const list = Array.isArray(ps) ? ps : [];
@@ -1177,10 +1256,16 @@ function chiediCopie(sub, ps){
     $("cpSheet").classList.add("open");
   });
 }
+/* Restituisce un oggetto (copie + consegna) invece del solo numero: chi chiama fa
+   `if(!scelta) return` esattamente come prima, e legge scelta.n per le copie. */
 function chiudiCopie(v){
   $("cpSheet").classList.remove("open");
   const r = CP.risolvi; CP.risolvi = null;
-  if(r) r(v);
+  if(!r) return;
+  if(v == null){ r(null); return; }
+  const dove = CP.consegna === "tavolo" ? String(CP.dove||"").trim() : "";
+  if(dove) ricordaPosto(dove);
+  r({ n:v, consegna:CP.consegna || "", dove });
 }
 $("cpQuick").onclick = e=>{ const b=e.target.closest("button"); if(b) chiudiCopie(+b.dataset.n); };
 $("cpMeno").onclick  = ()=>{ CP.n=Math.max(1,CP.n-1); $("cpN").textContent=CP.n; };
@@ -1196,13 +1281,19 @@ const testoCopie = n => n>1 ? ` · ${n} copie l'una` : "";
    riuscito anche quando la scrittura sul cloud era fallita: sul tablet compariva la
    conferma, in postazione non arrivava niente e nessuno poteva accorgersene. Ora ogni
    foto viene ritentata, e alla fine si RILEGGE dal cloud che il segnale ci sia davvero. */
-async function mandaInStampa(ps, copie){
+async function mandaInStampa(ps, copie, cons){
   const ok = [], ko = [];
+  /* consegna/consegna_dove viaggiano con lo stesso aggiornamento del segnale di stampa:
+     un solo scritto per foto, così non può arrivare in postazione una richiesta senza
+     il suo "dove" (o viceversa). Vuoti se il venditore non ha indicato niente. */
+  const riga = { da_stampare:true, copie,
+                 consegna: (cons && cons.consegna) || null,
+                 consegna_dove: (cons && cons.dove) || null };
   for(const p of ps){
     let fatto = false;
     for(let t=0; sb && t<3 && !fatto; t++){
       try{
-        const {error} = await sb.from("foto").update({da_stampare:true, copie}).eq("id", p.id);
+        const {error} = await sb.from("foto").update(riga).eq("id", p.id);
         if(!error) fatto = true;
       }catch(_){}
       if(!fatto) await new Promise(r=>setTimeout(r, 1200*(t+1)));
@@ -1220,8 +1311,8 @@ async function mandaInStampa(ps, copie){
   if(ok.length) logActivity(ok, "in stampa");
   return {ok, ko};
 }
-function esitoMandaInStampa(ok, ko, copie){
-  if(!ko.length){ toast(`${ok.length} foto mandate in stampa${testoCopie(copie)}`); return; }
+function esitoMandaInStampa(ok, ko, copie, cons){
+  if(!ko.length){ toast(`${ok.length} foto mandate in stampa${testoCopie(copie)}${testoConsegna(cons)}`); return; }
   mostraEsito(
     (ok.length ? `${ok.length} foto sono arrivate in postazione.\n\n` : "")
     + `${ko.length} NON sono partite: ${ko.map(p=>p.code).join(", ")}.\n`
@@ -1232,11 +1323,11 @@ function esitoMandaInStampa(ok, ko, copie){
 $("selPrint").onclick=async ()=>{
   const ps=selectedPhotos();
   if(!ps.length){ toast("Nessuna foto selezionata"); return; }
-  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`, ps);
-  if(!copie) return;
+  const scelta = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} foto selezionate`, ps);
+  if(!scelta) return;
   if(!sb){ toast("Cloud non raggiungibile"); return; }
-  const {ok, ko} = await mandaInStampa(ps, copie);
-  esitoMandaInStampa(ok, ko, copie);
+  const {ok, ko} = await mandaInStampa(ps, scelta.n, scelta);
+  esitoMandaInStampa(ok, ko, scelta.n, scelta);
   if(ok.length) esciDaSelezione();   // fuori dalla selezione e via le spunte
 };
 
@@ -2222,12 +2313,12 @@ $("btnPrint").onclick = async ()=>{
   const ps = sel ? selectedPhotos() : activeFavs();
   if(!ps.length){ toast(sel ? "Nessuna foto selezionata" : "Nessun preferito da mandare in stampa"+(ambitoAttivo())); return; }
   if(!sb){ toast("Cloud non raggiungibile"); return; }
-  const copie = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`, ps);
-  if(!copie) return;
+  const scelta = await chiediCopie(ps.length===1 ? ps[0].code : `${ps.length} preferiti`, ps);
+  if(!scelta) return;
   const b=$("btnPrint"); b.disabled=true; b.classList.add("busy");
-  const {ok, ko} = await mandaInStampa(ps, copie);
+  const {ok, ko} = await mandaInStampa(ps, scelta.n, scelta);
   b.disabled=false; b.classList.remove("busy");
-  esitoMandaInStampa(ok, ko, copie);
+  esitoMandaInStampa(ok, ko, scelta.n, scelta);
 };
 
 // tasti nel visore: agiscono sulla FOTO aperta
@@ -2239,10 +2330,10 @@ $("vExport").onclick = ()=>{ const p=V.list[V.idx]; if(p){ exportPhotos([p]); lo
 $("vPrint").onclick = async ()=>{
   const p=V.list[V.idx]; if(!p) return;
   if(!sb){ toast("Cloud non raggiungibile"); return; }
-  const copie = await chiediCopie(p.code, [p]);
-  if(!copie) return;
-  const {ok, ko} = await mandaInStampa([p], copie);
-  if(ok.length) toast(`${p.code} mandata in stampa${testoCopie(copie)}`);
+  const scelta = await chiediCopie(p.code, [p]);
+  if(!scelta) return;
+  const {ok, ko} = await mandaInStampa([p], scelta.n, scelta);
+  if(ok.length) toast(`${p.code} mandata in stampa${testoCopie(scelta.n)}${testoConsegna(scelta)}`);
   else mostraEsito(`${p.code} non è arrivata in postazione: la linea non ha risposto.\nRiprova tra poco.`,
                    "Da stampare: non riuscito");
 };

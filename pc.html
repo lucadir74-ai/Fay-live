@@ -3999,7 +3999,11 @@ async function doPrint(set){
     const eranoDaStampare = set.filter(p=>p.daStampare);
     eranoDaStampare.forEach(p=>{
       p.daStampare = false; p.copie = 1; toccaLocale(p);   // richiesta servita: si riparte da 1 copia
-      if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"richiesta stampa servita");
+      /* anche il "dove portarle" vale solo per quella richiesta: se non si azzerasse,
+         la prossima volta che la stessa foto torna in lista si porterebbe dietro un
+         posto vecchio, magari di un altro cliente */
+      p.consegna = null; p.consegnaDove = null;
+      if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1, consegna:null, consegna_dove:null}).eq("id",p.dbId),"richiesta stampa servita");
     });
     // le copie decise a mano su questo PC valgono per QUESTA stampa: la prossima riparte da 1
     set.forEach(p=>{ if(!p.daStampare) p.copie = 1; });
@@ -7184,6 +7188,9 @@ function addRemotePhotoFast(f, letter){
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
             origKey: f.originale_url || null,
             sig: f.file_origine || null,   // serve alla ripresa di un import interrotto
+            /* come le vuole il venditore che le ha mandate in stampa: "tavolo" (portagliele,
+               con il posto in consegnaDove), "desk" (passa lui), oppure niente */
+            consegna: f.consegna||null, consegnaDove: f.consegna_dove||null,
             crop: cropLeggi(f.ritaglio) };
   state.photos.push(p); state.byCode.set(p.code,p);
 }
@@ -7201,6 +7208,7 @@ async function addRemotePhoto(f, letter){
             origUploaded: !!f.originale_url, origReadyCloud: !!f.originale_url,
             origKey: f.originale_url || null,
             sig: f.file_origine || null,   // serve alla ripresa di un import interrotto
+            consegna: f.consegna||null, consegnaDove: f.consegna_dove||null,
             crop: cropLeggi(f.ritaglio) };
   // prova la cache locale, poi la rete — per la griglia basta la miniatura
   let blob = await thumbCache.get(ckey(f.codice));
@@ -7290,6 +7298,8 @@ function subscribeRealtime(){
       if(p){
         p.prints=f.stampe; p.exported=!!f.esportata; p.daStampare=!!f.da_stampare;
         p.copie=f.copie||1;                       // quante copie ha chiesto il tablet
+        p.consegna=f.consegna||null;              // portarle al tavolo o le ritira lui
+        p.consegnaDove=f.consegna_dove||null;
         /* taglio deciso da un'altra postazione: si adotta subito, cosi' quello che il
            cliente vede sul monitor e quello che esce dalla stampante coincidono ovunque */
         const kNuovo = cropLeggi(f.ritaglio);
@@ -7399,21 +7409,26 @@ setInterval(async ()=>{
     const rulliIds = Object.values(cloud.rulli).map(r=>r.id);
     if(!rulliIds.length) return;
     const [qCoda, qStampe] = await Promise.all([
-      sb.from("foto").select("id,copie").in("rullo_id",rulliIds).eq("da_stampare",true),
+      sb.from("foto").select("id,copie,consegna,consegna_dove").in("rullo_id",rulliIds).eq("da_stampare",true),
       sb.from("foto").select("id,stampe").in("rullo_id",rulliIds).gt("stampe",0)
     ]);
-    const inCoda  = new Map(((qCoda&&qCoda.data)||[]).map(r=>[r.id, r.copie||1]));
+    const inCoda  = new Map(((qCoda&&qCoda.data)||[]).map(r=>[r.id, r]));
     const stampate= new Map(((qStampe&&qStampe.data)||[]).map(r=>[r.id, r.stampe||0]));
     let coda=false, segni=false;
     state.photos.forEach(p=>{
       if(!p.dbId || toccataDiRecente(p)) return;
       // --- lista da stampare ---
       if(inCoda.has(p.dbId)){
-        const n = inCoda.get(p.dbId);
+        const r = inCoda.get(p.dbId), n = r.copie||1;
         if(!p.daStampare){ p.daStampare=true; coda=true; }
         if((p.copie||1)!==n){ p.copie=n; coda=true; }
+        const c = r.consegna||null, d = r.consegna_dove||null;
+        if((p.consegna||null)!==c || (p.consegnaDove||null)!==d){
+          p.consegna=c; p.consegnaDove=d; coda=true;
+        }
       }else if(p.daStampare){
-        p.daStampare=false; p.copie=1; coda=true;   // servita da un'altra postazione
+        // servita da un'altra postazione: via anche l'indicazione di consegna
+        p.daStampare=false; p.copie=1; p.consegna=null; p.consegnaDove=null; coda=true;
       }
       // --- segno "stampata" ---
       const n = stampate.has(p.dbId) ? stampate.get(p.dbId) : 0;
@@ -7494,7 +7509,11 @@ function renderPqList(){
       + ` — cambia giornata in alto per stamparle.</p>`
     : "";
   if(!list.length){ box.innerHTML = altrove + '<p style="color:var(--muted)">Nessuna foto in attesa di stampa in questa giornata.</p>'; return; }
-  box.innerHTML = altrove + list.map((p,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
+  /* Le foto arrivano raggruppate per come vanno consegnate: chi stampa vede subito se
+     deve solo impilarle (le ritira il venditore) o se qualcuno le deve portare, e dove.
+     Prima le consegne, perché sono quelle che fanno aspettare un cliente al tavolo.
+     Il rullo resta nell'intestazione: dice già chi ha mandato la richiesta. */
+  const rigaFoto = (p, i) => `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
       <input type="checkbox" class="pqChk" data-code="${p.code}" ${escluse.has(p.code)?"":"checked"}>
       <button class="pqOpen" data-i="${i}" title="Apri la foto per guardarla e regolarla"
 style="font-family:var(--mono);font-weight:700">${p.code}</button>
@@ -7503,7 +7522,35 @@ style="font-family:var(--mono);font-weight:700">${p.code}</button>
       <span style="color:var(--muted)">${p.prints>0?'· già stampata':''}</span>
       <div style="flex:1"></div>
       <span style="color:var(--muted)">${p.adj? (p.adj.bw? 'b/n' : 'ritoccata') : ''}</span>
-    </div>`).join("");
+    </div>`;
+  const pulisci = s => String(s==null?"":s).replace(/[<>&"]/g,"");
+  const gruppi = new Map();
+  list.forEach((p,i)=>{
+    const c = p.consegna==="tavolo" ? "tavolo" : p.consegna==="desk" ? "desk" : "";
+    const dove = c==="tavolo" ? String(p.consegnaDove||"").trim() : "";
+    const k = c+"|"+dove+"|"+(p.letter||"");
+    if(!gruppi.has(k)) gruppi.set(k, {c, dove, letter:p.letter||"", righe:[]});
+    gruppi.get(k).righe.push(rigaFoto(p,i));
+  });
+  const peso = g => g.c==="tavolo" ? 0 : g.c==="desk" ? 1 : 2;
+  const ordinati = [...gruppi.values()].sort((a,b)=> peso(a)-peso(b) || String(a.letter).localeCompare(String(b.letter)));
+  // con una sola richiesta senza indicazioni la lista resta identica a prima: niente intestazione
+  const mostraTeste = ordinati.length>1 || ordinati[0].c;
+  box.innerHTML = altrove + ordinati.map(g=>{
+    if(!mostraTeste) return g.righe.join("");
+    const rullo = g.letter ? `Rullo ${pulisci(g.letter)}` : "";
+    const testo = g.c==="tavolo"
+        ? `🙋 Da portare${g.dove? " — "+pulisci(g.dove) : " — posto non indicato"}`
+        : g.c==="desk" ? "🚶 Le ritira il venditore al banco"
+        : "Senza indicazioni";
+    const col = g.c==="tavolo" ? "var(--danger)" : g.c==="desk" ? "var(--accent)" : "var(--muted)";
+    return `<div style="display:flex;align-items:baseline;gap:8px;margin:12px 0 2px;
+        padding:5px 8px;border-radius:8px;background:rgba(255,255,255,.05);
+        border-left:4px solid ${col}">
+        <b style="color:${col}">${testo}</b>
+        <span style="color:var(--muted);font-size:13px">${rullo} · ${g.righe.length} foto</span>
+      </div>` + g.righe.join("");
+  }).join("");
 }
 let pqDaRiaprire = false;   // chiuso solo per far spazio a una foto aperta
 function apriPq(){
@@ -7531,12 +7578,12 @@ $("pqPrintAll").onclick=async ()=>{
   pqDaRiaprire=false; $("pqDlg").close();
   if(set.length) await printPhotos(set, {copieGiaDecise:true});
   // dopo la stampa, togli il flag da_stampare
-  for(const p of set){ p.daStampare=false; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false}).eq("id",p.dbId),"stampata"); }
+  for(const p of set){ p.daStampare=false; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, consegna:null, consegna_dove:null}).eq("id",p.dbId),"stampata"); }
   updatePrintQueueBadge();
 };
 $("pqClear").onclick=async ()=>{
   const list=printQueuePhotos();
-  for(const p of list){ p.daStampare=false; p.copie=1; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1}).eq("id",p.dbId),"coda"); }
+  for(const p of list){ p.daStampare=false; p.copie=1; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1, consegna:null, consegna_dove:null}).eq("id",p.dbId),"coda"); }
   updatePrintQueueBadge(); pqDaRiaprire=false; $("pqDlg").close();
   toast("Lista da stampare svuotata");
 };
