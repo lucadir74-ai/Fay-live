@@ -849,6 +849,7 @@
 <dialog id="confirmImport">
   <h3 style="margin-bottom:10px">Conferma import</h3>
   <div id="ciSede" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:19px;font-weight:700"></div>
+  <div id="ciGiorno" style="margin:-6px 0 12px;padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:17px"></div>
   <p id="ciText" style="margin-bottom:14px"></p>
   <div class="field" id="ciLetterField" style="margin-bottom:12px">
     <label>Sigla del rullo (fotografo) — da 1 a 3 lettere, es. A, GT</label>
@@ -1340,6 +1341,10 @@ async function leggiCartellaFoto(dir){
 }
 $("btnImport").onclick = async ()=>{
   if(!window.showDirectoryPicker){ $("fileInput").click(); return; }   // browser vecchi
+  /* La giornata si sistema PRIMA di tutto: se resta aperta una serata passata, la
+     finestra dell'archivio e la scelta della cartella si riferirebbero al giorno
+     sbagliato. (Il controllo c'è anche in importaFiles: qui è solo più presto.) */
+  if(!(await riportaSuOggiPerImport())) return;
   /* La cartella dove finiscono gli originali si decide PRIMA di leggere la scheda:
      se non è a posto qui non si importa, si apre la finestra dell'archivio. */
   if(!(await archivioProntoPerImport())) return;
@@ -1538,12 +1543,41 @@ $("fileInput").onchange = async e=>{
 
 // stesso percorso di import sia dal tasto "Importa cartella" sia dal lettore schede sorvegliato
 let importInCorso = false;
+/* LE FOTO CHE ENTRANO OGGI VANNO NELLA GIORNATA DI OGGI, SEMPRE.
+   Una serata passata si apre solo per guardarla o ristampare; se in quel momento si
+   importa una scheda, prima le foto finivano in silenzio dentro quella serata — riga
+   sul cloud, numerazione del rullo e cartella degli originali, tutto nella data
+   sbagliata, e senza un comando per spostarle. Adesso l'import riporta la griglia su
+   oggi PRIMA di leggere qualsiasi file, e lo dice.
+   Nota: "oggi" è il giorno di servizio (cambia alle 6 del mattino), quindi uno scarico
+   all'una di notte resta correttamente sulla serata appena finita. */
+async function riportaSuOggiPerImport(){
+  if(!sb || !cloud.sede) return true;        // import solo locale: non c'è giornata da sbagliare
+  const oggi = serviceDateStr();
+  if(cloud.servizio && cloud.servizio.data_servizio === oggi) return true;
+  const prima = cloud.servizio ? cloud.servizio.data_servizio : null;
+  toast("Passo alla giornata di oggi…");
+  // stessa strada dell'apertura sede: trova la giornata di oggi o la crea, e la apre
+  try{ await chooseSede(cloud.sede, oggi); }catch(err){ console.warn("import: giornata oggi", err); }
+  if(!cloud.servizio || cloud.servizio.data_servizio !== oggi){
+    alert("⛔ Import annullato.\n\nNon sono riuscito ad aprire la giornata di oggi "
+        + "(linea assente?). Le foto sarebbero finite in una serata passata: "
+        + "riprova quando il cloud risponde.");
+    return false;
+  }
+  if(prima) toast("Eri sulla giornata del " + dataItaliana(prima) + ": importo in quella di OGGI", 6000);
+  return true;
+}
 async function importaFiles(files){
   files = [...files];   // copia: la ripresa import può scartarne alcuni
   // se è ancora a schermo l'avviso verde dell'import precedente, sparisce qui
   if(fineImport._attivo && fineImport._chiudi) fineImport._chiudi();
   if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
   if(importInCorso){ toast("C'è già un import in corso"); return; }
+  /* Prima di toccare qualsiasi cosa: la giornata dev'essere quella di oggi. Sta qui e
+     non solo nel tasto perché da qui passano TUTTI gli import (tasto cartella, finestra
+     classica, lettore schede). */
+  if(!(await riportaSuOggiPerImport())) return;
   importInCorso = true;
   try{
 
@@ -1555,6 +1589,19 @@ async function importaFiles(files){
     ? `Sede: <span style="color:var(--accent)">${nomeSede}</span>`
     : `<span style="color:var(--danger)">Nessuna sede selezionata — import solo locale</span>`;
   $("ciText").textContent = `${files.length} foto trovate.`;
+  /* Detto prima di premere Importa: sede, GIORNATA e sigla stanno nella stessa finestra,
+     così quello che sta per succedere è leggibile in un colpo d'occhio. La giornata a
+     questo punto è già stata riportata su oggi (vedi riportaSuOggiPerImport): qui si
+     mostra, non si sceglie. */
+  const gio = $("ciGiorno");
+  if(cloud.servizio){
+    const g = cloud.servizio.data_servizio;
+    const oggi = (g === serviceDateStr());
+    gio.innerHTML = `Giornata: <b style="color:${oggi?"var(--ok)":"var(--danger)"}">`
+      + (oggi ? "OGGI" : "⚠ NON È OGGI") + `</b> — ${dataItaliana(g)}`;
+  }else{
+    gio.innerHTML = `<b style="color:var(--danger)">Nessuna giornata aperta — import solo locale</b>`;
+  }
   $("ciLetter").value = suggested || "";
   $("ciDesc").value = suggested ? (state.letterDesc[suggested]||"") : "";
 
@@ -1571,6 +1618,8 @@ async function importaFiles(files){
     $("ciNo").onclick=()=>{ dlg.close(); res(null); };
   });
   if(!L) return;
+  // e una volta partito resta scritto dove sta andando: rullo e giornata
+  if(cloud.servizio) toast(`Importo il rullo ${L} nella giornata del ${dataItaliana(cloud.servizio.data_servizio)}`, 5000);
 
   /* L'archivio non deve MAI fermare l'import: se la cartella non è disponibile le foto
      entrano lo stesso (memoria + cloud) e si ricollegano dopo con "Ricollega originali". */
@@ -6011,7 +6060,13 @@ $("sedeSelect").onchange = e=>{
   if(v===NEW_SEDE){ e.target.value=""; $("sedeNewName").value=""; $("sedeDlg").showModal(); $("sedeNewName").focus(); return; }
   if(!v){ return; }
   const s=(e.target._sedi||[]).find(x=>x.id===v);
-  if(s) chooseSede(s);
+  if(!s) return;
+  // cambiare sede riapre una giornata: stessa protezione della tendina delle date
+  if(!cambioGiornataConsentito()){
+    if(cloud.sede) e.target.value = cloud.sede.id;
+    return;
+  }
+  chooseSede(s);
 };
 $("sedeNewCancel").onclick=()=>$("sedeDlg").close();
 $("sedeNewSave").onclick=async ()=>{
@@ -6239,9 +6294,52 @@ async function openServizio(sv){
   renderTabs(); layoutGrid(); updateEventInfo();
 }
 
+/* CAMBIO GIORNATA MENTRE UN IMPORT È VIVO.
+   Una serata passata si apre di rado, ma quando capita deve funzionare tutto: il rischio
+   è aprirla nel momento sbagliato, cioè mentre una scheda sta ancora entrando.
+   Ci sono due momenti, e vanno trattati in modo diverso:
+
+   1) LETTURA E LAVORAZIONE DELLA SCHEDA (secondi/minuti) — importInCorso, oppure la barra
+      di avanzamento delle anteprime del lotto ancora accesa (prog.total). Cambiare
+      giornata qui svuota la lista foto MENTRE l'import ci sta scrivendo dentro, e le foto
+      già create resterebbero senza anteprima: la protezione per giornata vede che sono
+      di un'altra data e non carica più niente. Blocco secco, senza domande.
+
+   2) ANTEPRIME E MINIATURE IN CODA (anche parecchi minuti dopo) — qui le foto sono al
+      sicuro, ma le code vengono svuotate di proposito al cambio data: le anteprime non
+      arriverebbero ai tablet finché non si riapre la giornata. Un blocco secco terrebbe
+      la tendina inutilizzabile troppo a lungo, quindi si chiede, dicendo QUANTE sono.
+
+   Gli originali (corsia lunga, anche ore) non entrano nel conto: ognuno si porta dentro
+   il percorso la propria giornata, quindi sale giusto comunque. */
+function anteprimeInCoda(){
+  return thumbQueue.length + thumbActive + bigQueue.length + bigActive;
+}
+function cambioGiornataConsentito(){
+  if(importInCorso || prog.total > 0){
+    alert("⛔ C'è un import in corso.\n\n"
+        + "Aspetta che finisca (la barra in basso lo dice) prima di cambiare giornata o sede: "
+        + "cambiando adesso l'import resterebbe a metà e le foto già entrate rimarrebbero "
+        + "senza anteprima.");
+    return false;
+  }
+  const n = anteprimeInCoda();
+  if(n){
+    return confirm(`Ci sono ancora ${n} anteprime da caricare per la giornata aperta.\n\n`
+      + "Cambiando giornata si fermano, e riprendono solo quando riapri questa giornata. "
+      + "Le foto e gli originali non si perdono.\n\nCambiare lo stesso?");
+  }
+  return true;
+}
 $("giornoSelect").onchange = e=>{
   const sv=(e.target._servizi||[]).find(x=>x.id===e.target.value);
-  if(sv) openServizio(sv);
+  if(!sv) return;
+  if(!cambioGiornataConsentito()){
+    // rimetti la tendina sulla giornata che è davvero aperta
+    if(cloud.servizio) e.target.value = cloud.servizio.id;
+    return;
+  }
+  openServizio(sv);
 };
 
 /* ---------- svuota giornata (solo cloud) ---------- */
