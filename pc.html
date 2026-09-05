@@ -361,6 +361,7 @@
     <button id="btnEvent">Servizio…</button>
     <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge">0</span></button>
     <button id="btnMail">Da inviare <span id="mailBadge" class="pqbadge">0</span></button>
+    <button id="btnVetrine" title="Gallerie mandate ai clienti che non erano in postazione">Vetrine <span id="vetBadge" class="pqbadge">0</span></button>
     <button id="btnTools" title="Impostazioni e manutenzione">Altro ▾</button>
     <button id="btnImport" class="primary">Importa cartella</button>
     <div id="toolsMenu" hidden>
@@ -708,6 +709,24 @@
       <button id="mailClearAll" title="Toglie dalla lista TUTTE le richieste della giornata, anche quelle non ancora inviate">Svuota tutto</button>
       <button id="mailClose" class="primary">Chiudi</button>
     </span>
+  </div>
+</dialog>
+
+<dialog id="vetDlg">
+  <h3 style="margin-bottom:4px">Vetrine — gallerie mandate ai clienti</h3>
+  <p class="hint" style="margin-bottom:10px">Tutte le vetrine di questa sede, anche di altre giornate. Per spedire gli originali devi aprire la giornata giusta con l'archivio collegato.</p>
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+    <label style="font-size:13px;color:var(--muted)">Mostra
+      <select id="vetFiltro">
+        <option value="aperte">da evadere</option>
+        <option value="tutte">tutte</option>
+      </select>
+    </label>
+    <button id="vetRicarica">Aggiorna</button>
+  </div>
+  <div id="vetList" style="max-height:56vh;overflow:auto;margin-bottom:14px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="vetClose" class="primary">Chiudi</button>
   </div>
 </dialog>
 
@@ -8816,9 +8835,173 @@ $("btnCodice").onclick = async ()=>{
   }catch(err){ toast("Non riesco a salvare il codice: "+((err&&err.message)||err)); }
 };
 
+
+/* ====================== VETRINE ======================
+   Gallerie mandate ai clienti che non erano in postazione. La lista NON e' legata
+   alla giornata aperta: e' uno stato letto dal cloud, per sede. Cosi' se il cliente
+   sceglie mentre questo PC e' spento, riaprendo si ritrova comunque tutto qui. */
+const vetr = { righe: [], scelte: new Map(), servizi: new Map(), rulli: new Map(), _ultimoN: null };
+
+function vetLink(cod){ return location.origin + "/vetrina.html?v=" + cod; }
+
+async function caricaVetrine(){
+  if(!sb || !cloud.sede){ vetr.righe = []; return; }
+  const {data, error} = await sb.from("vetrine").select("*")
+    .eq("sede_id", cloud.sede.id).order("creata_il", {ascending:false}).limit(200);
+  if(error){ return; }
+  vetr.righe = data || [];
+  const ids = vetr.righe.map(v => v.id);
+  vetr.scelte = new Map();
+  if(ids.length){
+    const {data:f} = await sb.from("vetrina_foto")
+      .select("vetrina_id,codice_foto,scelta").in("vetrina_id", ids);
+    (f||[]).forEach(r => {
+      if(!vetr.scelte.has(r.vetrina_id)) vetr.scelte.set(r.vetrina_id, {tot:0, scelti:[]});
+      const o = vetr.scelte.get(r.vetrina_id);
+      o.tot++;
+      if(r.scelta) o.scelti.push(r.codice_foto);
+    });
+    vetr.scelte.forEach(o => o.scelti.sort());
+  }
+  const svIds = [...new Set(vetr.righe.map(v => v.servizio_id).filter(Boolean))];
+  if(svIds.length && vetr.servizi.size === 0){
+    const {data:sv} = await sb.from("servizi").select("id,data_servizio").in("id", svIds);
+    (sv||[]).forEach(x => vetr.servizi.set(x.id, x.data_servizio));
+  }
+  const rIds = [...new Set(vetr.righe.map(v => v.rullo_id).filter(Boolean))];
+  if(rIds.length){
+    const {data:ru} = await sb.from("rulli").select("id,lettera").in("id", rIds);
+    (ru||[]).forEach(x => vetr.rulli.set(x.id, x.lettera));
+  }
+}
+
+function vetDaEvadere(){
+  return vetr.righe.filter(v => !v.evasa_il && (vetr.scelte.get(v.id)||{scelti:[]}).scelti.length > 0);
+}
+
+async function refreshVetBadge(){
+  await caricaVetrine();
+  const n = vetDaEvadere().length;
+  const b = $("vetBadge"); if(!b) return;
+  b.textContent = n;
+  b.style.visibility = n ? "visible" : "hidden";
+  b.classList.toggle("alert", n > 0);
+  const t = $("btnVetrine");
+  if(t){
+    t.classList.toggle("attesa", n > 0);
+    t.title = n ? (n + " vetrine con foto scelte da evadere") : "Nessuna vetrina in attesa";
+    if(vetr._ultimoN != null && n > vetr._ultimoN){
+      t.classList.add("nuova");
+      clearTimeout(vetr._lamp);
+      vetr._lamp = setTimeout(()=>t.classList.remove("nuova"), 30000);
+    }
+    vetr._ultimoN = n;
+  }
+}
+
+function renderVetList(){
+  const el = $("vetList");
+  const soloAperte = $("vetFiltro").value === "aperte";
+  const righe = soloAperte ? vetDaEvadere() : vetr.righe;
+  if(!righe.length){
+    el.innerHTML = '<p style="color:var(--muted)">' +
+      (soloAperte ? "Nessuna vetrina da evadere." : "Nessuna vetrina per questa sede.") + '</p>';
+    return;
+  }
+  const esc = t => String(t==null?"":t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  el.innerHTML = righe.map(v => {
+    const o = vetr.scelte.get(v.id) || {tot:0, scelti:[]};
+    const scaduta = new Date(v.scade_il).getTime() < Date.now();
+    const giorno = vetr.servizi.get(v.servizio_id) || "";
+    const lett = vetr.rulli.get(v.rullo_id) || "";
+    let stato, colore;
+    if(v.evasa_il){ stato = "evasa"; colore = "var(--muted)"; }
+    else if(o.scelti.length){ stato = o.scelti.length + " foto scelte"; colore = "var(--accent)"; }
+    else if(v.aperta_il){ stato = "aperta, non ha ancora scelto"; colore = "var(--muted)"; }
+    else { stato = "non ancora aperta"; colore = "var(--muted)"; }
+    return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px"
+      data-riga="${v.id}">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <b>${esc(v.titolo || "Vetrina")}</b>
+        <span style="color:var(--muted);font-size:12.5px">${esc(giorno)}${lett ? " · rullo " + esc(lett) : ""}${v.creata_da ? " · " + esc(v.creata_da) : ""}</span>
+        <span style="margin-left:auto;color:${colore};font-size:13px">${stato}${scaduta && !v.evasa_il ? " · link scaduto" : ""}</span>
+      </div>
+      ${o.scelti.length ? `<div style="margin-top:7px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all">${esc(o.scelti.join(" "))}</div>` : ""}
+      <div style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap;align-items:center">
+        <input type="text" data-nota="${v.id}" value="${esc(v.note)}" placeholder="Note (nome cliente, pagamento, ecc.)"
+          style="flex:1;min-width:200px;font-size:13px">
+        <button data-va="link" data-id="${v.id}">Copia link</button>
+        ${o.scelti.length ? `<button data-va="codici" data-id="${v.id}">Copia codici</button>` : ""}
+        <button data-va="apri" data-id="${v.id}">Apri</button>
+        <button data-va="evasa" data-id="${v.id}">${v.evasa_il ? "Riapri" : "Segna evasa"}</button>
+        <button data-va="del" data-id="${v.id}" title="Cancella la vetrina e le sue copie">Elimina</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+$("btnVetrine").onclick = async ()=>{
+  const t = $("btnVetrine"); if(t) t.classList.remove("nuova");
+  if(!cloud.sede){ toast("Scegli prima una sede"); return; }
+  $("vetList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
+  $("vetDlg").showModal();
+  await caricaVetrine();
+  renderVetList();
+};
+$("vetClose").onclick = ()=>$("vetDlg").close();
+$("vetFiltro").onchange = renderVetList;
+$("vetRicarica").onclick = async ()=>{
+  $("vetList").innerHTML = '<p style="color:var(--muted)">Carico…</p>';
+  await caricaVetrine(); renderVetList(); refreshVetBadge();
+};
+
+/* La nota si salva quando esci dal campo: niente scrittura a ogni tasto premuto. */
+$("vetList").addEventListener("change", async e=>{
+  const inp = e.target.closest("input[data-nota]"); if(!inp) return;
+  const id = inp.dataset.nota;
+  const val = inp.value.trim() || null;
+  const r = vetr.righe.find(x=>x.id===id); if(r) r.note = val;
+  await sbTry(()=>sb.from("vetrine").update({note:val}).eq("id",id), "nota vetrina");
+});
+
+$("vetList").onclick = async e=>{
+  const b = e.target.closest("button[data-va]"); if(!b) return;
+  const id = b.dataset.id;
+  const v = vetr.righe.find(x=>x.id===id); if(!v) return;
+  const o = vetr.scelte.get(id) || {scelti:[]};
+  const va = b.dataset.va;
+  if(va==="link"){
+    try{ await navigator.clipboard.writeText(vetLink(v.codice)); toast("Link copiato"); }
+    catch(_){ toast("Copia non riuscita"); }
+  } else if(va==="codici"){
+    try{ await navigator.clipboard.writeText(o.scelti.join(" ")); toast(o.scelti.length+" codici copiati"); }
+    catch(_){ toast("Copia non riuscita"); }
+  } else if(va==="apri"){
+    window.open(vetLink(v.codice), "_blank");
+  } else if(va==="evasa"){
+    const nuovo = v.evasa_il ? null : new Date().toISOString();
+    v.evasa_il = nuovo;
+    await sbTry(()=>sb.from("vetrine").update({evasa_il:nuovo}).eq("id",id), "stato vetrina");
+    renderVetList(); refreshVetBadge();
+  } else if(va==="del"){
+    if(!confirm("Cancello questa vetrina? Il link smette di funzionare e le copie col watermark vengono eliminate.\nLe foto originali non vengono toccate.")) return;
+    try{
+      const {data:file} = await sb.from("vetrina_foto").select("file").eq("vetrina_id", id);
+      const paths = (file||[]).map(x=>x.file).filter(Boolean);
+      if(paths.length) await sb.storage.from("vetrine").remove(paths);
+    }catch(_){}
+    await sbTry(()=>sb.from("vetrine").delete().eq("id",id), "elimina vetrina");
+    vetr.righe = vetr.righe.filter(x=>x.id!==id);
+    renderVetList(); refreshVetBadge();
+  }
+};
+
+setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 60000);
+
 // avvio: prima la porta, poi l'app
 controllaAccesso().then(()=> loadSedi().then(ripristinaUltimaScelta));
 if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
+setTimeout(()=>{ try{ refreshVetBadge(); }catch(_){} }, 4000);
 
 </script>
 </body>

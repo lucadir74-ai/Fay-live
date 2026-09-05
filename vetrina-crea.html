@@ -361,6 +361,7 @@ $("btnCrea").onclick = async () => {
     const {data, error} = await sb.from("vetrine").insert({
       codice,
       sede_id: $("selSede").value,
+      servizio_id: $("selGiorno").value,
       rullo_id: $("selRullo").value,
       titolo: $("titolo").value.trim() || null,
       creata_da: $("autore").value.trim() || null,
