@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crea vetrina · Fay Live</title>
+<style>
+  :root{ --bg:#15181C; --bg2:#1E2329; --bg3:#272D35; --tx:#E6EAEF; --te:#96A0AD;
+         --bd:#333A44; --ok:#4FA96B; --ac:#D4AF5F; --no:#C9553F; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI",Roboto,system-ui,sans-serif}
+  header{padding:14px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:12px;
+    position:sticky;top:0;background:var(--bg);z-index:10}
+  header h1{margin:0;font-size:16px;font-weight:600}
+  #dot{width:9px;height:9px;border-radius:50%;background:var(--ok)}
+  #dot.off{background:var(--no)}
+  #stato{color:var(--te);font-size:12.5px;margin-left:auto}
+  main{padding:16px 18px 40px;max-width:1100px}
+  section{margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid var(--bd)}
+  section:last-child{border-bottom:none}
+  h2{font-size:13px;font-weight:600;color:var(--te);margin:0 0 10px}
+  .riga{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+  label{font-size:13px;color:var(--te)}
+  select,input[type=text],input[type=number]{background:var(--bg2);color:var(--tx);border:1px solid var(--bd);
+    border-radius:6px;padding:8px 10px;font:inherit;min-width:130px}
+  input[type=range]{accent-color:var(--ac);width:150px}
+  button{background:var(--bg3);color:var(--tx);border:1px solid var(--bd);border-radius:6px;
+    padding:8px 14px;font:inherit;cursor:pointer}
+  button:hover:not(:disabled){background:#313944}
+  button:disabled{opacity:.4;cursor:default}
+  button.primario{background:var(--ac);border-color:var(--ac);color:#15181C;font-weight:600}
+  #griglia{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px;
+    max-height:420px;overflow:auto;padding:3px;border:1px solid var(--bd);border-radius:8px;background:var(--bg2)}
+  .cella{position:relative;aspect-ratio:3/2;background:var(--bg3);border-radius:5px;overflow:hidden;cursor:pointer}
+  .cella img{width:100%;height:100%;object-fit:cover;display:block}
+  .cella.sel{outline:2.5px solid var(--ac);outline-offset:-2.5px}
+  .cella .c{position:absolute;left:4px;top:3px;font-size:10.5px;color:#fff;text-shadow:0 1px 3px #000}
+  .cella .v{position:absolute;right:4px;bottom:3px;font-size:15px;color:var(--ac);display:none}
+  .cella.sel .v{display:block}
+  #antep{max-width:340px;border:1px solid var(--bd);border-radius:8px;display:block}
+  .nota{font-size:12.5px;color:var(--te);line-height:1.5;margin:8px 0 0}
+  #barraProg{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin:10px 0 6px;display:none}
+  #barraProg.on{display:block}
+  #barraProgIn{height:100%;width:0;background:var(--ac);transition:width .2s}
+  #esito{margin-top:14px;padding:14px;border:1px solid var(--ac);border-radius:8px;background:var(--bg2);display:none}
+  #esito.on{display:block}
+  #link{width:100%;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <span id="dot"></span>
+  <h1>Crea vetrina</h1>
+  <span id="stato">Collego…</span>
+</header>
+
+<main>
+
+<section>
+  <h2>Da dove prendo le foto</h2>
+  <div class="riga">
+    <label>Sede</label><select id="selSede"></select>
+    <label>Giornata</label><select id="selGiorno"></select>
+    <label>Rullo</label><select id="selRullo"></select>
+    <label>Gruppo</label><select id="selGruppo"><option value="">tutti</option></select>
+  </div>
+  <div class="riga">
+    <button id="btnTutte">Seleziona tutte</button>
+    <button id="btnNessuna">Deseleziona tutte</button>
+    <span class="nota" id="conta"></span>
+  </div>
+  <div id="griglia"></div>
+</section>
+
+<section>
+  <h2>Come si vedranno</h2>
+  <div class="riga">
+    <label>Lato lungo</label>
+    <input type="range" id="lato" min="480" max="1100" step="20" value="700">
+    <span id="latoV">700 px</span>
+    <label>Scritta</label><input type="text" id="testoWm" value="FRAME ABOUT YOU" style="min-width:200px">
+  </div>
+  <div class="riga">
+    <label>Intensità</label>
+    <input type="range" id="opac" min="10" max="60" step="2" value="30">
+    <span id="opacV">30%</span>
+    <label>Densità</label>
+    <input type="range" id="dens" min="2" max="7" step="1" value="4">
+    <span id="densV">4</span>
+  </div>
+  <canvas id="antep"></canvas>
+  <p class="nota">Anteprima dal vero sulla prima foto selezionata. Il watermark viene impresso
+  dentro il file: sullo schermo del cliente non esiste una versione pulita da recuperare.</p>
+</section>
+
+<section>
+  <h2>Il link</h2>
+  <div class="riga">
+    <label>Titolo</label><input type="text" id="titolo" placeholder="Le tue foto" style="min-width:220px">
+    <label>Scade fra</label><input type="number" id="giorni" value="7" min="1" max="30" style="min-width:70px"> giorni
+    <label>Creata da</label><input type="text" id="autore" placeholder="nome o postazione" style="min-width:150px">
+  </div>
+  <div class="riga">
+    <button class="primario" id="btnCrea" disabled>Crea la vetrina</button>
+    <button id="btnStop" hidden>Annulla</button>
+    <span class="nota" id="peso"></span>
+  </div>
+  <div id="barraProg"><div id="barraProgIn"></div></div>
+  <p class="nota" id="avanz"></p>
+  <div id="esito">
+    <b>Vetrina pronta.</b> Manda questo link al cliente:
+    <input type="text" id="link" readonly>
+    <div class="riga" style="margin-top:10px">
+      <button id="btnCopia">Copia il link</button>
+      <button id="btnApri">Aprila per controllare</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
+const BUCKET = "vetrine";
+
+const $ = id => document.getElementById(id);
+let sb = null;
+try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){}
+
+const S = { foto:[], sel:new Set(), stop:false, primaImg:null };
+
+function stato(t, ok){ $("stato").textContent = t; $("dot").classList.toggle("off", ok === false); }
+
+/* ---------- caricamento elenchi ---------- */
+async function avvia(){
+  if(!sb){ stato("Supabase non raggiungibile", false); return; }
+  const {data:sedi, error} = await sb.from("sedi").select("*").order("nome");
+  if(error){ stato("Cloud non raggiungibile", false); return; }
+  $("selSede").innerHTML = (sedi||[]).map(s=>`<option value="${s.id}">${s.nome}</option>`).join("");
+  stato("Collegato");
+  const ultima = localStorage.getItem("faylive_vetrina_sede");
+  if(ultima && (sedi||[]).some(s=>s.id===ultima)) $("selSede").value = ultima;
+  await caricaGiorni();
+}
+
+async function caricaGiorni(){
+  const sede = $("selSede").value;
+  localStorage.setItem("faylive_vetrina_sede", sede);
+  const {data} = await sb.from("servizi").select("*").eq("sede_id", sede)
+    .order("data_servizio", {ascending:false}).limit(60);
+  $("selGiorno").innerHTML = (data||[]).map(v =>
+    `<option value="${v.id}">${v.data_servizio}${v.nome ? " · " + v.nome : ""}</option>`).join("");
+  await caricaRulli();
+}
+
+async function caricaRulli(){
+  const sv = $("selGiorno").value;
+  if(!sv){ $("selRullo").innerHTML = ""; S.foto = []; disegna(); return; }
+  const {data} = await sb.from("rulli").select("*").eq("servizio_id", sv).order("lettera");
+  $("selRullo").innerHTML = (data||[]).map(r =>
+    `<option value="${r.id}">${r.lettera}${r.descrizione ? " · " + r.descrizione : ""}</option>`).join("");
+  await caricaFoto();
+}
+
+async function caricaFoto(){
+  const rullo = $("selRullo").value;
+  S.foto = []; S.sel.clear();
+  if(!rullo){ disegna(); return; }
+  stato("Leggo le foto…");
+  let da = 0, tutte = [];
+  while(true){
+    const {data, error} = await sb.from("foto")
+      .select("id,codice,mini_url,anteprima_url,gruppo")
+      .eq("rullo_id", rullo).order("codice").range(da, da + 499);
+    if(error || !data || !data.length) break;
+    tutte = tutte.concat(data);
+    if(data.length < 500) break;
+    da += data.length;
+  }
+  S.foto = tutte.filter(f => f.anteprima_url || f.mini_url);
+  const gruppi = [...new Set(S.foto.map(f=>f.gruppo).filter(Boolean))];
+  $("selGruppo").innerHTML = `<option value="">tutti</option>` +
+    gruppi.map(g=>`<option value="${g}">${g}</option>`).join("");
+  stato("Collegato");
+  disegna();
+}
+
+function visibili(){
+  const g = $("selGruppo").value;
+  return g ? S.foto.filter(f => f.gruppo === g) : S.foto;
+}
+
+function disegna(){
+  const el = $("griglia");
+  el.innerHTML = "";
+  visibili().forEach(f => {
+    const c = document.createElement("div");
+    c.className = "cella" + (S.sel.has(f.id) ? " sel" : "");
+    c.innerHTML = `<img loading="lazy" src="${f.mini_url || f.anteprima_url}" alt="">
+      <span class="c">${f.codice}</span><span class="v">✓</span>`;
+    c.onclick = () => {
+      S.sel.has(f.id) ? S.sel.delete(f.id) : S.sel.add(f.id);
+      c.classList.toggle("sel", S.sel.has(f.id));
+      aggiornaConta();
+    };
+    el.appendChild(c);
+  });
+  aggiornaConta();
+}
+
+function aggiornaConta(){
+  const n = S.sel.size;
+  $("conta").textContent = `${visibili().length} foto nel rullo · ${n} selezionate`;
+  $("btnCrea").disabled = n === 0;
+  const lato = +$("lato").value;
+  const kb = Math.round(n * (lato/700) * (lato/700) * 68);
+  $("peso").textContent = n ? `circa ${kb < 1024 ? kb + " KB" : (kb/1024).toFixed(1) + " MB"} da caricare` : "";
+  anteprimaWm();
+}
+
+$("selSede").onchange = caricaGiorni;
+$("selGiorno").onchange = caricaRulli;
+$("selRullo").onchange = caricaFoto;
+$("selGruppo").onchange = () => { disegna(); };
+$("btnTutte").onclick = () => { visibili().forEach(f=>S.sel.add(f.id)); disegna(); };
+$("btnNessuna").onclick = () => { S.sel.clear(); disegna(); };
+
+/* ---------- watermark ---------- */
+function impostaWm(){
+  $("latoV").textContent = $("lato").value + " px";
+  $("opacV").textContent = $("opac").value + "%";
+  $("densV").textContent = $("dens").value;
+  aggiornaConta();
+}
+["lato","opac","dens"].forEach(id => $(id).oninput = impostaWm);
+$("testoWm").oninput = anteprimaWm;
+
+/* Disegna la foto ridotta e ci imprime sopra il watermark diagonale ripetuto.
+   Bianco con ombra scura: si legge sia sulle foto chiare sia su quelle scure. */
+function componi(img, canvas){
+  const latoMax = +$("lato").value;
+  const sc = Math.min(1, latoMax / Math.max(img.width, img.height));
+  const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+  canvas.width = w; canvas.height = h;
+  const c = canvas.getContext("2d");
+  c.drawImage(img, 0, 0, w, h);
+
+  const testo = ($("testoWm").value || "FRAME ABOUT YOU").trim();
+  const dens = +$("dens").value;
+  const dim = Math.max(11, Math.round(w / (dens * 5.2)));
+  c.save();
+  c.globalAlpha = +$("opac").value / 100;
+  c.font = `600 ${dim}px "Segoe UI", Roboto, sans-serif`;
+  c.fillStyle = "#fff";
+  c.shadowColor = "rgba(0,0,0,.55)";
+  c.shadowBlur = Math.round(dim / 4);
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.translate(w/2, h/2);
+  c.rotate(-Math.PI / 6);
+  const diag = Math.sqrt(w*w + h*h);
+  const passoX = c.measureText(testo).width * 1.5;
+  const passoY = dim * 3.4;
+  for(let y = -diag/2; y <= diag/2; y += passoY){
+    for(let x = -diag/2; x <= diag/2; x += passoX){
+      c.fillText(testo, x, y);
+    }
+  }
+  c.restore();
+  return canvas;
+}
+
+async function caricaImg(url){
+  const r = await fetch(url, {mode:"cors"});
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  const b = await r.blob();
+  return await createImageBitmap(b);
+}
+
+let attesaAnt = null;
+function anteprimaWm(){
+  clearTimeout(attesaAnt);
+  attesaAnt = setTimeout(async () => {
+    const primo = S.foto.find(f => S.sel.has(f.id));
+    if(!primo){ const c = $("antep"); c.width = 0; c.height = 0; return; }
+    try{
+      if(!S.primaImg || S.primaImg._id !== primo.id){
+        const im = await caricaImg(primo.anteprima_url || primo.mini_url);
+        im._id = primo.id; S.primaImg = im;
+      }
+      componi(S.primaImg, $("antep"));
+    }catch(_){}
+  }, 220);
+}
+
+/* ---------- creazione ---------- */
+function codiceCasuale(){
+  const a = "abcdefghijkmnpqrstuvwxyz23456789";
+  let s = "";
+  const r = crypto.getRandomValues(new Uint8Array(10));
+  for(const n of r) s += a[n % a.length];
+  return s;
+}
+
+$("btnStop").onclick = () => { S.stop = true; $("btnStop").disabled = true; };
+
+$("btnCrea").onclick = async () => {
+  const scelte = S.foto.filter(f => S.sel.has(f.id));
+  if(!scelte.length) return;
+  S.stop = false;
+  $("btnCrea").disabled = true; $("btnStop").hidden = false; $("btnStop").disabled = false;
+  $("esito").classList.remove("on");
+  $("barraProg").classList.add("on");
+
+  const codice = codiceCasuale();
+  const scade = new Date(Date.now() + (+$("giorni").value || 7) * 86400000).toISOString();
+
+  let vet;
+  try{
+    const {data, error} = await sb.from("vetrine").insert({
+      codice,
+      sede_id: $("selSede").value,
+      rullo_id: $("selRullo").value,
+      titolo: $("titolo").value.trim() || null,
+      creata_da: $("autore").value.trim() || null,
+      scade_il: scade
+    }).select().single();
+    if(error) throw error;
+    vet = data;
+  }catch(e){
+    $("avanz").textContent = "Non sono riuscito a creare la vetrina: " + (e.message || e);
+    $("btnCrea").disabled = false; $("btnStop").hidden = true; $("barraProg").classList.remove("on");
+    return;
+  }
+
+  const canvas = document.createElement("canvas");
+  const righe = [];
+  let fatte = 0, saltate = 0;
+
+  for(const f of scelte){
+    if(S.stop) break;
+    try{
+      const img = await caricaImg(f.anteprima_url || f.mini_url);
+      componi(img, canvas);
+      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.72));
+      const path = vet.id + "/" + f.codice + ".jpg";
+      const {error} = await sb.storage.from(BUCKET)
+        .upload(path, blob, {contentType:"image/jpeg", upsert:true});
+      if(error) throw error;
+      righe.push({vetrina_id: vet.id, foto_id: f.id, codice_foto: f.codice, file: path});
+    }catch(e){
+      saltate++;
+    }
+    fatte++;
+    $("barraProgIn").style.width = Math.round(fatte / scelte.length * 100) + "%";
+    $("avanz").textContent = `${fatte} di ${scelte.length}` + (saltate ? ` · ${saltate} non riuscite` : "");
+  }
+
+  if(righe.length){
+    for(let i = 0; i < righe.length; i += 100){
+      await sb.from("vetrina_foto").insert(righe.slice(i, i + 100));
+    }
+  }
+
+  $("btnStop").hidden = true;
+  $("btnCrea").disabled = false;
+  $("barraProg").classList.remove("on");
+
+  if(!righe.length){
+    $("avanz").textContent = "Nessuna foto caricata: la vetrina è vuota, riprova.";
+    await sb.from("vetrine").delete().eq("id", vet.id);
+    return;
+  }
+
+  const url = location.origin + "/vetrina.html?v=" + codice;
+  $("link").value = url;
+  $("esito").classList.add("on");
+  $("avanz").textContent = righe.length + " foto pronte" +
+    (S.stop ? " (interrotto)" : "") + (saltate ? ` · ${saltate} saltate` : "");
+};
+
+$("btnCopia").onclick = async () => {
+  try{ await navigator.clipboard.writeText($("link").value); $("btnCopia").textContent = "Copiato"; 
+       setTimeout(()=>$("btnCopia").textContent="Copia il link", 1600); }
+  catch(_){ $("link").select(); }
+};
+$("btnApri").onclick = () => window.open($("link").value, "_blank");
+
+impostaWm();
+avvia();
+</script>
+</body>
+</html>
