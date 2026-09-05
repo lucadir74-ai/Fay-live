@@ -391,6 +391,7 @@
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
     <input type="file" id="restoreInput" webkitdirectory multiple hidden>
     <div class="spacer"></div>
+    <button id="btnSelAll" title="Seleziona tutte le foto che vedi — rullo attivo e ricerca compresi (Ctrl+A)">Seleziona tutte</button>
     <input type="text" id="searchBox" placeholder="Cerca codice  ( / )" title="Un codice apre la foto. Più codici insieme (anche separati da spazio o virgola) si selezionano: invio apre la vista insieme.">
     <span id="searchHint" hidden></span>
     <button id="btnMonitor">Avvia slideshow</button>
@@ -1004,6 +1005,7 @@ const state = {
   rulloStats: {},         // lettera -> {omaggi, scarti, file_venduti}  (scritti a mano nel report)
   selection: new Set(),   // ids in ordine di inserimento (Set preserva ordine)
   activeLetter: null,     // null = tutte
+  ancoraSel: null,        // indice del primo clic, per shift+clic
   focusIdx: -1,
   filter: "",
   lightboxIdx: -1,
@@ -3537,7 +3539,9 @@ function paintVisible(){
          compariva "♥ Segnata" senza che nessuno l'avesse voluta. Ora il secondo clic
          non tocca la selezione, e il doppio clic annulla anche il primo: aprire una
          foto lascia la selezione esattamente com'era. */
-      el.onclick=(e)=>{ state.focusIdx=i; if(e && e.detail>1) return; toggleSel(p); paintVisible(); };
+      el.onclick=(e)=>{ if(e && e.detail>1){ state.focusIdx=i; return; }
+        if(e && e.shiftKey && state.ancoraSel!=null){ selIntervallo(state.ancoraSel, i); state.focusIdx=i; paintVisible(); return; }
+        state.focusIdx=i; state.ancoraSel=i; toggleSel(p); paintVisible(); };
       el.ondblclick=()=>{ state.focusIdx=i; toggleSel(p); paintVisible(); openLightbox(i); };
       el.oncontextmenu=(e)=>{ e.preventDefault(); state.focusIdx=i; openLightbox(i); };
       spacer.append(el); cellPool.set(i,el);
@@ -3650,12 +3654,39 @@ function toggleSel(p){
   updateSelBar();
 }
 function selSet(){ return [...state.selection].map(id=>state.photos.find(p=>p.id===id)).filter(Boolean); }
+
+/* Selezione in blocco. Gli indici sono quelli della griglia che stai guardando
+   (filteredPhotos), non di tutta la giornata: cosi' shift+clic e "Tutte" lavorano
+   su quello che vedi, rullo attivo e ricerca compresi. */
+function selIntervallo(da, a){
+  const list = filteredPhotos();
+  const i0 = Math.min(da,a), i1 = Math.max(da,a);
+  for(let i=i0;i<=i1;i++){ const p=list[i]; if(p) state.selection.add(p.id); }
+  updateSelBar();
+}
+function selTutteVisibili(){
+  const list = filteredPhotos();
+  if(!list.length){ toast("Non c'è niente da selezionare"); return; }
+  const tutte = list.every(p=>state.selection.has(p.id));
+  if(tutte){ list.forEach(p=>state.selection.delete(p.id)); }
+  else { list.forEach(p=>state.selection.add(p.id)); }
+  updateSelBar(); paintVisible();
+  toast(tutte ? "Selezione tolta" : list.length + " foto selezionate");
+}
 function updateSelBar(){
   $("selCount").textContent = state.selection.size;
   $("selBar").classList.toggle("show", state.selection.size>0);
 }
 $("selRigen").onclick = ()=> rigeneraAnteprime(selSet());
-$("selClear").onclick = ()=>{ state.selection.clear(); updateSelBar(); paintVisible(); };
+$("selClear").onclick = ()=>{ state.selection.clear(); state.ancoraSel=null; updateSelBar(); paintVisible(); };
+$("btnSelAll").onclick = selTutteVisibili;
+document.addEventListener("keydown", e=>{
+  if(!(e.ctrlKey||e.metaKey) || e.key.toLowerCase()!=="a") return;
+  const t=e.target, dentroCampo = t && (t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.isContentEditable);
+  if(dentroCampo) return;
+  if(document.querySelector("dialog[open]")) return;
+  e.preventDefault(); selTutteVisibili();
+});
 // unico punto che manda le selezionate TUTTE INSIEME sul monitor: lo decidi tu, qui
 $("selShow").onclick = ()=> presentSelection();
 /* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
