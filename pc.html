@@ -720,8 +720,8 @@
   <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
     <label style="font-size:13px;color:var(--muted)">Mostra
       <select id="vetFiltro">
-        <option value="aperte">da evadere</option>
-        <option value="tutte">tutte</option>
+        <option value="aperte">in corso</option>
+        <option value="tutte">tutte, anche le evase</option>
       </select>
     </label>
     <button id="vetRicarica">Aggiorna</button>
@@ -8939,13 +8939,16 @@ async function caricaVetrine(){
   }
 }
 
-function vetDaEvadere(){
-  return vetr.righe.filter(v => !v.evasa_il && (vetr.scelte.get(v.id)||{scelti:[]}).scelti.length > 0);
+/* "In corso" = tutto quello che non e' ancora chiuso, comprese le vetrine mandate su cui
+   il cliente non ha ancora scelto. Il badge conta le stesse righe che vedi nella lista:
+   se contasse solo quelle da evadere, badge e lista direbbero numeri diversi. */
+function vetInCorso(){
+  return vetr.righe.filter(v => !v.evasa_il);
 }
 
 async function refreshVetBadge(){
   await caricaVetrine();
-  const n = vetDaEvadere().length;
+  const n = vetInCorso().length;
   const b = $("vetBadge"); if(!b) return;
   b.textContent = n;
   b.style.visibility = n ? "visible" : "hidden";
@@ -8953,7 +8956,7 @@ async function refreshVetBadge(){
   const t = $("btnVetrine");
   if(t){
     t.classList.toggle("attesa", n > 0);
-    t.title = n ? (n + " vetrine con foto scelte da evadere") : "Nessuna vetrina in attesa";
+    t.title = n ? (n + " vetrine ancora aperte") : "Nessuna vetrina in corso";
     if(vetr._ultimoN != null && n > vetr._ultimoN){
       t.classList.add("nuova");
       clearTimeout(vetr._lamp);
@@ -8966,10 +8969,10 @@ async function refreshVetBadge(){
 function renderVetList(){
   const el = $("vetList");
   const soloAperte = $("vetFiltro").value === "aperte";
-  const righe = soloAperte ? vetDaEvadere() : vetr.righe;
+  const righe = soloAperte ? vetInCorso() : vetr.righe;
   if(!righe.length){
     el.innerHTML = '<p style="color:var(--muted)">' +
-      (soloAperte ? "Nessuna vetrina da evadere." : "Nessuna vetrina per questa sede.") + '</p>';
+      (soloAperte ? "Nessuna vetrina in corso." : "Nessuna vetrina per questa sede.") + '</p>';
     return;
   }
   const esc = t => String(t==null?"":t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -9016,6 +9019,7 @@ $("btnVetrine").onclick = async ()=>{
   $("vetDlg").showModal();
   await caricaVetrine();
   renderVetList();
+  refreshVetBadge();
 };
 $("vetClose").onclick = ()=>$("vetDlg").close();
 $("vetFiltro").onchange = renderVetList;
@@ -9175,7 +9179,29 @@ async function inviaVetrinaFilemail(v, codici, btn){
   }
 }
 
-setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 60000);
+/* Tempo reale sulle scelte del cliente: appena tocca un cuore il badge si aggiorna qui,
+   senza aspettare il controllo periodico. Quello resta come rete di sicurezza, perche' se
+   il PC era spento o la linea era caduta la notifica in tempo reale si perde per sempre. */
+function ascoltaVetrine(){
+  if(!sb || vetr._canale) return;
+  try{
+    vetr._canale = sb.channel("vetrine-"+Date.now())
+      .on("postgres_changes", {event:"*", schema:"public", table:"vetrina_foto"}, ()=>{
+        clearTimeout(vetr._attesa);
+        vetr._attesa = setTimeout(async ()=>{
+          await refreshVetBadge();
+          if($("vetDlg").open) renderVetList();
+        }, 900);   // il cliente ne tocca diversi di fila: si aspetta che finisca
+      })
+      .on("postgres_changes", {event:"*", schema:"public", table:"vetrine"}, ()=>{
+        clearTimeout(vetr._attesa);
+        vetr._attesa = setTimeout(()=>refreshVetBadge(), 900);
+      })
+      .subscribe();
+  }catch(_){}
+}
+setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 30000);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) refreshVetBadge(); });
 
 /* ---------- creazione vetrina dalla selezione ----------
    Valori tarati il 5 settembre su foto vere: 700 px, resa adattiva, 34%, densita' 4.
@@ -9415,7 +9441,7 @@ $("vnCrea").onclick = async ()=>{
 // avvio: prima la porta, poi l'app
 controllaAccesso().then(()=> loadSedi().then(ripristinaUltimaScelta));
 if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
-setTimeout(()=>{ try{ caricaVetWm(); refreshVetBadge(); }catch(_){} }, 4000);
+setTimeout(()=>{ try{ caricaVetWm(); refreshVetBadge(); ascoltaVetrine(); }catch(_){} }, 4000);
 
 </script>
 </body>
