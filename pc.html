@@ -620,6 +620,7 @@
       <button id="selOmaggio" title="Stampe regalate al cliente">🎁 Omaggio</button>
       <button id="selScarto" title="Stampe venute male e buttate">🗑 Scarto</button>
       <button id="selMenoStampa" title="Toglie una stampa dal contatore: la stampa era stata annullata e non è uscita">➖ Stampa</button>
+      <button id="selVetrina" title="Manda queste foto in visione a un cliente che non è in postazione">🔗 Crea vetrina</button>
       <button id="selRigen" title="Rifà l'anteprima sul cloud di queste foto, prendendo l'originale dall'archivio di questo PC">🔄 Rifà anteprime</button>
       <button id="selClear">Svuota</button>
     </div>
@@ -727,6 +728,33 @@
   <div id="vetList" style="max-height:56vh;overflow:auto;margin-bottom:14px"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="vetClose" class="primary">Chiudi</button>
+  </div>
+</dialog>
+
+<dialog id="vetNewDlg">
+  <h3 style="margin-bottom:4px">Crea vetrina</h3>
+  <p class="hint" style="margin-bottom:10px" id="vnQuante"></p>
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:9px 12px;align-items:center;margin-bottom:12px">
+    <label style="font-size:13px;color:var(--muted)">Titolo</label>
+    <input type="text" id="vnTitolo">
+    <label style="font-size:13px;color:var(--muted)">Note</label>
+    <input type="text" id="vnNote" placeholder="Nome del cliente, telefono, ecc.">
+    <label style="font-size:13px;color:var(--muted)">Creata da</label>
+    <input type="text" id="vnAutore" placeholder="il tuo nome">
+    <label style="font-size:13px;color:var(--muted)">Scade fra</label>
+    <span><input type="number" id="vnGiorni" value="7" min="1" max="30" style="width:70px"> giorni</span>
+  </div>
+  <div id="vnProg" hidden style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-bottom:8px">
+    <div id="vnProgIn" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div>
+  </div>
+  <p class="hint" id="vnStato" style="margin-bottom:12px"></p>
+  <div id="vnEsito" hidden style="margin-bottom:12px">
+    <input type="text" id="vnLink" readonly style="width:100%;font-family:ui-monospace,Consolas,monospace;font-size:13px">
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+    <button id="vnAnnulla">Annulla</button>
+    <button id="vnCopia" hidden>Copia il link</button>
+    <button id="vnCrea" class="primary">Crea e genera il link</button>
   </div>
 </dialog>
 
@@ -8997,6 +9025,152 @@ $("vetList").onclick = async e=>{
 };
 
 setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 60000);
+
+/* ---------- creazione vetrina dalla selezione ----------
+   Valori tarati il 5 settembre su foto vere: 700 px, resa adattiva, 34%, densita' 4.
+   L'adattiva (difference) serve perche' il watermark bianco semplice spariva sulle
+   magliette bianche in controluce. Non cambiarli senza rifare la prova sulle stesse foto. */
+const VET_WM = { lato:700, opac:34, dens:4, testo:"FRAME ABOUT YOU", adatt:true };
+
+function vetComponi(img, canvas){
+  const sc = Math.min(1, VET_WM.lato / Math.max(img.width, img.height));
+  const w = Math.round(img.width*sc), h = Math.round(img.height*sc);
+  canvas.width = w; canvas.height = h;
+  const c = canvas.getContext("2d");
+  c.drawImage(img, 0, 0, w, h);
+  const dim = Math.max(11, Math.round(w / (VET_WM.dens * 5.2)));
+  c.save();
+  c.globalAlpha = VET_WM.opac/100;
+  c.font = `600 ${dim}px "Segoe UI", Roboto, sans-serif`;
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.lineJoin = "round"; c.miterLimit = 2;
+  if(VET_WM.adatt){ c.globalCompositeOperation = "difference"; c.fillStyle = "#fff"; }
+  else { c.fillStyle = "rgba(255,255,255,.95)"; c.strokeStyle = "rgba(0,0,0,.62)"; c.lineWidth = Math.max(1.3, dim/11); }
+  c.translate(w/2, h/2); c.rotate(-Math.PI/6);
+  const diag = Math.sqrt(w*w + h*h);
+  const passoX = c.measureText(VET_WM.testo).width * 1.5, passoY = dim * 3.4;
+  for(let y=-diag/2; y<=diag/2; y+=passoY)
+    for(let x=-diag/2; x<=diag/2; x+=passoX){
+      if(!VET_WM.adatt) c.strokeText(VET_WM.testo, x, y);
+      c.fillText(VET_WM.testo, x, y);
+    }
+  c.restore();
+  return canvas;
+}
+
+async function vetCaricaImg(url){
+  const r = await fetch(url, {mode:"cors"});
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return await createImageBitmap(await r.blob());
+}
+
+function vetCodiceCasuale(){
+  const a = "abcdefghijkmnpqrstuvwxyz23456789";
+  let s = "";
+  for(const n of crypto.getRandomValues(new Uint8Array(10))) s += a[n % a.length];
+  return s;
+}
+
+$("selVetrina").onclick = ()=>{
+  if(!sb || !cloud.sede || !cloud.servizio){ toast("Serve la connessione e una giornata aperta"); return; }
+  const set = selSet();
+  if(!set.length) return;
+  const senza = set.filter(p => !p.anteprimaUrl && !p.miniUrl).length;
+  if(senza === set.length){ toast("Queste foto non hanno ancora l'anteprima sul cloud"); return; }
+
+  const lettere = [...new Set(set.map(p=>p.letter).filter(Boolean))];
+  const giorno = cloud.servizio.data_servizio
+    ? new Date(cloud.servizio.data_servizio+"T12:00:00").toLocaleDateString("it-IT",{day:"numeric",month:"long"})
+    : "";
+  $("vnTitolo").value = [cloud.sede.nome, giorno].filter(Boolean).join(" ") +
+    (lettere.length===1 ? " · rullo "+lettere[0] : "");
+  $("vnNote").value = "";
+  $("vnAutore").value = localStorage.getItem("faylive_vet_autore") || "";
+  $("vnGiorni").value = 7;
+  const kb = Math.round((set.length-senza) * 68);
+  $("vnQuante").textContent = (set.length-senza) + " foto" +
+    (senza ? " ("+senza+" senza anteprima, saltate)" : "") +
+    " · circa " + (kb<1024 ? kb+" KB" : (kb/1024).toFixed(1)+" MB") + " da caricare";
+  $("vnStato").textContent = "";
+  $("vnProg").hidden = true; $("vnEsito").hidden = true; $("vnCopia").hidden = true;
+  $("vnCrea").hidden = false; $("vnCrea").disabled = false;
+  $("vnAnnulla").textContent = "Annulla";
+  $("vetNewDlg").showModal();
+};
+$("vnAnnulla").onclick = ()=>$("vetNewDlg").close();
+$("vnCopia").onclick = async ()=>{
+  try{ await navigator.clipboard.writeText($("vnLink").value); toast("Link copiato"); }
+  catch(_){ $("vnLink").select(); }
+};
+
+$("vnCrea").onclick = async ()=>{
+  const set = selSet().filter(p => p.anteprimaUrl || p.miniUrl);
+  if(!set.length){ $("vnStato").textContent = "Nessuna foto utilizzabile."; return; }
+  $("vnCrea").disabled = true;
+  $("vnProg").hidden = false;
+  const autore = $("vnAutore").value.trim();
+  if(autore) localStorage.setItem("faylive_vet_autore", autore);
+
+  const lettere = [...new Set(set.map(p=>p.letter).filter(Boolean))];
+  const rulloId = (lettere.length===1 && cloud.rulli[lettere[0]]) ? cloud.rulli[lettere[0]].id : null;
+  const codice = vetCodiceCasuale();
+
+  let vet;
+  try{
+    const {data, error} = await sb.from("vetrine").insert({
+      codice,
+      sede_id: cloud.sede.id,
+      servizio_id: cloud.servizio.id,
+      rullo_id: rulloId,
+      titolo: $("vnTitolo").value.trim() || null,
+      note: $("vnNote").value.trim() || null,
+      creata_da: autore || null,
+      scade_il: new Date(Date.now() + (+$("vnGiorni").value || 7)*86400000).toISOString()
+    }).select().single();
+    if(error) throw error;
+    vet = data;
+  }catch(e){
+    $("vnStato").textContent = "Non riesco a creare la vetrina: " + ((e&&e.message)||e);
+    $("vnCrea").disabled = false; $("vnProg").hidden = true; return;
+  }
+
+  const canvas = document.createElement("canvas");
+  const righe = []; let fatte = 0, saltate = 0;
+  for(const p of set){
+    try{
+      const img = await vetCaricaImg(p.anteprimaUrl || p.miniUrl);
+      vetComponi(img, canvas);
+      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.72));
+      const path = vet.id + "/" + p.code + ".jpg";
+      const {error} = await sb.storage.from("vetrine").upload(path, blob, {contentType:"image/jpeg", upsert:true});
+      if(error) throw error;
+      righe.push({vetrina_id:vet.id, foto_id:p.dbId, codice_foto:p.code, file:path});
+    }catch(_){ saltate++; }
+    fatte++;
+    $("vnProgIn").style.width = Math.round(fatte/set.length*100)+"%";
+    $("vnStato").textContent = fatte+" di "+set.length + (saltate ? " · "+saltate+" non riuscite" : "");
+  }
+
+  if(righe.length){
+    for(let i=0;i<righe.length;i+=100) await sb.from("vetrina_foto").insert(righe.slice(i,i+100));
+  }
+  $("vnProg").hidden = true;
+
+  if(!righe.length){
+    await sbTry(()=>sb.from("vetrine").delete().eq("id",vet.id), "annulla vetrina");
+    $("vnStato").textContent = "Nessuna foto caricata, vetrina annullata. Controlla la connessione e riprova.";
+    $("vnCrea").disabled = false; return;
+  }
+
+  $("vnLink").value = vetLink(codice);
+  $("vnEsito").hidden = false;
+  $("vnCopia").hidden = false;
+  $("vnCrea").hidden = true;
+  $("vnAnnulla").textContent = "Chiudi";
+  $("vnStato").textContent = righe.length + " foto pronte" + (saltate ? " · "+saltate+" saltate" : "") +
+    ". Manda il link al cliente, poi il pagamento SumUp a parte.";
+  refreshVetBadge();
+};
 
 // avvio: prima la porta, poi l'app
 controllaAccesso().then(()=> loadSedi().then(ripristinaUltimaScelta));
