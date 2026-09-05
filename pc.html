@@ -740,6 +740,8 @@
     <input type="text" id="vnTitolo">
     <label style="font-size:13px;color:var(--muted)">Note</label>
     <input type="text" id="vnNote" placeholder="Nome del cliente, telefono, ecc.">
+    <label style="font-size:13px;color:var(--muted)">Email</label>
+    <input type="email" id="vnEmail" placeholder="serve poi per mandare gli originali (puoi metterla dopo)">
     <label style="font-size:13px;color:var(--muted)">Creata da</label>
     <input type="text" id="vnAutore" placeholder="il tuo nome">
     <label style="font-size:13px;color:var(--muted)">Scade fra</label>
@@ -8990,9 +8992,12 @@ function renderVetList(){
       ${o.scelti.length ? `<div style="margin-top:7px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all">${esc(o.scelti.join(" "))}</div>` : ""}
       <div style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap;align-items:center">
         <input type="text" data-nota="${v.id}" value="${esc(v.note)}" placeholder="Note (nome cliente, pagamento, ecc.)"
-          style="flex:1;min-width:200px;font-size:13px">
+          style="flex:1;min-width:170px;font-size:13px">
+        <input type="email" data-mail="${v.id}" value="${esc(v.email)}" placeholder="email del cliente"
+          style="flex:1;min-width:170px;font-size:13px">
         <button data-va="link" data-id="${v.id}">Copia link</button>
         ${o.scelti.length ? `<button data-va="codici" data-id="${v.id}">Copia codici</button>` : ""}
+        ${o.scelti.length ? `<button data-va="invia" data-id="${v.id}" class="primary" title="Manda gli originali col watermark tolto, via Filemail">✈ Invia originali</button>` : ""}
         <button data-va="apri" data-id="${v.id}">Apri</button>
         <button data-va="evasa" data-id="${v.id}">${v.evasa_il ? "Riapri" : "Segna evasa"}</button>
         <button data-va="del" data-id="${v.id}" title="Cancella la vetrina e le sue copie">Elimina</button>
@@ -9018,11 +9023,12 @@ $("vetRicarica").onclick = async ()=>{
 
 /* La nota si salva quando esci dal campo: niente scrittura a ogni tasto premuto. */
 $("vetList").addEventListener("change", async e=>{
-  const inp = e.target.closest("input[data-nota]"); if(!inp) return;
-  const id = inp.dataset.nota;
+  const inp = e.target.closest("input[data-nota],input[data-mail]"); if(!inp) return;
+  const campo = inp.dataset.nota ? "note" : "email";
+  const id = inp.dataset.nota || inp.dataset.mail;
   const val = inp.value.trim() || null;
-  const r = vetr.righe.find(x=>x.id===id); if(r) r.note = val;
-  await sbTry(()=>sb.from("vetrine").update({note:val}).eq("id",id), "nota vetrina");
+  const r = vetr.righe.find(x=>x.id===id); if(r) r[campo] = val;
+  await sbTry(()=>sb.from("vetrine").update({[campo]:val}).eq("id",id), campo+" vetrina");
 });
 
 $("vetList").onclick = async e=>{
@@ -9037,6 +9043,8 @@ $("vetList").onclick = async e=>{
   } else if(va==="codici"){
     try{ await navigator.clipboard.writeText(o.scelti.join(" ")); toast(o.scelti.length+" codici copiati"); }
     catch(_){ toast("Copia non riuscita"); }
+  } else if(va==="invia"){
+    await inviaVetrinaFilemail(v, o.scelti, b);
   } else if(va==="apri"){
     window.open(vetLink(v.codice), "_blank");
   } else if(va==="evasa"){
@@ -9056,6 +9064,86 @@ $("vetList").onclick = async e=>{
     renderVetList(); refreshVetBadge();
   }
 };
+
+/* Invio degli originali di una vetrina, con lo stesso motore del pannello "Da inviare".
+   Non riuso inviaConFilemail() perche' quella e' legata alle righe di richieste_email:
+   aggiorna quella tabella e chiude quel pannello. Qui cambia solo cosa si segna dopo. */
+async function inviaVetrinaFilemail(v, codici, btn){
+  const email = (v.email||"").trim();
+  if(!email){ toast("Scrivi prima l'email del cliente nel campo qui accanto"); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("L'indirizzo email non sembra valido"); return; }
+  if(!codici.length){ toast("Questa vetrina non ha foto scelte"); return; }
+
+  /* Gli originali si prendono dalla giornata aperta, come ovunque nell'app. Se la vetrina
+     e' di un'altra giornata bisogna aprirla prima, altrimenti i file non ci sono. */
+  const set = [], fuori = [];
+  for(const c of codici){
+    const p = state.byCode.get(c);
+    if(p) set.push(p); else fuori.push(c);
+  }
+  if(!set.length){
+    const g = vetr.servizi.get(v.servizio_id);
+    toast("Le foto di questa vetrina non sono nella giornata aperta" +
+      (g ? ": apri il " + g + " e riprova" : ": apri la giornata giusta e riprova"), 6000);
+    return;
+  }
+
+  const prima = btn.textContent;
+  btn.disabled = true; btn.textContent = "Preparo…";
+  try{ await assicuraOriginaliSulCloud(set); }catch(_){}
+
+  const trovate = [], mancanti = fuori.slice();
+  for(const p of set){
+    try{
+      const {data, error} = await sb.storage.from("originali").createSignedUrl(origKeyDi(p), 900);
+      if(error || !data || !data.signedUrl){ mancanti.push(p.code); continue; }
+      trovate.push({nome: p.code+".jpg", url: data.signedUrl});
+    }catch(_){ mancanti.push(p.code); }
+  }
+  btn.disabled = false; btn.textContent = prima;
+
+  if(!trovate.length){
+    toast("Gli originali non sono sul cloud: caricali (Altro → Carica originali) e riprova", 6000);
+    return;
+  }
+  const avviso = mancanti.length
+    ? `\n\nATTENZIONE: ${mancanti.length} foto non sono disponibili e NON verranno inviate (${mancanti.join(", ")}).`
+    : "";
+  if(!confirm(`Invio ${trovate.length} foto originali a ${email} tramite Filemail.${avviso}\n\nHai già incassato il pagamento?`)) return;
+
+  btn.disabled = true; btn.textContent = "Invio…";
+  try{
+    const r = await fetch("/api/invia", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        email,
+        files: trovate,
+        oggetto: "Le tue foto — Frame About You",
+        messaggio: "Grazie per la serata! Ecco le tue foto."
+      })
+    });
+    const out = await r.json();
+    const nomi = trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", ");
+    if(!r.ok || !out.ok){
+      logEvento("invio", {codici:nomi, quante:trovate.length, esito:"errore",
+        dettaglio:"vetrina — "+email+" — "+(out.dettaglio||out.errore||"errore sconosciuto")});
+      toast("Invio non riuscito: " + (out.dettaglio || out.errore || "errore sconosciuto"), 6000);
+      return;
+    }
+    logEvento("invio", {codici:nomi, quante:out.inviate||trovate.length, dettaglio:"vetrina — "+email});
+    /* Inviata = evasa: sparisce dal filtro "da evadere" e il badge cala da solo. */
+    v.evasa_il = new Date().toISOString();
+    await sbTry(()=>sb.from("vetrine").update({evasa_il:v.evasa_il}).eq("id",v.id), "vetrina inviata");
+    renderVetList(); refreshVetBadge();
+    toast(`✔ Inviate ${out.inviate} foto a ${email}` + (out.saltate ? ` (${out.saltate} saltate)` : ""), 6000);
+  }catch(err){
+    logEvento("invio", {codici:trovate.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
+      quante:trovate.length, esito:"errore", dettaglio:"vetrina — "+email+" — "+((err&&err.message)||err)});
+    toast("Invio non riuscito: " + ((err&&err.message)||err), 6000);
+  }finally{
+    btn.disabled = false; btn.textContent = prima;
+  }
+}
 
 setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 60000);
 
@@ -9197,7 +9285,7 @@ $("selVetrina").onclick = ()=>{
     : "";
   $("vnTitolo").value = [cloud.sede.nome, giorno].filter(Boolean).join(" ") +
     (lettere.length===1 ? " · rullo "+lettere[0] : "");
-  $("vnNote").value = "";
+  $("vnNote").value = ""; $("vnEmail").value = "";
   $("vnAutore").value = localStorage.getItem("faylive_vet_autore") || "";
   $("vnGiorni").value = 7;
   const kb = Math.round((set.length-senza) * 68);
@@ -9237,6 +9325,7 @@ $("vnCrea").onclick = async ()=>{
       rullo_id: rulloId,
       titolo: $("vnTitolo").value.trim() || null,
       note: $("vnNote").value.trim() || null,
+      email: $("vnEmail").value.trim() || null,
       creata_da: autore || null,
       scade_il: new Date(Date.now() + Math.min(30, Math.max(1, +$("vnGiorni").value || 7))*86400000).toISOString()
     }).select().single();
