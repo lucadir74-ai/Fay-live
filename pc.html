@@ -756,6 +756,7 @@
   </div>
   <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
     <button id="vnAnnulla">Annulla</button>
+    <button id="vnGmail" hidden class="primary">✉ Invia col Gmail</button>
     <button id="vnCopia" hidden>Copia il link</button>
     <button id="vnCrea" class="primary">Crea e genera il link</button>
   </div>
@@ -8981,7 +8982,8 @@ function renderVetList(){
     if(v.evasa_il){ stato = "evasa"; colore = "var(--muted)"; }
     else if(o.scelti.length){ stato = o.scelti.length + " foto scelte"; colore = "var(--accent)"; }
     else if(v.aperta_il){ stato = "aperta, non ha ancora scelto"; colore = "var(--muted)"; }
-    else { stato = "non ancora aperta"; colore = "var(--muted)"; }
+    else if(v.inviata_il){ stato = "link inviato, non ancora aperto"; colore = "var(--muted)"; }
+    else { stato = "link ancora da inviare"; colore = "var(--accent)"; }
     return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px"
       data-riga="${v.id}">
       <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
@@ -8995,6 +8997,7 @@ function renderVetList(){
           style="flex:1;min-width:170px;font-size:13px">
         <input type="email" data-mail="${v.id}" value="${esc(v.email)}" placeholder="email del cliente"
           style="flex:1;min-width:170px;font-size:13px">
+        <button data-va="gmail" data-id="${v.id}"${o.scelti.length ? "" : ' class="primary"'}>✉ Invia vetrina</button>
         <button data-va="link" data-id="${v.id}">Copia link</button>
         ${o.scelti.length ? `<button data-va="codici" data-id="${v.id}">Copia codici</button>` : ""}
         ${o.scelti.length ? `<button data-va="invia" data-id="${v.id}" class="primary" title="Manda gli originali col watermark tolto, via Filemail">✈ Invia originali</button>` : ""}
@@ -9043,6 +9046,13 @@ $("vetList").onclick = async e=>{
   } else if(va==="codici"){
     try{ await navigator.clipboard.writeText(o.scelti.join(" ")); toast(o.scelti.length+" codici copiati"); }
     catch(_){ toast("Copia non riuscita"); }
+  } else if(va==="gmail"){
+    const em = (v.email||"").trim();
+    if(!em){ toast("Scrivi prima l'email del cliente nel campo qui accanto"); return; }
+    const gg = Math.max(1, Math.round((new Date(v.scade_il) - Date.now())/86400000));
+    vetApriGmail(em, vetLink(v.codice), gg);
+    await vetSegnaInviata(v);
+    renderVetList();
   } else if(va==="invia"){
     await inviaVetrinaFilemail(v, o.scelti, b);
   } else if(va==="apri"){
@@ -9064,6 +9074,26 @@ $("vetList").onclick = async e=>{
     renderVetList(); refreshVetBadge();
   }
 };
+
+/* Apre Gmail con destinatario, oggetto e testo gia' scritti: l'invio lo premi tu.
+   Stesso meccanismo del tasto Gmail del pannello "Da inviare". */
+function vetTestoInvito(link, giorni){
+  return "Ciao!\n\nEcco le foto della serata. Aprile da qui e scegli quelle che vuoi toccando il cuore:\n"
+    + link
+    + "\n\nIl link resta attivo " + (giorni||7) + " giorni. Appena hai scelto ti scriviamo per il pagamento,"
+    + " e subito dopo ti mandiamo le foto originali in alta qualita', senza scritte.\n\nFrame About You";
+}
+function vetApriGmail(email, link, giorni){
+  const su = encodeURIComponent("Le tue foto — Frame About You");
+  const body = encodeURIComponent(vetTestoInvito(link, giorni));
+  window.open("https://mail.google.com/mail/?view=cm&fs=1&to=" + encodeURIComponent(email||"")
+    + "&su=" + su + "&body=" + body, "_blank");
+}
+async function vetSegnaInviata(v){
+  if(v.inviata_il) return;
+  v.inviata_il = new Date().toISOString();
+  await sbTry(()=>sb.from("vetrine").update({inviata_il:v.inviata_il}).eq("id",v.id), "vetrina inviata");
+}
 
 /* Invio degli originali di una vetrina, con lo stesso motore del pannello "Da inviare".
    Non riuso inviaConFilemail() perche' quella e' legata alle righe di richieste_email:
@@ -9293,7 +9323,7 @@ $("selVetrina").onclick = ()=>{
     (senza ? " ("+senza+" senza anteprima, saltate)" : "") +
     " · circa " + (kb<1024 ? kb+" KB" : (kb/1024).toFixed(1)+" MB") + " da caricare";
   $("vnStato").textContent = "";
-  $("vnProg").hidden = true; $("vnEsito").hidden = true; $("vnCopia").hidden = true;
+  $("vnProg").hidden = true; $("vnEsito").hidden = true; $("vnCopia").hidden = true; $("vnGmail").hidden = true;
   $("vnCrea").hidden = false; $("vnCrea").disabled = false;
   $("vnAnnulla").textContent = "Annulla";
   $("vetNewDlg").showModal();
@@ -9367,6 +9397,14 @@ $("vnCrea").onclick = async ()=>{
   $("vnLink").value = vetLink(codice);
   $("vnEsito").hidden = false;
   $("vnCopia").hidden = false;
+  $("vnGmail").hidden = false;
+  $("vnGmail").onclick = async ()=>{
+    const em = $("vnEmail").value.trim();
+    if(!em){ toast("Scrivi l'email del cliente qui sopra"); $("vnEmail").focus(); return; }
+    vetApriGmail(em, vetLink(codice), +$("vnGiorni").value || 7);
+    await vetSegnaInviata(vet);
+    refreshVetBadge();
+  };
   $("vnCrea").hidden = true;
   $("vnAnnulla").textContent = "Chiudi";
   $("vnStato").textContent = righe.length + " foto pronte" + (saltate ? " · "+saltate+" saltate" : "") +
