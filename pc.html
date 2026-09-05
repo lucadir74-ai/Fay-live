@@ -370,6 +370,7 @@
       <button id="btnInvii" title="Giorno per giorno: a chi sono state inviate le foto, quali codici e se l'invio è riuscito">Registro invii</button>
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnEsportate" title="Quante foto sono state esportate, rullo per rullo">Foto esportate…</button>
+      <button id="btnVetWm" title="Regola come appare la scritta sulle foto delle vetrine">Watermark vetrine…</button>
       <button id="btnArchive" title="Riattiva la cartella archivio di questa postazione (il permesso si perde a ogni ricaricamento della pagina)">Archivio…</button>
       <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
@@ -755,6 +756,38 @@
     <button id="vnAnnulla">Annulla</button>
     <button id="vnCopia" hidden>Copia il link</button>
     <button id="vnCrea" class="primary">Crea e genera il link</button>
+  </div>
+</dialog>
+
+<dialog id="vetWmDlg">
+  <h3 style="margin-bottom:4px">Watermark delle vetrine</h3>
+  <p class="hint" style="margin-bottom:10px">Vale per tutte le postazioni e per il tablet. Le vetrine già create non cambiano.</p>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+    <label style="font-size:13px;color:var(--muted)">Lato lungo</label>
+    <input type="range" id="wmLato" min="480" max="1100" step="20"><span id="wmLatoV"></span>
+    <label style="font-size:13px;color:var(--muted)">Scritta</label>
+    <input type="text" id="wmTesto" style="min-width:190px">
+  </div>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+    <label style="font-size:13px;color:var(--muted)">Intensità</label>
+    <input type="range" id="wmOpac" min="10" max="60" step="2"><span id="wmOpacV"></span>
+    <label style="font-size:13px;color:var(--muted)">Densità</label>
+    <input type="range" id="wmDens" min="2" max="7" step="1"><span id="wmDensV"></span>
+    <label style="font-size:13px;color:var(--muted)">Resa</label>
+    <select id="wmModo">
+      <option value="adatt">adattiva al fondo</option>
+      <option value="contorno">contorno scuro</option>
+    </select>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <button id="wmPrec">‹</button><button id="wmSucc">›</button>
+    <span class="hint" id="wmQuale"></span>
+    <button id="wmDefault" style="margin-left:auto">Rimetti i valori tarati</button>
+  </div>
+  <canvas id="wmAntep" style="max-width:100%;max-height:44vh;border:1px solid var(--line);border-radius:8px;display:block;margin-bottom:12px"></canvas>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="wmAnnulla">Annulla</button>
+    <button id="wmSalva" class="primary">Salva</button>
   </div>
 </dialog>
 
@@ -9031,6 +9064,86 @@ setInterval(()=>{ if(!document.hidden) refreshVetBadge(); }, 60000);
    L'adattiva (difference) serve perche' il watermark bianco semplice spariva sulle
    magliette bianche in controluce. Non cambiarli senza rifare la prova sulle stesse foto. */
 const VET_WM = { lato:700, opac:34, dens:4, testo:"FRAME ABOUT YOU", adatt:true };
+const VET_WM_DEF = Object.assign({}, VET_WM);
+const VET_WM_KEY = "vetrina_wm";
+
+/* Le impostazioni stanno sul cloud, non sul singolo PC: cosi' tablet e altre postazioni
+   generano tutti con lo stesso watermark. Se il cloud non risponde restano i valori tarati. */
+async function caricaVetWm(){
+  if(!sb) return;
+  try{
+    const {data} = await sb.from("impostazioni").select("valore").eq("chiave", VET_WM_KEY).maybeSingle();
+    if(data && data.valore) Object.assign(VET_WM, JSON.parse(data.valore));
+  }catch(_){}
+}
+
+const wmA = { foto:[], idx:0, img:null };
+
+function wmLeggiCampi(){
+  VET_WM.lato = +$("wmLato").value;
+  VET_WM.opac = +$("wmOpac").value;
+  VET_WM.dens = +$("wmDens").value;
+  VET_WM.testo = $("wmTesto").value.trim() || "FRAME ABOUT YOU";
+  VET_WM.adatt = $("wmModo").value === "adatt";
+}
+function wmScriviCampi(){
+  $("wmLato").value = VET_WM.lato; $("wmLatoV").textContent = VET_WM.lato + " px";
+  $("wmOpac").value = VET_WM.opac; $("wmOpacV").textContent = VET_WM.opac + "%";
+  $("wmDens").value = VET_WM.dens; $("wmDensV").textContent = VET_WM.dens;
+  $("wmTesto").value = VET_WM.testo;
+  $("wmModo").value = VET_WM.adatt ? "adatt" : "contorno";
+}
+
+let wmAttesa = null;
+async function wmAnteprima(){
+  clearTimeout(wmAttesa);
+  wmAttesa = setTimeout(async ()=>{
+    if(!wmA.foto.length){
+      $("wmQuale").textContent = "Nessuna foto con anteprima in questa giornata";
+      const c = $("wmAntep"); c.width = 0; c.height = 0; return;
+    }
+    if(wmA.idx >= wmA.foto.length) wmA.idx = 0;
+    const p = wmA.foto[wmA.idx];
+    $("wmQuale").textContent = p.code + " · " + (wmA.idx+1) + " di " + wmA.foto.length;
+    $("wmPrec").disabled = wmA.idx === 0;
+    $("wmSucc").disabled = wmA.idx === wmA.foto.length-1;
+    try{
+      if(!wmA.img || wmA.img._code !== p.code){
+        const im = await vetCaricaImg(p.anteprimaUrl || p.miniUrl);
+        im._code = p.code; wmA.img = im;
+      }
+      vetComponi(wmA.img, $("wmAntep"));
+    }catch(_){ $("wmQuale").textContent = "Non riesco a scaricare questa anteprima"; }
+  }, 200);
+}
+
+$("btnVetWm").onclick = async ()=>{
+  if($("toolsMenu")) $("toolsMenu").hidden = true;
+  if(!sb){ toast("Serve la connessione"); return; }
+  await caricaVetWm();
+  wmA.foto = (state.photos||[]).filter(p => p.anteprimaUrl || p.miniUrl).slice(0, 400);
+  wmA.idx = 0; wmA.img = null;
+  wmScriviCampi();
+  $("vetWmDlg").showModal();
+  wmAnteprima();
+};
+["wmLato","wmOpac","wmDens"].forEach(id => $(id).oninput = ()=>{ wmLeggiCampi(); wmScriviCampi(); wmAnteprima(); });
+$("wmTesto").oninput = ()=>{ wmLeggiCampi(); wmAnteprima(); };
+$("wmModo").onchange = ()=>{ wmLeggiCampi(); wmAnteprima(); };
+$("wmPrec").onclick = ()=>{ if(wmA.idx>0){ wmA.idx--; wmAnteprima(); } };
+$("wmSucc").onclick = ()=>{ wmA.idx++; wmAnteprima(); };
+$("wmDefault").onclick = ()=>{ Object.assign(VET_WM, VET_WM_DEF); wmScriviCampi(); wmAnteprima(); };
+$("wmAnnulla").onclick = async ()=>{ $("vetWmDlg").close(); await caricaVetWm(); };
+$("wmSalva").onclick = async ()=>{
+  wmLeggiCampi();
+  try{
+    const {error} = await sb.from("impostazioni")
+      .upsert({chiave:VET_WM_KEY, valore:JSON.stringify(VET_WM)}, {onConflict:"chiave"});
+    if(error) throw error;
+    toast("Watermark salvato: vale da subito su tutte le postazioni");
+    $("vetWmDlg").close();
+  }catch(e){ toast("Non riesco a salvare: " + ((e&&e.message)||e)); }
+};
 
 function vetComponi(img, canvas){
   const sc = Math.min(1, VET_WM.lato / Math.max(img.width, img.height));
@@ -9125,7 +9238,7 @@ $("vnCrea").onclick = async ()=>{
       titolo: $("vnTitolo").value.trim() || null,
       note: $("vnNote").value.trim() || null,
       creata_da: autore || null,
-      scade_il: new Date(Date.now() + (+$("vnGiorni").value || 7)*86400000).toISOString()
+      scade_il: new Date(Date.now() + Math.min(30, Math.max(1, +$("vnGiorni").value || 7))*86400000).toISOString()
     }).select().single();
     if(error) throw error;
     vet = data;
@@ -9175,7 +9288,7 @@ $("vnCrea").onclick = async ()=>{
 // avvio: prima la porta, poi l'app
 controllaAccesso().then(()=> loadSedi().then(ripristinaUltimaScelta));
 if(!sb) setSync(null,"Solo locale"); else setSync(null,"Scegli una sede");
-setTimeout(()=>{ try{ refreshVetBadge(); }catch(_){} }, 4000);
+setTimeout(()=>{ try{ caricaVetWm(); refreshVetBadge(); }catch(_){} }, 4000);
 
 </script>
 </body>
