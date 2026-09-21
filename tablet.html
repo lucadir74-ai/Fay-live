@@ -171,6 +171,24 @@
   .cell .orig{position:absolute;right:5px;bottom:5px;background:rgba(11,14,20,.85);
     color:#ffb84d;font-size:15px;line-height:1;padding:4px 6px;border-radius:7px;pointer-events:none}
   .cell.ancora .selcheck{display:flex;background:#35d07f;color:#06240f}
+  /* CONSERVATE E SALVATE: 🔒 = originale tenuto sul cloud anche dopo gli svuotamenti,
+     📥 = gia' scaricata nei Download di un tablet (quale, lo dice l'elenco Conservate). */
+  .cell .mk{position:absolute;left:5px;top:5px;display:flex;gap:3px;pointer-events:none;z-index:2}
+  .cell .mk span{background:rgba(11,14,20,.85);font-size:13px;line-height:1;padding:4px 5px;border-radius:7px}
+  .cell .mk:empty{display:none}
+  body.selmode .cell .mk{left:38px}
+  #consDlg{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:130;display:none;align-items:center;justify-content:center;padding:18px}
+  #consDlg.on{display:flex}
+  #consBox{background:var(--surface);border:1px solid var(--line);border-radius:16px;width:min(620px,100%);max-height:86vh;display:flex;flex-direction:column}
+  #consBox h3{margin:0;padding:18px 20px 6px;font-size:19px}
+  #consBox .sub{margin:0;padding:0 20px 12px;color:var(--muted);font-size:14px}
+  #consList{overflow:auto;padding:0 12px 12px}
+  #consList .giorno{font-weight:700;color:var(--accent);padding:12px 8px 6px}
+  #consList .riga{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--surface2);
+    border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px 14px;margin:0 0 8px;font-size:16px;font-family:inherit}
+  #consList .riga .n{margin-left:auto;color:var(--muted);font-size:14px}
+  #consList .vuoto{color:var(--muted);text-align:center;padding:30px}
+  #consChiudi{margin:0 20px 18px;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px;font-size:16px}
   body.selmode .cell .fav{display:none}
   body.selmode #grid{touch-action:pan-y;padding-bottom:150px}   /* la barra copre il fondo: lascio spazio */
   /* la barra va a capo: prima i tasti finivano fuori schermo e "Chiudi selezione" spariva */
@@ -313,6 +331,7 @@
     <button class="favtoggle" id="btnShare"><span>↗</span><span>Condividi</span></button>
     <button class="favtoggle" id="btnExport"><span>⬇</span><span>Esporta</span></button>
     <button class="favtoggle" id="btnInvii"><span>📋</span><span>Registro</span></button>
+    <button class="favtoggle" id="btnCons"><span>🔒</span><span>Conservate</span></button>
     <button class="favtoggle" id="btnFavClear"><span>✕</span><span>Pulisci preferiti</span></button>
     <!-- Con 1200 foto in un rullo, tornare in cima a dito era un'impresa. -->
     <button class="favtoggle salto" id="btnSu" title="Vai all'inizio delle foto"><span>⤒</span></button>
@@ -419,6 +438,16 @@
 
   <div id="toast"></div>
 
+  <!-- elenco di tutte le foto conservate della sede, giornata per giornata -->
+  <div id="consDlg">
+    <div id="consBox">
+      <h3>🔒 Foto conservate</h3>
+      <p class="sub" id="consSub">Restano sul cloud anche dopo gli svuotamenti: si possono inviare da qualunque tablet, anche a PC spento.</p>
+      <div id="consList"></div>
+      <button id="consChiudi">Chiudi</button>
+    </div>
+  </div>
+
   <!-- quante copie: 1 è il caso normale, i tasti mandano in stampa con un tocco solo -->
   <div id="cpSheet">
     <div id="cpBox">
@@ -475,6 +504,7 @@
     <button class="sb" id="selSend">✉ Invia</button>
     <button class="sb" id="selShare">↗ Condividi</button>
     <button class="sb" id="selExport">⬇ Esporta</button>
+    <button class="sb" id="selCons">🔒 Conserva</button>
     <button class="sb" id="selFile">📄 Solo file</button>
     <button class="sb" id="selOmaggio">🎁 Omaggio</button>
     <button class="sb" id="selUngroup" hidden>📁− Togli dal gruppo</button>
@@ -488,7 +518,7 @@ let sb = null;
 try{ sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null; }catch(_){ sb=null; }
 
 const $ = id => document.getElementById(id);
-const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, gruppo:null, favOnly:false, channel:null, selmode:false, selected:new Set(), ancora:null };
+const S = { sede:null, servizio:null, photos:[], byId:new Map(), rulli:{}, letter:null, gruppo:null, favOnly:false, consOnly:false, channel:null, selmode:false, selected:new Set(), ancora:null };
 
 const SEDE_KEY = "faylive_tablet_sede";
 const CUTOFF_H = 6;
@@ -650,7 +680,7 @@ async function caricaFotoDeiRulli(ids){
 
 async function openServizio(sv){
   if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
-  S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null; S.gruppo=null;
+  S.servizio=sv; S.photos=[]; S.byId=new Map(); S.rulli={}; S.letter=null; S.gruppo=null; S.consOnly=false;
   caricaFavSalvati(sv.id);        // rimette i cuori scelti prima del ricaricamento
   setDot(true,"Apro la giornata…");
   const {data:rulli}=await sb.from("rulli").select("*").eq("servizio_id",sv.id);
@@ -660,7 +690,7 @@ async function openServizio(sv){
     const foto = await caricaFotoDeiRulli(ids);
     (foto||[]).forEach(f=>{
       const r=S.rulli[f.rullo_id]; if(!r) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio), cons:!!f.conserva, salv:f.salvata_su||null };
       S.photos.push(p); S.byId.set(p.id,p);
     });
     ordinaFoto(S.photos);
@@ -683,7 +713,7 @@ function subscribe(){
       const {data:r}=await sb.from("rulli").select("lettera,servizio_id").eq("id",f.rullo_id).single();
       if(!r || r.servizio_id!==S.servizio.id) return;
       if(S.byId.has(f.id)) return;
-      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
+      const p={ id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null, origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio), cons:!!f.conserva, salv:f.salvata_su||null };
       S.photos.push(p); S.byId.set(p.id,p);
       S.rulli[f.rullo_id]={lettera:r.lettera};
       render();
@@ -698,6 +728,7 @@ function subscribe(){
            credere che la foto non fosse sul cloud. E' la via piu' rapida per saperlo. */
         if(f.originale_url) p.origPath = f.originale_url;
         p.crop = cropLeggi(f.ritaglio);       // taglio deciso in postazione: si adotta subito
+        p.cons = !!f.conserva; p.salv = f.salvata_su || null;
         aggiornaSpiaBadge();
         aggiornaClessidre();
         render();
@@ -760,6 +791,7 @@ function visible(){
   if(S.gruppo) list = S.photos.filter(p=>p.gruppo===S.gruppo);   // tutti i rulli insieme
   else list = S.letter ? S.photos.filter(p=>p.letter===S.letter) : S.photos;
   if(S.favOnly) list = list.filter(p=>p.fav);
+  if(S.consOnly) list = list.filter(p=>p.cons);
   return list;
 }
 function render(){
@@ -798,13 +830,15 @@ function render(){
   $("favOnly").lastElementChild.textContent = S.favOnly ? "Chiudi preferiti"
                                             : (nFav ? "Preferiti (" + nFav + ")" : "Preferiti");
   $("favOnly").querySelector(".heart").textContent = S.favOnly ? "♥" : "♡";
+  $("btnCons").classList.toggle("on", S.consOnly);
+  $("btnCons").lastElementChild.textContent = S.consOnly ? "Chiudi conservate" : "Conservate";
   aggiornaIndicatoreAnteprime();
 
   // griglia
   const list=visible(); const g=$("grid");
   $("empty").hidden = !!S.sede;
   if(!S.sede){ g.innerHTML=""; lastGrid=""; lastIds=[]; lastTesta=""; return; }
-  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.favOnly?'Nessun preferito selezionato':'Nessuna foto'}</div>`; lastGrid=""; lastIds=[]; lastTesta=""; return; }
+  if(!list.length){ g.innerHTML=`<div id="empty2" style="grid-column:1/-1;color:var(--muted);text-align:center;padding:40px">${S.consOnly?'Nessuna foto conservata in questo rullo':(S.favOnly?'Nessun preferito selezionato':'Nessuna foto')}</div>`; lastGrid=""; lastIds=[]; lastTesta=""; return; }
   // se la griglia è identica a quella già disegnata, non la rifaccio: il controllo automatico
   // ogni 25 secondi ricostruiva tutto e faceva ridisegnare le anteprime da capo
   /* PERCHE' LA GRIGLIA TORNAVA IN CIMA MENTRE SI SCORREVA.
@@ -822,7 +856,7 @@ function render(){
      Ora la firma guarda SOLO quali foto ci sono e in che ordine. Cuori, selezione e
      clessidra si sistemano sulle celle gia' disegnate, e le foto nuove si aggiungono in
      coda senza toccare quelle sopra. */
-  const testa = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0");
+  const testa = S.letter+"|"+S.gruppo+"|"+(S.favOnly?"1":"0")+(S.consOnly?"c":"");
   const ids = list.map(p=>p.id);
   const firma = testa+"|"+ids.join(",");
   if(firma===lastGrid && g.childElementCount){ aggiornaCelle(); return; }
@@ -855,12 +889,17 @@ function render(){
   updateSelBar();
 }
 
+function segniHTML(p){
+  return (p.cons ? `<span title="Conservata sul cloud">🔒</span>` : "") +
+         (p.salv ? `<span title="Salvata su ${esc(p.salv)}">📥</span>` : "");
+}
 function cellaHTML(p){
   return `
     <div class="cell ${p.wide?'wide':''} ${p.fav?'isfav':''} ${S.selected.has(p.id)?'sel':''}" data-id="${p.id}">
       <canvas data-code="${p.code}"></canvas>
       <span class="code">${p.code}</span>
       ${haOriginale(p)?"":`<span class="orig">⏳</span>`}
+      <div class="mk">${segniHTML(p)}</div>
       <div class="selcheck">✓</div>
       <div class="fav ${p.fav?'on':''}" data-fav="${p.id}">${p.fav?'♥':'♡'}</div>
     </div>`;
@@ -914,6 +953,8 @@ function aggiornaCelle(){
     if(p.wide) c.classList.add("wide");
     const fav=c.querySelector(".fav");
     if(fav){ fav.classList.toggle("on", !!p.fav); fav.textContent = p.fav?"♥":"♡"; }
+    const mk=c.querySelector(".mk");
+    if(mk){ const h=segniHTML(p); if(mk.innerHTML!==h) mk.innerHTML=h; }
   });
   aggiornaClessidre();
   updateSelBar();
@@ -1868,23 +1909,166 @@ async function sharePhotos(list, ctx){
 }
 
 // esporta una lista di foto nei Download
+/* SALVATAGGIO SUL TABLET. I codici si ripetono ogni giorno (A-001 esiste ogni sera): con
+   il solo codice come nome, nei Download Android le foto di sere diverse diventavano
+   "A-001 (1).jpg", "A-001 (2).jpg" e a distanza di giorni non si capiva piu' quale fosse
+   quale. Il nome ora comincia con la data della giornata: 2026-09-21_A-001.jpg.
+   Ogni foto scaricata viene anche segnata sul cloud (salvata_su = nome del tablet e data),
+   cosi' tutti vedono il segno 📥 e l'elenco Conservate dice su QUALE tablet si trova. */
+function nomeFileSalvato(p){
+  const g = (S.servizio && S.servizio.data_servizio) ? S.servizio.data_servizio+"_" : "";
+  return g + String(p.code).replace(/[\\/:*?"<>|]/g,"-") + ".jpg";
+}
 async function exportPhotos(list, ctx){
   if(!list.length){ toast("Nessuna foto da esportare"+(ctx||"")); return; }
   await ensureOriginals(list);
   toast(`Esporto ${list.length} foto…`);
-  let ok=0; const mancanti=[];
+  attesaInCorso = true; await tieniSchermoAcceso();
+  let ok=0; const mancanti=[], fatte=[];
   for(const p of list){
     const blob = await photoBlob(p, true);       // solo originale, mai l'anteprima
     if(!blob){ mancanti.push(p); continue; }
     const a=document.createElement("a"); const obj=URL.createObjectURL(blob);
-    a.href=obj; a.download=p.code+".jpg";
+    a.href=obj; a.download=nomeFileSalvato(p);
     document.body.append(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(obj), 8000);
-    ok++; await new Promise(r=>setTimeout(r,300));
+    ok++; fatte.push(p);
+    if(list.length>1) toast(`Esporto… ${ok}/${list.length}`);
+    await new Promise(r=>setTimeout(r,300));
   }
+  attesaInCorso = false; rilasciaSchermo();
   avvisaSenzaOriginale(mancanti);
   toast(`Esportate ${ok} foto nei Download`);
+  if(fatte.length && sb){
+    const segno = nomeTablet() + " · " + new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit"});
+    const ids = fatte.map(p=>p.id);
+    for(let i=0;i<ids.length;i+=100){
+      try{ await sb.from("foto").update({salvata_su:segno}).in("id", ids.slice(i,i+100)); }catch(_){}
+    }
+    fatte.forEach(p=>{ const v=vivo(p); v.salv=segno; p.salv=segno; });
+    aggiornaCelle();
+  }
 }
+
+/* ---------- CONSERVA SUL CLOUD ----------
+   Le foto conservate tengono l'originale sul cloud e NON vengono toccate da "Svuota
+   rullo/giornata" e "Svuota tutte le giornate" sul PC: restano inviabili da qualunque
+   tablet o postazione anche a PC1 spento o a stagione finita.
+   L'originale lo carica PC1 (stessa richiesta di sempre): va fatto mentre PC1 e' acceso
+   sulla giornata di quelle foto. Se PC1 e' spento la richiesta resta aperta e parte
+   appena PC1 riapre quella giornata. */
+async function conservaFoto(ps){
+  if(!ps.length){ toast("Nessuna foto selezionata"); return; }
+  if(!sb){ toast("Cloud non raggiungibile"); return; }
+  const ids = ps.map(p=>p.id);
+  const tutteGia = ps.every(p=>vivo(p).cons);
+  if(tutteGia){
+    if(!confirm(`Queste ${ps.length} foto sono già conservate.\n\nToglierle dalla conservazione? `+
+                `Al prossimo svuotamento del PC verranno cancellate dal cloud come le altre.`)) return;
+    let err=null;
+    for(let i=0;i<ids.length;i+=100){
+      const r = await sb.from("foto").update({conserva:false}).in("id", ids.slice(i,i+100));
+      if(r.error) err=r.error;
+    }
+    if(err){ toast("Non riuscito — riprova"); return; }
+    ps.forEach(p=>{ vivo(p).cons=false; p.cons=false; });
+    aggiornaCelle(); render();
+    logActivity(ps, "tolte dalla conservazione");
+    toast(`${ps.length} foto tolte dalla conservazione`);
+    return;
+  }
+  let err=null;
+  for(let i=0;i<ids.length;i+=100){
+    const r = await sb.from("foto").update({conserva:true}).in("id", ids.slice(i,i+100));
+    if(r.error) err=r.error;
+  }
+  if(err){
+    toast("Non riuscito: manca la colonna 'conserva' sul database?", 5000);
+    console.warn("conserva", err); return;
+  }
+  ps.forEach(p=>{ vivo(p).cons=true; p.cons=true; });
+  aggiornaCelle();
+  logActivity(ps, "conservate");
+  await ensureOriginals(ps);                     // chiede a PC1 gli originali che mancano
+  const senza = ps.filter(p=>!haOriginale(p));
+  aggiornaClessidre();
+  if(senza.length){
+    alert(`🔒 ${ps.length} foto conservate.\n\n${ps.length-senza.length} hanno già l'originale sul cloud.\n`+
+          `${senza.length} lo aspettano ancora (⏳): ${senza.slice(0,8).map(p=>p.code).join(", ")}${senza.length>8?"…":""}\n\n`+
+          `Arriva appena PC1 è acceso su questa giornata con l'archivio collegato. `+
+          `Finché c'è la clessidra, quella foto NON è ancora al sicuro.`);
+  } else {
+    toast(`🔒 ${ps.length} foto conservate, originali tutti sul cloud`, 3500);
+  }
+}
+$("selCons").onclick = async ()=>{ const ps=selectedPhotos(); await conservaFoto(ps); esciDaSelezione(); };
+
+/* Elenco conservate di tutta la sede: da qui si salta sulla giornata e sul rullo giusti,
+   con la griglia filtrata sulle sole conservate. E' la strada per ritrovarle a distanza
+   di settimane, quando nessuno ricorda piu' in che sera erano. */
+async function apriConservate(){
+  if(S.consOnly){ S.consOnly=false; render(); return; }
+  if(!sb || !S.sede){ toast("Scegli prima una sede"); return; }
+  const box=$("consList"); box.innerHTML=`<div class="vuoto">Cerco…</div>`; $("consDlg").classList.add("on");
+  try{
+    const servizi = ($("giornoSel")._servizi||[]);
+    const svById = {}; servizi.forEach(sv=>svById[sv.id]=sv);
+    const sids = servizi.map(sv=>sv.id);
+    const rulli = [];
+    for(let i=0;i<sids.length;i+=80){
+      const {data,error} = await sb.from("rulli").select("id,lettera,servizio_id").in("servizio_id", sids.slice(i,i+80));
+      if(error) throw error; rulli.push(...(data||[]));
+    }
+    const rById = {}; rulli.forEach(r=>rById[r.id]=r);
+    const rids = rulli.map(r=>r.id);
+    const foto = [];
+    for(let i=0;i<rids.length;i+=80){
+      const {data,error} = await sb.from("foto").select("id,rullo_id,originale_url,salvata_su")
+        .eq("conserva", true).in("rullo_id", rids.slice(i,i+80));
+      if(error) throw error; foto.push(...(data||[]));
+    }
+    // giornata -> rullo -> conteggi
+    const agg = {};
+    foto.forEach(f=>{
+      const r=rById[f.rullo_id]; if(!r) return;
+      const k=r.servizio_id+"|"+r.lettera;
+      const a = agg[k] = agg[k] || {sid:r.servizio_id, L:r.lettera, n:0, senza:0, salvate:new Set()};
+      a.n++; if(!f.originale_url) a.senza++;
+      if(f.salvata_su) a.salvate.add(String(f.salvata_su).split(" · ")[0]);
+    });
+    const righe = Object.values(agg).sort((a,b)=>
+      String((svById[b.sid]||{}).data_servizio).localeCompare(String((svById[a.sid]||{}).data_servizio)) || a.L.localeCompare(b.L));
+    $("consSub").textContent = righe.length
+      ? `${foto.length} foto conservate in questa sede. Tocca un rullo per vederle.`
+      : "Restano sul cloud anche dopo gli svuotamenti: si possono inviare da qualunque tablet, anche a PC spento.";
+    if(!righe.length){ box.innerHTML=`<div class="vuoto">Nessuna foto conservata in questa sede.<br><br>Per conservarle: selezionale e tocca 🔒 Conserva.</div>`; return; }
+    let html="", ultimo=null;
+    righe.forEach(a=>{
+      const sv=svById[a.sid];
+      if(a.sid!==ultimo){
+        ultimo=a.sid;
+        const d=new Date(sv.data_servizio+"T12:00:00");
+        html+=`<div class="giorno">${d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"})}</div>`;
+      }
+      const note = (a.senza?` · ⏳ ${a.senza} senza originale`:"") + (a.salvate.size?` · 📥 ${[...a.salvate].map(esc).join(", ")}`:"");
+      html+=`<button class="riga" data-sid="${a.sid}" data-l="${esc(a.L)}"><b>Rullo ${esc(a.L)}</b><span style="color:var(--muted);font-size:14px">${note}</span><span class="n">${a.n} foto ›</span></button>`;
+    });
+    box.innerHTML=html;
+    box.querySelectorAll(".riga").forEach(b=>b.onclick=async ()=>{
+      const sv=svById[b.dataset.sid]; if(!sv) return;
+      $("consDlg").classList.remove("on");
+      if(!S.servizio || S.servizio.id!==sv.id){ $("giornoSel").value=sv.id; await openServizio(sv); }
+      S.gruppo=null; S.letter=b.dataset.l; S.favOnly=false; S.consOnly=true;
+      render(); $("grid").scrollTop=0;
+    });
+  }catch(err){
+    console.warn("conservate", err);
+    box.innerHTML=`<div class="vuoto">Non riesco a leggere l'elenco.<br>${esc(err.message||String(err))}</div>`;
+  }
+}
+$("btnCons").onclick = ()=> apriConservate();
+$("consChiudi").onclick = ()=> $("consDlg").classList.remove("on");
+$("consDlg").onclick = e=>{ if(e.target.id==="consDlg") $("consDlg").classList.remove("on"); };
 
 /* I preferiti "attivi" sono quelli di ciò che si sta GUARDANDO, non del rullo.
    Prima questa funzione filtrava solo per rullo: dentro una cartella si vedevano 4 foto
@@ -2585,7 +2769,7 @@ async function refresh(manuale){
       (foto||[]).forEach(f=>{
         const r = rmap[f.rullo_id]; if(!r) return;
         const p = { id:f.id, code:f.codice, letter:r.lettera, url:f.mini_url||f.anteprima_url, bigUrl:f.anteprima_url||null, miniUrl:f.mini_url||null,
-                    origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio) };
+                    origPath:f.originale_url||null, fav:!!f.preferito, gruppo:f.gruppo||null, crop:cropLeggi(f.ritaglio), cons:!!f.conserva, salv:f.salvata_su||null };
         const vecchia = S.byId.get(f.id);
         if(vecchia && vecchia.wide) p.wide = true;   // verso già noto: niente ridisegno inutile
         if(vecchia && vecchia.origPath && !p.origPath) p.origPath = vecchia.origPath;

@@ -6214,10 +6214,18 @@ $("btnDelSede").onclick = async ()=>{
       if(rids.length){ const {count}=await sb.from("foto").select("id",{count:"exact",head:true}).in("rullo_id",rids); nFoto=count||0; }
     }
   }catch(_){}
-  $("delSedeText").innerHTML = nFoto
+  let nConsSede = 0;
+  try{
+    const {data:svs} = await sb.from("servizi").select("id").eq("sede_id", s.id);
+    const {data:rr} = await sb.from("rulli").select("id").in("servizio_id",(svs||[]).map(x=>x.id));
+    nConsSede = (await conservateDeiRulli((rr||[]).map(r=>r.id))).length;
+  }catch(_){}
+  $("delSedeText").innerHTML = (nConsSede
+    ? `⚠ <b>Attenzione: ${nConsSede} foto CONSERVATE</b> di questa sede verranno cancellate anche loro. `+
+      `Se servono ancora, non cancellare la sede: usa "Svuota tutte le giornate", che le lascia al loro posto.<br><br>` : "") + (nFoto
     ? `La sede <b>${s.nome}</b> contiene <b>${nServizi}</b> giornate e <b>${nFoto}</b> foto.<br><br>`+
       `Verranno cancellate <b>dal cloud</b> (righe, anteprime e originali caricati). Gli originali sui PC in locale <b>non</b> vengono toccati. Azione irreversibile.`
-    : `Cancellare la sede <b>${s.nome}</b>? È vuota, nessuna foto da rimuovere.`;
+    : `Cancellare la sede <b>${s.nome}</b>? È vuota, nessuna foto da rimuovere.`);
   const dlg=$("delSedeDlg"); dlg.showModal();
   $("delSedeNo").onclick=()=>dlg.close();
   $("delSedeYes").onclick=async ()=>{
@@ -6245,10 +6253,51 @@ async function listaTuttiIFile(bucket, prefisso){
   }
   return out;
 }
+/* ---------- FOTO CONSERVATE ----------
+   Una foto con conserva = true (la mette il tablet col tasto 🔒 Conserva) non si cancella
+   con gli svuotamenti: restano la sua riga, il suo rullo e i suoi file (originale e
+   anteprime), cosi' si puo' inviare anche a PC spento o a stagione finita.
+   Solo "Cancella sede" le toglie, e lo dice prima. */
+function sigla8(rulloId){ return String(rulloId||"").replace(/-/g,"").slice(0,8); }
+function baseFile(nome){ return String(nome).replace(/_m\.jpg$/i,"").replace(/\.[a-z0-9]+$/i,""); }
+// nomi di file (senza estensione) che appartengono a queste righe foto: formato vecchio e con rullo
+function nomiDelleFoto(righe){
+  const out = new Set();
+  (righe||[]).forEach(f=>{ out.add(String(f.codice)); if(f.rullo_id) out.add(sigla8(f.rullo_id)+"-"+f.codice); });
+  return out;
+}
+/* Cancella le righe foto dei rulli dati TRANNE le conservate. Se la colonna "conserva"
+   non esiste ancora sul database (SQL non eseguito) il filtro darebbe errore e non
+   cancellerebbe niente in silenzio: in quel caso non esistono conservate e si cancella
+   come prima. */
+async function cancellaFotoNonConservate(rids){
+  if(!rids || !rids.length) return;
+  const r = await sb.from("foto").delete().in("rullo_id", rids).not("conserva","is",true);
+  if(r.error){
+    if(/conserva/i.test(r.error.message||"")) await sb.from("foto").delete().in("rullo_id", rids);
+    else throw r.error;
+  }
+}
+async function conservateDeiRulli(rids){
+  const out = [];
+  for(let i=0;i<(rids||[]).length;i+=100){
+    const {data,error} = await sb.from("foto").select("id,codice,rullo_id").eq("conserva", true).in("rullo_id", rids.slice(i,i+100));
+    if(error){
+      /* colonna non ancora creata: nessuna foto conservata. Qualunque ALTRO errore ferma
+         lo svuotamento, perche' senza sapere quali sono le conservate si rischia di buttarle. */
+      if(/conserva/i.test(error.message||"") && /column|colonna/i.test(error.message||"")) return [];
+      throw error;
+    }
+    out.push(...(data||[]));
+  }
+  return out;
+}
+
 // svuota completamente la cartella di una giornata dentro un bucket; torna quanti file ha tolto
-async function svuotaPrefisso(bucket, prefisso){
+// "protetti": nomi (senza estensione) da NON toccare — i file delle foto conservate
+async function svuotaPrefisso(bucket, prefisso, protetti){
   let tolti=0;
-  const files = await listaTuttiIFile(bucket, prefisso);
+  const files = (await listaTuttiIFile(bucket, prefisso)).filter(f=>!(protetti && protetti.has(baseFile(f.name))));
   for(let i=0;i<files.length;i+=500){
     const lotto = files.slice(i,i+500).map(f=>prefisso+"/"+f.name);
     try{
@@ -6282,18 +6331,20 @@ async function ripassoCloud(){
       /* Giornata ancora esistente: si tolgono solo i file che non hanno più la loro riga.
          È il caso delle giornate svuotate quando l'app cancellava appena 100 file per volta:
          le righe sparivano, i file restavano, e il contenitore vuoto li teneva al riparo. */
-      const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", nome);
+      /* ERRORE CORRETTO (21 set): qui si confrontava il nome del file col solo codice
+         (A-001), ma dal 24 ago i file si chiamano <rullo>-A-001: per il ripasso ERANO TUTTI
+         orfani, e "Svuota tutte le giornate" su una sede cancellava anteprime e originali
+         di tutte le giornate ancora vive delle ALTRE sedi. Ora valgono entrambi i formati.
+         Se la lettura delle righe fallisce, la giornata si salta: mai cancellare alla cieca. */
+      const {data:rulli, error:eR} = await sb.from("rulli").select("id").eq("servizio_id", nome);
+      if(eR) continue;
       const rids = (rulli||[]).map(r=>r.id);
-      const codici = new Set();
-      if(rids.length){
-        const {data:foto} = await sb.from("foto").select("codice").in("rullo_id", rids);
-        (foto||[]).forEach(f=>codici.add(String(f.codice)));
-      }
+      let righe = [];
+      try{ if(rids.length) righe = await leggiTutte(()=> sb.from("foto").select("codice,rullo_id").in("rullo_id", rids).order("id")); }
+      catch(_){ continue; }
+      const codici = nomiDelleFoto(righe);
       const files = await listaTuttiIFile(bucket, nome);
-      const daTogliere = files.filter(f=>{
-        const base = String(f.name).replace(/_m\.jpg$/i,"").replace(/\.[a-z0-9]+$/i,"");
-        return !codici.has(base);
-      }).map(f=>nome+"/"+f.name);
+      const daTogliere = files.filter(f=>!codici.has(baseFile(f.name))).map(f=>nome+"/"+f.name);
       for(let i=0;i<daTogliere.length;i+=500){
         const lotto = daTogliere.slice(i,i+500);
         try{
@@ -6825,7 +6876,14 @@ $("btnClearAll").onclick = async ()=>{
     toast(n ? `Ripasso finito: ${n} file tolti dal cloud` : "Ripasso finito: sul cloud non c'era niente da togliere");
     return;
   }
+  let nCons = 0;
+  try{
+    const {data:svs} = await sb.from("servizi").select("id").eq("sede_id", s.id);
+    const {data:rr} = await sb.from("rulli").select("id").in("servizio_id",(svs||[]).map(x=>x.id));
+    nCons = (await conservateDeiRulli((rr||[]).map(r=>r.id))).length;
+  }catch(_){}
   $("clearAllText").innerHTML =
+    (nCons ? `🔒 <b>${nCons} foto conservate</b> NON verranno toccate e restano inviabili.<br><br>` : "")+
     `Stai per cancellare <b>TUTTE le foto dal cloud</b> della sede <b>${s.nome}</b>:<br>`+
     `<b>${nGiorni}</b> giornate e <b>${nFoto}</b> foto, con anteprime e originali caricati.<br><br>`+
     `La sede resta, le giornate vengono svuotate. Alla fine viene fatto anche un ripasso del cloud, `+
@@ -6844,14 +6902,20 @@ async function svuotaTutteLeGiornate(s){
   try{
     const {data:servizi} = await sb.from("servizi").select("id").eq("sede_id", s.id);
     let fatti=0;
+    let tenute = 0;
     for(const sv of (servizi||[])){
-      for(const bucket of ["anteprime","originali"]){
-        try{ await svuotaPrefisso(bucket, String(sv.id)); }catch(_){}
-      }
       const {data:rulli} = await sb.from("rulli").select("id").eq("servizio_id", sv.id);
       const rids=(rulli||[]).map(r=>r.id);
-      if(rids.length) await sb.from("foto").delete().in("rullo_id", rids);
-      await sb.from("rulli").delete().eq("servizio_id", sv.id);
+      const cons = await conservateDeiRulli(rids);          // se fallisce, si ferma tutto (catch sotto)
+      const protetti = nomiDelleFoto(cons);
+      const rulliConCons = new Set(cons.map(f=>f.rullo_id));
+      tenute += cons.length;
+      for(const bucket of ["anteprime","originali"]){
+        try{ await svuotaPrefisso(bucket, String(sv.id), protetti); }catch(_){}
+      }
+      await cancellaFotoNonConservate(rids);
+      const rulliDaTogliere = rids.filter(id=>!rulliConCons.has(id));
+      if(rulliDaTogliere.length) await sb.from("rulli").delete().in("id", rulliDaTogliere);
       fatti++;
       setSync("syncing",`Svuoto… ${fatti}/${(servizi||[]).length}`);
     }
@@ -6866,14 +6930,22 @@ async function svuotaTutteLeGiornate(s){
     $("stTotal").textContent="0";
     renderTabs(); layoutGrid(); updateThumbCloud();
     setSync(null,"Sincronizzato");
-    toast(`Svuotate ${fatti} giornate della sede "${s.nome}"` + (orfani?` — e ${orfani} file rimasti da cancellazioni vecchie`:""));
+    toast(`Svuotate ${fatti} giornate della sede "${s.nome}"` + (tenute?` — 🔒 ${tenute} foto conservate restano sul cloud`:"") + (orfani?` — e ${orfani} file rimasti da cancellazioni vecchie`:""), tenute?9000:undefined);
+    if(tenute && cloud.servizio){ try{ await loadServizioFoto(); }catch(_){} }
   }catch(err){
     setSync("offline"); toast("Errore svuotando: "+(err.message||err)); console.warn("svuotaTutte",err);
   }
 }
 
-$("btnClearDay").onclick = ()=>{
+$("btnClearDay").onclick = async ()=>{
   if(!sb || !cloud.servizio){ toast("Nessuna giornata cloud aperta"); return; }
+  let consGiorno = [];
+  try{
+    const {data:rr} = await sb.from("rulli").select("id,lettera").eq("servizio_id", cloud.servizio.id);
+    const lett = {}; (rr||[]).forEach(r=>lett[r.id]=r.lettera);
+    consGiorno = (await conservateDeiRulli((rr||[]).map(r=>r.id))).map(f=>lett[f.rullo_id]);
+  }catch(_){}
+  const consRullo = state.activeLetter ? consGiorno.filter(L=>L===state.activeLetter).length : consGiorno.length;
   const L = state.activeLetter;
   const foto = L ? state.photos.filter(p=>p.letter===L) : state.photos;
   const n = foto.length;
@@ -6886,6 +6958,8 @@ $("btnClearDay").onclick = ()=>{
     (L? `<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
            <input type="checkbox" id="clearAllDay"> Svuota invece <b>tutta la giornata</b> (${tot} foto, tutti i rulli)
          </label>` : "")+
+    (consGiorno.length ? `🔒 Le foto <b>conservate</b> restano sul cloud e non vengono toccate `+
+       `(${L?`${consRullo} in questo rullo, `:""}${consGiorno.length} nella giornata).<br><br>` : "")+
     `Gli originali sui PC in locale <b>non</b> vengono toccati. L'azione non è reversibile.`;
   const dlg=$("clearDlg"); dlg.showModal();
   $("clearNo").onclick=()=>dlg.close();
@@ -6908,6 +6982,15 @@ async function clearCurrentDay(onlyLetter){
     const {data:rulli} = await sb.from("rulli").select("id,lettera").eq("servizio_id",sid);
     const target = (rulli||[]).filter(r=>!onlyLetter || r.lettera===onlyLetter);
     const ids = target.map(r=>r.id);
+    /* foto conservate: si leggono su TUTTA la giornata (il ripasso della cartella la
+       attraversa tutta). Se la lettura fallisce lo svuotamento si ferma: senza sapere
+       quali sono si rischierebbe di cancellarle. */
+    const consTutte = await conservateDeiRulli((rulli||[]).map(r=>r.id));
+    const protetti = nomiDelleFoto(consTutte);
+    const lettDi = {}; (rulli||[]).forEach(r=>lettDi[r.id]=r.lettera);
+    const codiciCons = new Set(consTutte.map(f=>(lettDi[f.rullo_id]||"")+"|"+f.codice));
+    const rulliConCons = new Set(consTutte.map(f=>f.rullo_id));
+    const tenute = consTutte.filter(f=>ids.includes(f.rullo_id)).length;
     /* I FILE VANNO CERCATI CON IL PERCORSO GIUSTO.
        Qui si costruivano gli indirizzi come <giornata>/<codice>.jpg, che è il formato
        VECCHIO: da quando gli indirizzi hanno il prefisso del rullo
@@ -6917,7 +7000,7 @@ async function clearCurrentDay(onlyLetter){
        Ora si cancellano entrambi i formati, più l'indirizzo davvero salvato sulla riga
        della foto (p.origKey) quando c'è. Restano comunque indirizzi che contengono il
        codice del rullo che si sta svuotando: gli altri rulli non vengono mai toccati. */
-    const foto = state.photos.filter(p=>!onlyLetter || p.letter===onlyLetter);
+    const foto = state.photos.filter(p=>(!onlyLetter || p.letter===onlyLetter) && !codiciCons.has(p.letter+"|"+p.code));
     const perBucket = { anteprime:new Set(), originali:new Set() };
     for(const p of foto){
       perBucket.anteprime.add(sid+"/"+p.code+".jpg");        // formato vecchio
@@ -6930,17 +7013,19 @@ async function clearCurrentDay(onlyLetter){
     }
     for(const bucket of ["anteprime","originali"]){
       try{
-        const paths = [...perBucket[bucket]].filter(Boolean);
+        const paths = [...perBucket[bucket]].filter(Boolean)
+          .filter(pa=>!protetti.has(baseFile(pa.split("/").pop())));      // mai i file di una conservata
         for(let i=0; i<paths.length; i+=500) await sb.storage.from(bucket).remove(paths.slice(i, i+500));
         // se sto svuotando tutta la giornata, ripasso la cartella: i path espliciti coprono
         // solo le foto caricate in questa postazione, il resto restava sul cloud
-        if(!onlyLetter) await svuotaPrefisso(bucket, String(sid));
+        if(!onlyLetter) await svuotaPrefisso(bucket, String(sid), protetti);
       }catch(_){}
     }
     // cancella righe foto e rulli interessati
     if(ids.length){
-      await sb.from("foto").delete().in("rullo_id", ids);
-      await sb.from("rulli").delete().in("id", ids);
+      await cancellaFotoNonConservate(ids);
+      const rulliDaTogliere = ids.filter(id=>!rulliConCons.has(id));   // il rullo resta se ha conservate
+      if(rulliDaTogliere.length) await sb.from("rulli").delete().in("id", rulliDaTogliere);
     }
     // aggiorna stato locale
     if(onlyLetter){
@@ -6958,7 +7043,9 @@ async function clearCurrentDay(onlyLetter){
     $("stTotal").textContent=String(state.photos.length);
     renderTabs(); layoutGrid(); updateThumbCloud();
     cloud.online=true; setSync("online");
-    toast(onlyLetter? `Rullo ${onlyLetter} svuotato` : "Giornata svuotata dal cloud");
+    toast((onlyLetter? `Rullo ${onlyLetter} svuotato` : "Giornata svuotata dal cloud") +
+          (tenute ? ` — 🔒 ${tenute} foto conservate restano` : ""), tenute ? 7000 : undefined);
+    if(tenute){ try{ await loadServizioFoto(); }catch(_){} }     // rimette in griglia le conservate
   }catch(err){
     cloud.online=false; setSync("offline");
     toast("Errore svuotando: "+(err.message||err));
@@ -7248,7 +7335,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 ago 2026 · 23:10";
+const VERSIONE = "21 set 2026 · conservate";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
