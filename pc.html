@@ -1024,6 +1024,18 @@ async function sbTry(fn, label){
    Rullo e giornata si indicano per lettera + id giornata, non per id del rullo: un
    rullo nato offline sul cloud ancora non esiste e viene creato al momento dell'invio.
    ===================================================================== */
+/* TEMPO MASSIMO per una chiamata al cloud (1 ott). Staccando il WiFi le richieste non
+   sempre falliscono subito: spesso restano APPESE finché la linea non torna (il browser
+   tiene occupati i collegamenti con i caricamenti che erano in corso). L'import aspettava
+   il numero dei codici dal cloud e restava fermo finché non si riattaccava la linea.
+   Ora oltre questo tempo la chiamata si considera fallita e si va avanti offline. */
+function conTempo(promessa, ms){
+  let t;
+  return Promise.race([
+    Promise.resolve(promessa).finally(()=>clearTimeout(t)),
+    new Promise(res=>{ t = setTimeout(()=>res({data:null, error:{message:"tempo scaduto", tempo:true}, status:0}), ms); })
+  ]);
+}
 var CODA_KEY = "faylive_coda_scritture";
 var codaScritture = (()=>{ try{ return JSON.parse(localStorage.getItem(CODA_KEY)||"[]")||[]; }catch(_){ return []; } })();
 var codaInCorso = false;
@@ -1038,8 +1050,21 @@ function erroreDaRiprovare(r){
 }
 
 // una scrittura uguale già in coda si fonde invece di accodarsi due volte
-function accoda(op){
+function accoda(op, davanti){
   const ultima = codaScritture;
+  if(davanti){
+    /* operazione PIÙ VECCHIA di quelle in coda: si fonde sotto alla più nuova (che vince),
+       oppure va in testa, così l'ordine resta quello vero */
+    const stessa = o => o.k===op.k && (op.k==="foto" ? o.id===op.id
+                     : (o.srv===op.srv && o.L===op.L && (op.k!=="stat" || o.campo===op.campo)));
+    const g = (op.k==="att") ? null : ultima.find(stessa);
+    if(g){
+      if(op.k==="foto" || op.k==="rullo") g.val = Object.assign({}, op.val, g.val);
+      else if(op.k==="stat") g.delta += op.delta;
+      else if(op.k==="num") g.min = Math.max(g.min, op.min);
+    }else codaScritture.unshift(op);
+    salvaCoda(); return;
+  }
   if(op.k==="foto"){
     const g = ultima.find(o=>o.k==="foto" && o.id===op.id);
     if(g){ Object.assign(g.val, op.val); salvaCoda(); return; }
@@ -1059,7 +1084,7 @@ function accoda(op){
 // id del rullo sul cloud a partire da giornata + lettera (lo crea se nato offline)
 async function idRulloCloud(srv, L){
   if(cloud.servizio && String(cloud.servizio.id)===String(srv) && cloud.rulli[L]) return {id:cloud.rulli[L].id};
-  const r = await sb.from("rulli").upsert({servizio_id:srv, lettera:L}, {onConflict:"servizio_id,lettera"}).select("id,ultimo_num").single();
+  const r = await conTempo(sb.from("rulli").upsert({servizio_id:srv, lettera:L}, {onConflict:"servizio_id,lettera"}).select("id,ultimo_num").single(), 15000);
   if(r.error) return {errore:r};
   if(cloud.servizio && String(cloud.servizio.id)===String(srv) && !cloud.rulli[L])
     cloud.rulli[L] = {id:r.data.id, ultimo_num:r.data.ultimo_num};
@@ -1069,18 +1094,21 @@ async function idRulloCloud(srv, L){
 // esegue UNA operazione: "ok", "riprova" (rete giù) oppure "scarta" (rifiutata dal cloud)
 async function eseguiScrittura(op){
   let r;
+  const T = 15000;
   try{
     if(op.k==="foto"){
-      r = await sb.from("foto").update(op.val).eq("id", op.id);
+      r = await conTempo(sb.from("foto").update(op.val).eq("id", op.id), T);
     }else if(op.k==="att"){
-      r = await sb.from("attivita").insert(op.row);
+      r = await conTempo(sb.from("attivita").insert(op.row), T);
+      // riga già arrivata in un tentativo precedente (stesso id): non è un errore
+      if(r && r.error && String(r.error.code)==="23505") r = {error:null};
     }else{
       const x = await idRulloCloud(op.srv, op.L);
       if(x.errore) r = x.errore;
-      else if(op.k==="stat")  r = await sb.rpc("segna_stat", {p_rullo:x.id, p_campo:op.campo, p_delta:op.delta});
-      else if(op.k==="rullo") r = await sb.from("rulli").update(op.val).eq("id", x.id);
+      else if(op.k==="stat")  r = await conTempo(sb.rpc("segna_stat", {p_rullo:x.id, p_campo:op.campo, p_delta:op.delta}), T);
+      else if(op.k==="rullo") r = await conTempo(sb.from("rulli").update(op.val).eq("id", x.id), T);
       else if(op.k==="num"){
-        r = await sb.rpc("prossimo_codice_da", {p_rullo_id:x.id, p_quanti:0, p_minimo:op.min});
+        r = await conTempo(sb.rpc("prossimo_codice_da", {p_rullo_id:x.id, p_quanti:0, p_minimo:op.min}), T);
         if(r.error && r.error.code==="PGRST202") r = {error:null};   // funzione non ancora creata: non bloccare la coda
       }
     }
@@ -1092,19 +1120,29 @@ async function eseguiScrittura(op){
 }
 
 // punto d'ingresso unico: prova subito, e se la linea è giù mette in coda
+var scrittureInVolo = 0;     // scritture dirette partite e non ancora concluse
 async function scrivi(op){
   if(!sb) return;
-  if(codaScritture.length || codaInCorso){ accoda(op); svuotaCoda(); return; }
-  const esito = await eseguiScrittura(op);
-  if(esito==="riprova"){ accoda(op); cloud.online=false; setSync("offline"); }
-  else if(esito==="ok" && !cloud.online){ cloud.online=true; setSync("online"); }
+  if(op.k==="att" && op.row && !op.row.id) op.row.id = nuovoId();   // così un doppio invio non fa doppioni
+  if(codaScritture.length || codaInCorso || scrittureInVolo){ accoda(op); svuotaCoda(); return; }
+  scrittureInVolo++;
+  let esito;
+  try{ esito = await eseguiScrittura(op); }
+  finally{ scrittureInVolo--; }
+  if(esito==="riprova"){ accoda(op, true); cloud.online=false; setSync("offline"); }
+  else if(esito==="ok" && !cloud.online && !codaScritture.length){ cloud.online=true; setSync("online"); }
+  if(codaScritture.length) svuotaCoda();
+}
+function nuovoId(){
+  try{ return crypto.randomUUID(); }
+  catch(_){ return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{ const r=Math.random()*16|0; return (c==="x"?r:(r&3|8)).toString(16); }); }
 }
 function scriviFoto(id, val){ if(id) scrivi({k:"foto", id, val:Object.assign({}, val)}); }
 
 var codaRichiesta = false;   // chiamata arrivata mentre un giro era già in corso
 async function svuotaCoda(){
   if(!sb || !codaScritture.length) return;
-  if(codaInCorso){ codaRichiesta = true; return; }
+  if(codaInCorso || scrittureInVolo){ codaRichiesta = true; return; }
   codaInCorso = true;
   let bloccata = false;
   try{
@@ -9062,24 +9100,29 @@ function numeroMassimoLocale(letter){
 let avvisoFunzioneCodici = false;
 async function nextNumber(letter, count){
   const minimo = numeroMassimoLocale(letter);
-  if(sb && cloud.servizio){
+  // scheda di rete staccata: inutile aspettare il cloud, si numera subito in locale
+  const senzaRete = (typeof navigator!=="undefined" && navigator.onLine===false);
+  if(sb && cloud.servizio && !senzaRete){
     try{
       // assicura il rullo
       if(!cloud.rulli[letter]){
-        const {data,error}=await sb.from("rulli")
+        const {data,error}=await conTempo(sb.from("rulli")
           .upsert({servizio_id:cloud.servizio.id, lettera:letter, descrizione:state.letterDesc[letter]||null},
-                  {onConflict:"servizio_id,lettera"}).select().single();
+                  {onConflict:"servizio_id,lettera"}).select().single(), 8000);
         if(error) throw error;
         cloud.rulli[letter]={id:data.id, ultimo_num:data.ultimo_num};
       }
-      // riserva "count" numeri in blocco, mai sotto quelli che questo PC ha già usato
-      const r = await sb.rpc("prossimo_codice_da",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count, p_minimo:minimo});
+      /* riserva "count" numeri in blocco, mai sotto quelli che questo PC ha già usato.
+         Se la risposta non arriva in 8 secondi si numera in locale: anche se la richiesta
+         arrivasse al cloud più tardi, partendo da p_minimo riserverebbe proprio gli stessi
+         numeri usati qui, quindi nessuna sovrapposizione. */
+      const r = await conTempo(sb.rpc("prossimo_codice_da",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count, p_minimo:minimo}), 8000);
       if(!r.error && typeof r.data==="number"){ cloud.rulli[letter].ultimo_num=r.data; return r.data-count; }
       if(r.error && r.error.code==="PGRST202"){
         // funzione SQL non ancora creata: vecchio metodo, ma solo se non si sovrappone
         if(!avvisoFunzioneCodici){ avvisoFunzioneCodici=true;
           toast("⚠ Sul cloud manca la funzione prossimo_codice_da: esegui l'SQL dell'aggiornamento", 9000); }
-        const v = await sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count});
+        const v = await conTempo(sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count}), 8000);
         if(!v.error && typeof v.data==="number" && v.data-count >= minimo){ cloud.rulli[letter].ultimo_num=v.data; return v.data-count; }
       }
       throw (r.error || new Error("numerazione dal cloud non disponibile"));
