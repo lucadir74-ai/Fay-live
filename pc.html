@@ -6411,6 +6411,19 @@ $("sedeNewSave").onclick=async ()=>{
   if(!nome){ $("sedeNewName").focus(); return; }
   if(!sb){ toast("Cloud non disponibile"); return; }
   try{
+    /* Niente sedi doppie: se ne esiste già una con lo stesso nome (maiuscole, spazi e
+       accenti non contano) si apre quella invece di crearne un'altra. */
+    const norm = x => String(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ").trim();
+    const {data:tutte} = await sb.from("sedi").select("*");
+    const gia = (tutte||[]).find(x=>norm(x.nome)===norm(nome));
+    if(gia){
+      alert(`La sede "${gia.nome}" esiste già: apro quella invece di crearne una doppia.`);
+      $("sedeDlg").close();
+      await loadSedi();
+      $("sedeSelect").value=gia.id;
+      chooseSede(gia);
+      return;
+    }
     const codice = nome.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12) + Math.floor(Math.random()*90+10);
     const {data,error}=await sb.from("sedi").insert({nome,codice}).select().single();
     if(error) throw error;
@@ -6611,6 +6624,29 @@ async function deleteSede(s){
   }catch(err){ setSync("offline"); toast("Errore cancellando: "+(err.message||err)); console.warn("deleteSede",err); }
 }
 
+/* UNA SEDE + UNA DATA = UNA GIORNATA SOLA (1 ott).
+   DIFETTO: due postazioni che aprivano la sede insieme la mattina guardavano entrambe se
+   "oggi" esisteva, non lo trovavano, e lo creavano TUTTE E DUE: due giornate con la stessa
+   data, foto divise a metà fra le due, report sbagliato. È la sovrapposizione vista in
+   Sardegna. ORA l'identificativo della giornata non è più casuale ma CALCOLATO da sede +
+   data: due postazioni (o il PC centrale e il cloud) che la creano nello stesso momento
+   producono lo stesso identificativo, la seconda viene rifiutata dal database e adotta
+   quella che c'è già. Il calcolo non usa crypto.subtle perché sulle postazioni collegate
+   al PC centrale (pagina "non sicura" via http) non esiste. */
+function idGiornata(sedeId, data){
+  const str = "fay-giornata|" + sedeId + "|" + data;
+  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+  for(let i=0, k; i<str.length; i++){
+    k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067); h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213); h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067); h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213); h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  h1 ^= (h2 ^ h3 ^ h4); h2 ^= h1; h3 ^= h1; h4 ^= h1;
+  const x = [h1,h2,h3,h4].map(v=>(v>>>0).toString(16).padStart(8,"0")).join("");
+  return x.slice(0,8)+"-"+x.slice(8,12)+"-4"+x.slice(13,16)+"-"+((parseInt(x[16],16)&3)|8).toString(16)+x.slice(17,20)+"-"+x.slice(20,32);
+}
 async function chooseSede(s, dataVoluta){
   setTimeout(loadMasksForSede, 400);   // le cornici di questa sede
   cloud.sede=s;
@@ -6624,8 +6660,14 @@ async function chooseSede(s, dataVoluta){
     let lista = giorni||[];
     // assicura che "oggi" esista sempre come voce apribile
     if(!lista.find(x=>x.data_servizio===oggi)){
-      const {data:ins} = await sb.from("servizi").insert({sede_id:s.id, data_servizio:oggi}).select().single();
+      const {data:ins, error:eIns} = await sb.from("servizi")
+        .insert({id:idGiornata(s.id, oggi), sede_id:s.id, data_servizio:oggi}).select().single();
       if(ins){ lista.unshift(ins); }
+      else if(eIns && String(eIns.code)==="23505"){
+        // un'altra postazione l'ha creata un attimo prima: si usa quella
+        const {data:gia} = await sb.from("servizi").select("*").eq("sede_id",s.id).eq("data_servizio",oggi);
+        if(gia && gia.length) lista.unshift(gia[0]);
+      }
     }
     // popola la tendina giornate
     const gsel=$("giornoSelect");
