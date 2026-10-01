@@ -2039,6 +2039,7 @@ function archivioFuoriStandard(){
   return !!n && n.trim().toLowerCase() !== "faylive";
 }
 function etichettaArchivio(){
+  if(suCentrale()) return "PC centrale (FayCentrale\\dati)";
   if(state.archive) return (archivioFuoriStandard()? "⚠ " : "") + state.archive.name;
   if(state.archiveName) return state.archiveName + " (da riattivare)";
   return "non impostato";
@@ -2309,6 +2310,7 @@ $("archSkip").onclick = ()=>{
 
 /* Controllo all'apertura della sede: la cartella si decide PRIMA di importare. */
 async function controllaArchivioSede(){
+  if(suCentrale()){ nascondiAllarmeArchivio(); segnaArchivio(null, false); return; }
   await riattivaArchivioSilenzioso();
   if(state.archive){
     const v = await verificaArchivio(state.archive);
@@ -2331,6 +2333,7 @@ async function controllaArchivioSede(){
 /* Cancello prima dell'import: senza archivio verde non si importa.
    Ritorna true solo se si può procedere. */
 async function archivioProntoPerImport(){
+  if(suCentrale()) return true;                             // gli originali li conserva il PC centrale
   if(!window.showDirectoryPicker) return true;             // browser vecchio: flusso classico
   if(state.senzaArchivio) return true;                     // l'operatore ha scelto di farne a meno
   await riattivaArchivioSilenzioso();
@@ -2390,7 +2393,14 @@ setInterval(async ()=>{
   if(!archivioAvvisato){ archivioAvvisato = true; toast("⚠ "+msg, 9000); }
 }, 30000);
 
+/* PC CENTRALE (piscine): la pagina è servita dal programma FayCentrale, che conserva
+   lui gli originali nella sua cartella (FayCentrale\dati\file\originali). Lì non serve
+   nessuna cartella archivio da scegliere: ogni originale viene copiato sul PC centrale
+   DURANTE l'import, prima di dire "puoi togliere la scheda". Nei locali (pagina servita
+   dal sito) window.FAY_CENTRALE non esiste e tutto funziona come prima. */
+function suCentrale(){ return !!window.FAY_CENTRALE; }
 async function ensureArchive(){
+  if(suCentrale()) return null;
   if(state.archive) return state.archive;
   if(!window.showDirectoryPicker){
     toast("Questo browser non supporta l'archivio su cartella: continuo con le sole anteprime in memoria");
@@ -2705,7 +2715,7 @@ async function processBatchInterno(batch){
      archivio veniva saltata in silenzio e l'anteprima si faceva lo stesso da quello che
      Chrome aveva ancora in memoria. Risultato: griglia piena di foto senza originale, e
      nessun avviso. Tre letture fallite di fila = la scheda non c'è più, ci si ferma. */
-  let letturaKo = 0;
+  let letturaKo = 0, origMancanti = 0;
   for(const p of batch){
     if(prog.cancel) return { annullato:true };
     let buf=null;
@@ -2723,6 +2733,15 @@ async function processBatchInterno(batch){
         await w.write(buf); await w.close();
         p.arch = fh;
       }catch(err){ console.warn("copia archivio", p.code, err); }
+    }
+    if(suCentrale() && buf && sb && cloud.servizio && !p.origUploaded){
+      try{
+        const blob = new Blob([buf], {type:p.file.type||"image/jpeg"});
+        const up = await sb.storage.from("originali").upload((p.origKey = origPath(p)), blob, {contentType:blob.type, upsert:true});
+        if(up.error) throw up.error;
+        p.origUploaded = true;
+        if(p.dbId) scriviFoto(p.dbId, {originale_url:p.origKey});
+      }catch(err){ origMancanti++; console.warn("originale sul PC centrale", p.code, err); }
     }
     try{
       const srcBlob = buf? new Blob([buf], {type:p.file.type||"image/jpeg"}) : p.file;
@@ -2752,7 +2771,7 @@ async function processBatchInterno(batch){
   // gli originali salgono da soli sul cloud (dalla più recente): le altre postazioni stampano
   // anche se questo PC viene chiuso o perde l'accesso all'archivio
   if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
-  return { fails };
+  return { fails, origMancanti };
 }
 
 /* La scheda SD non si può "sentire" dal browser. Però la cartella da cui abbiamo importato
@@ -2786,11 +2805,13 @@ function fineImport(batch, esito){
     ? `⛔ Import rullo ${L} INTERROTTO a ${esito.fino}: la scheda non è più leggibile — rimettila e reimporta con la stessa sigla ${L} per riprendere`
     : esito.errore
     ? `⚠ Import rullo ${L} finito con errori — controlla la griglia`
+    : (esito.origMancanti||0)
+    ? `⚠ Import rullo ${L}: ${esito.origMancanti} originali NON salvati sul PC centrale — NON togliere la scheda, reimporta con la stessa sigla ${L}`
     : `✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a}) · puoi togliere la scheda`
       + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : "");
   prog.total = 0; prog.done = 0;
   fill.style.width = "100%";
-  const guaio = esito.errore || esito.schedaPersa;
+  const guaio = esito.errore || esito.schedaPersa || (esito.origMancanti||0);
   fill.style.background = guaio ? "var(--danger)" : "var(--ok)";
   lab.textContent = msg;
   lab.style.color = guaio ? "var(--danger)" : "var(--ok)";
@@ -2953,6 +2974,7 @@ async function syncPhotoUp(p){
       scattata_il: new Date(p.ts).toISOString(),
       mini_url: p.miniUrl, anteprima_url: p.anteprimaUrl, stampe: p.prints, esportata: p.exported
     };
+    if(p.origUploaded && p.origKey) riga.originale_url = p.origKey;   // originale salito prima della riga
     if(cloud.senzaFileOrigine !== true) riga.file_origine = p.sig || null;
     let {data,error} = await sb.from("foto").upsert(riga, {onConflict:"rullo_id,codice"}).select().single();
     if(error && String(error.message||"").includes("file_origine")){
@@ -3042,7 +3064,7 @@ const ORIG_BG_PARALLEL = 2;  // sottofondo: lascia banda alle anteprime e alle u
    l'unica cosa che serve per vendere. Ora salgono solo su richiesta: quando selezioni,
    stampi, esporti o invii una foto, e quando un'altra postazione la chiede.
    Chi vuole il vecchio comportamento lo riaccende da Altro. */
-function autoOrigOn(){ return localStorage.getItem("faylive_autoorig") === "1"; }
+function autoOrigOn(){ return suCentrale() || localStorage.getItem("faylive_autoorig") === "1"; }
 function setAutoOrig(on, daSede){
   localStorage.setItem("faylive_autoorig", on ? "1" : "0");
   // copia in state.event: è da lì che salvaImpostazioni() la manda sul cloud della sede
@@ -9146,6 +9168,7 @@ const giornoLimite = g => new Date(Date.now() - g*86400*1000).toISOString().slic
 
 async function cleanupOld(){
   if(!sb) return;
+  if(suCentrale()) return;     // sul PC centrale lo storage È l'archivio: non si cancella niente da solo
   // 1) originali oltre la finestra breve
   try{
     const {data:vecchi} = await sb.from("servizi").select("id").lt("data_servizio", giornoLimite(GIORNI_ORIGINALI));
