@@ -983,6 +983,9 @@ function setSync(mode, label){
   if(inCoda && (mode==="online" || mode==="offline" || !mode)){
     mode = "offline";
     label = `Offline — ${inCoda} ${inCoda===1?"dato":"dati"} in attesa, partono da soli`;
+  }else if(inCoda && mode==="syncing"){
+    // anteprime in coda E dati del report in attesa: si vedono entrambi
+    label = (label || "Sincronizzo…") + ` · ${inCoda} ${inCoda===1?"dato":"dati"} report in attesa`;
   }
   d.className=""; if(mode) d.classList.add(mode);
   $("syncLabel").textContent = label || (mode==="online"?"Sincronizzato":mode==="offline"?"Offline — riprende da solo":mode==="syncing"?"Sincronizzo…":"Solo locale");
@@ -7534,7 +7537,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "21 set 2026 · conservate";
+const VERSIONE = "1 ott 2026 · offline";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
