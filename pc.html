@@ -978,6 +978,12 @@ const cloud = {
 
 function setSync(mode, label){
   const d=$("syncDot"); if(!d) return;
+  // dati in coda (linea caduta): la spia non deve dire "Sincronizzato" finché non sono partiti
+  const inCoda = (typeof codaScritture!=="undefined" && codaScritture) ? codaScritture.length : 0;
+  if(inCoda && (mode==="online" || mode==="offline" || !mode)){
+    mode = "offline";
+    label = `Offline — ${inCoda} ${inCoda===1?"dato":"dati"} in attesa, partono da soli`;
+  }
   d.className=""; if(mode) d.classList.add(mode);
   $("syncLabel").textContent = label || (mode==="online"?"Sincronizzato":mode==="offline"?"Offline — riprende da solo":mode==="syncing"?"Sincronizzo…":"Solo locale");
 }
@@ -994,6 +1000,161 @@ async function sbTry(fn, label){
     console.warn("cloud", label||"", err);
     return null;
   }
+}
+
+/* =====================================================================
+   CODA DELLE SCRITTURE (28 set) — quando cade la linea non si perde nulla.
+   PRIMA: stampe, omaggi, scarti, file venduti, "stampata"/"esportata" e registro
+   attività si scrivevano sul cloud una volta sola. Se la linea era giù la scrittura
+   falliva in silenzio (la libreria Supabase NON lancia errori sui guasti di rete:
+   restituisce {error}, quindi sbTry non se ne accorgeva nemmeno) e il dato spariva
+   dal report. Alla prima ricarica, o al primo aggiornamento da un'altra postazione,
+   spariva anche dallo schermo.
+   ORA: ogni scrittura che non va a buon fine per colpa della rete finisce in una coda
+   salvata su questo PC (sopravvive alla ricarica della pagina) e riparte da sola, nello
+   stesso ordine, appena la linea torna. Finché la coda non è vuota le scritture nuove
+   si mettono in fila dietro alle vecchie: così un valore vecchio non può mai arrivare
+   DOPO uno nuovo e sovrascriverlo.
+   Tipi di operazione (k):
+     foto  — aggiorna campi di una foto già sul cloud (stampe, esportata, da_stampare…)
+     stat  — omaggi/scarti/file venduti segnati in diretta: si SOMMA (funzione segna_stat)
+     rullo — valore scritto a mano nel report o descrizione del rullo
+     att   — riga del registro attività (con l'ora VERA dell'evento, non quella dell'invio)
+     num   — riallinea il contatore dei codici sul cloud dopo un import fatto offline
+   Rullo e giornata si indicano per lettera + id giornata, non per id del rullo: un
+   rullo nato offline sul cloud ancora non esiste e viene creato al momento dell'invio.
+   ===================================================================== */
+var CODA_KEY = "faylive_coda_scritture";
+var codaScritture = (()=>{ try{ return JSON.parse(localStorage.getItem(CODA_KEY)||"[]")||[]; }catch(_){ return []; } })();
+var codaInCorso = false;
+function salvaCoda(){ try{ localStorage.setItem(CODA_KEY, JSON.stringify(codaScritture)); }catch(_){} }
+
+/* Guasto di rete o del server (si riprova) oppure rifiuto vero (si scarta, altrimenti
+   una riga sbagliata bloccherebbe per sempre tutte quelle dietro). */
+function erroreDaRiprovare(r){
+  if(!r || !r.error) return false;
+  const st = r.status||0;
+  return st===0 || st===408 || st===429 || st>=500;
+}
+
+// una scrittura uguale già in coda si fonde invece di accodarsi due volte
+function accoda(op){
+  const ultima = codaScritture;
+  if(op.k==="foto"){
+    const g = ultima.find(o=>o.k==="foto" && o.id===op.id);
+    if(g){ Object.assign(g.val, op.val); salvaCoda(); return; }
+  }else if(op.k==="rullo"){
+    const g = ultima.find(o=>o.k==="rullo" && o.srv===op.srv && o.L===op.L);
+    if(g){ Object.assign(g.val, op.val); salvaCoda(); return; }
+  }else if(op.k==="stat"){
+    const g = ultima.find(o=>o.k==="stat" && o.srv===op.srv && o.L===op.L && o.campo===op.campo);
+    if(g){ g.delta += op.delta; if(!g.delta) codaScritture = codaScritture.filter(o=>o!==g); salvaCoda(); return; }
+  }else if(op.k==="num"){
+    const g = ultima.find(o=>o.k==="num" && o.srv===op.srv && o.L===op.L);
+    if(g){ g.min = Math.max(g.min, op.min); salvaCoda(); return; }
+  }
+  codaScritture.push(op); salvaCoda();
+}
+
+// id del rullo sul cloud a partire da giornata + lettera (lo crea se nato offline)
+async function idRulloCloud(srv, L){
+  if(cloud.servizio && String(cloud.servizio.id)===String(srv) && cloud.rulli[L]) return {id:cloud.rulli[L].id};
+  const r = await sb.from("rulli").upsert({servizio_id:srv, lettera:L}, {onConflict:"servizio_id,lettera"}).select("id,ultimo_num").single();
+  if(r.error) return {errore:r};
+  if(cloud.servizio && String(cloud.servizio.id)===String(srv) && !cloud.rulli[L])
+    cloud.rulli[L] = {id:r.data.id, ultimo_num:r.data.ultimo_num};
+  return {id:r.data.id};
+}
+
+// esegue UNA operazione: "ok", "riprova" (rete giù) oppure "scarta" (rifiutata dal cloud)
+async function eseguiScrittura(op){
+  let r;
+  try{
+    if(op.k==="foto"){
+      r = await sb.from("foto").update(op.val).eq("id", op.id);
+    }else if(op.k==="att"){
+      r = await sb.from("attivita").insert(op.row);
+    }else{
+      const x = await idRulloCloud(op.srv, op.L);
+      if(x.errore) r = x.errore;
+      else if(op.k==="stat")  r = await sb.rpc("segna_stat", {p_rullo:x.id, p_campo:op.campo, p_delta:op.delta});
+      else if(op.k==="rullo") r = await sb.from("rulli").update(op.val).eq("id", x.id);
+      else if(op.k==="num"){
+        r = await sb.rpc("prossimo_codice_da", {p_rullo_id:x.id, p_quanti:0, p_minimo:op.min});
+        if(r.error && r.error.code==="PGRST202") r = {error:null};   // funzione non ancora creata: non bloccare la coda
+      }
+    }
+  }catch(err){ r = {error:err, status:0}; }
+  if(!r || !r.error) return "ok";
+  if(erroreDaRiprovare(r)) return "riprova";
+  console.warn("coda scritture: operazione rifiutata dal cloud, scartata", op, r.error);
+  return "scarta";
+}
+
+// punto d'ingresso unico: prova subito, e se la linea è giù mette in coda
+async function scrivi(op){
+  if(!sb) return;
+  if(codaScritture.length || codaInCorso){ accoda(op); svuotaCoda(); return; }
+  const esito = await eseguiScrittura(op);
+  if(esito==="riprova"){ accoda(op); cloud.online=false; setSync("offline"); }
+  else if(esito==="ok" && !cloud.online){ cloud.online=true; setSync("online"); }
+}
+function scriviFoto(id, val){ if(id) scrivi({k:"foto", id, val:Object.assign({}, val)}); }
+
+var codaRichiesta = false;   // chiamata arrivata mentre un giro era già in corso
+async function svuotaCoda(){
+  if(!sb || !codaScritture.length) return;
+  if(codaInCorso){ codaRichiesta = true; return; }
+  codaInCorso = true;
+  let bloccata = false;
+  try{
+    do{
+      codaRichiesta = false;
+      while(codaScritture.length){
+        const op = codaScritture[0];
+        const esito = await eseguiScrittura(op);
+        if(esito==="riprova"){ cloud.online=false; bloccata = true; break; }
+        if(codaScritture[0]===op) codaScritture.shift();
+        else codaScritture = codaScritture.filter(o=>o!==op);
+        salvaCoda();
+      }
+    }while(codaRichiesta && !bloccata && codaScritture.length);
+  }finally{
+    codaInCorso = false;
+    if(!codaScritture.length){ cloud.online=true; setSync("online"); }
+    else setSync("offline");
+  }
+}
+addEventListener("online", ()=> svuotaCoda());
+setInterval(()=>{ if(codaScritture.length) svuotaCoda(); }, 15000);
+setTimeout(()=> svuotaCoda(), 3000);        // coda rimasta da una sessione precedente
+
+/* Una foto letta dal cloud mentre questo PC ha ancora in coda una sua modifica (ricarica
+   della pagina a linea caduta): valgono i valori in coda, che sono i più recenti. */
+function applicaCodaFoto(p){
+  if(!p || !p.dbId || !codaScritture.length) return;
+  const op = codaScritture.find(o=>o.k==="foto" && o.id===p.dbId);
+  if(!op) return;
+  const v = op.val;
+  if(v.stampe!=null) p.prints = v.stampe;
+  if(v.esportata!=null) p.exported = !!v.esportata;
+  if(v.da_stampare!=null) p.daStampare = !!v.da_stampare;
+  if(v.copie!=null) p.copie = v.copie;
+  if("consegna" in v) p.consegna = v.consegna;
+  if("consegna_dove" in v) p.consegnaDove = v.consegna_dove;
+}
+
+/* Omaggi/scarti/file che arrivano dal cloud: valgono quelli del cloud PIÙ quello che
+   questo PC ha ancora in coda. Senza questa somma, un aggiornamento dal cloud arrivato
+   prima che la coda si svuoti cancellava a video i numeri segnati offline. */
+function statsDaCloud(srv, r){
+  const s = {omaggi:r.omaggi||0, scarti:r.scarti||0, file_venduti:r.file_venduti||0};
+  for(const op of codaScritture){
+    if(String(op.srv)!==String(srv) || op.L!==r.lettera) continue;
+    if(op.k==="rullo") ["omaggi","scarti","file_venduti"].forEach(c=>{ if(op.val[c]!=null) s[c]=op.val[c]; });
+    else if(op.k==="stat" && s[op.campo]!=null) s[op.campo] = Math.max(0, s[op.campo] + op.delta);
+  }
+  return s;
 }
 
 const state = {
@@ -1787,7 +1948,7 @@ async function importaFiles(files){
   }
   // salva/aggiorna la descrizione rullo sul cloud
   if(sb && cloud.rulli[L] && state.letterDesc[L]){
-    sbTry(()=>sb.from("rulli").update({descrizione:state.letterDesc[L]}).eq("id",cloud.rulli[L].id), "descrizione rullo");
+    scrivi({k:"rullo", srv:cloud.servizio.id, L, val:{descrizione:state.letterDesc[L]}});
   }
   $("stTotal").textContent = state.photos.length;
   renderTabs(); layoutGrid(); updateThumbCloud();
@@ -2997,7 +3158,8 @@ function logEvento(azione, o){
   o = o || {};
   try{
     if(!sb || !cloud.servizio) return;
-    sb.from("attivita").insert({
+    // passa dalla coda: senza linea la riga aspetta, con l'ora vera dell'evento
+    scrivi({k:"att", row:{
       servizio_id: cloud.servizio.id,
       rullo_lettera: o.rullo || "",
       codici: o.codici || "",
@@ -3005,8 +3167,9 @@ function logEvento(azione, o){
       quante: o.quante || 1,
       postazione: nomePostazione(),
       esito: o.esito || "ok",
-      dettaglio: o.dettaglio || null
-    }).then(()=>{}, ()=>{});      // il registro non deve mai disturbare il lavoro
+      dettaglio: o.dettaglio || null,
+      creato_il: new Date().toISOString()
+    }}).catch(()=>{});            // il registro non deve mai disturbare il lavoro
   }catch(_){}
 }
 
@@ -3709,9 +3872,8 @@ async function segnaStat(set, campo, etichetta){
     const n = perRullo[L];
     const st = state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file_venduti:0};
     st[campo] = (st[campo]||0) + n;                       // subito a schermo, poi sul cloud
-    if(sb && cloud.rulli[L]){
-      await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: n}), "report "+campo);
-    }
+    // anche se il rullo sul cloud non esiste ancora (import fatto offline): lo crea la coda
+    if(sb && cloud.servizio) scrivi({k:"stat", srv:cloud.servizio.id, L, campo, delta:n});
   }
   renderTabs();                                  // ▤ e vendute si aggiornano subito in cima
   const tot = set.length;
@@ -3723,9 +3885,7 @@ async function annullaStat(perRullo, campo){
     const n = perRullo[L];
     const st = state.rulloStats[L] || {};
     st[campo] = Math.max(0, (st[campo]||0) - n);
-    if(sb && cloud.rulli[L]){
-      await sbTry(()=>sb.rpc("segna_stat", {p_rullo: cloud.rulli[L].id, p_campo: campo, p_delta: -n}), "report annulla");
-    }
+    if(sb && cloud.servizio) scrivi({k:"stat", srv:cloud.servizio.id, L, campo, delta:-n});
   }
   renderTabs();
   toast("Annullato");
@@ -3744,7 +3904,7 @@ $("selMenoStampa").onclick = ()=>{
   set.forEach(p=>{
     if((p.prints||0)<=0) return;
     p.prints = p.prints - 1; tolte++; toccaLocale(p);
-    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stampa tolta");
+    if(sb && p.dbId) scriviFoto(p.dbId, {stampe:p.prints});
   });
   renderTabs(); paintVisible(); refreshLbStatus();
   toast(tolte ? `Tolta una stampa a ${tolte} foto` : "Queste foto non risultano stampate");
@@ -3832,7 +3992,7 @@ async function inviaDiretto(set){
     }
     logEvento("invio", {codici:files.map(f=>f.nome.replace(/\.jpg$/i,"")).join(", "),
       quante:out.inviate||files.length, dettaglio:email});
-    set.forEach(p=>{ p.exported=true; if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export"); });
+    set.forEach(p=>{ p.exported=true; if(sb && p.dbId) scriviFoto(p.dbId, {esportata:true}); });
     paintVisible();
     /* Prima qui c'era un alert: bloccava la postazione finché non premevi OK.
        La conferma resta ben visibile ma non ferma il lavoro. */
@@ -4166,13 +4326,13 @@ async function doPrint(set){
          la prossima volta che la stessa foto torna in lista si porterebbe dietro un
          posto vecchio, magari di un altro cliente */
       p.consegna = null; p.consegnaDove = null;
-      if(sb && p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1, consegna:null, consegna_dove:null}).eq("id",p.dbId),"richiesta stampa servita");
+      if(sb && p.dbId) scriviFoto(p.dbId, {da_stampare:false, copie:1, consegna:null, consegna_dove:null});
     });
     // le copie decise a mano su questo PC valgono per QUESTA stampa: la prossima riparte da 1
     set.forEach(p=>{ if(!p.daStampare) p.copie = 1; });
     if(eranoDaStampare.length) updatePrintQueueBadge();
     renderTabs(); paintVisible(); refreshLbStatus();
-    set.forEach(p=>{ if(sb && p.dbId) sbTry(()=>sb.from("foto").update({stampe:p.prints}).eq("id",p.dbId),"stato stampa"); });
+    set.forEach(p=>{ if(sb && p.dbId) scriviFoto(p.dbId, {stampe:p.prints}); });
     /* STAMPE DI OGGI SU FOTO DI IERI. Il contatore della foto dice quante volte è stata
        stampata in assoluto, non QUANDO: una ristampa fatta stasera finiva nel report della
        serata in cui la foto era stata scattata. Qui si lascia traccia della stampa con il
@@ -4242,7 +4402,7 @@ async function exportPhotos(set){
       setTimeout(()=>URL.revokeObjectURL(url), 5000); saved++;
     }
     p.exported=true;
-    if(sb && p.dbId) sbTry(()=>sb.from("foto").update({esportata:true}).eq("id",p.dbId),"stato export");
+    if(sb && p.dbId) scriviFoto(p.dbId, {esportata:true});
   }
   renderTabs(); paintVisible(); refreshLbStatus();
   const dove = dir ? `cartella "${dir.name}"` : "cartella Download";
@@ -6526,7 +6686,9 @@ function registraStampaDelGiorno(set, copieDi){
       perRullo[L].codici.push(p.code);
     });
     Object.keys(perRullo).forEach(L=>{
-      sb.from("attivita").insert({
+      /* Questa riga decide quali stampe vanno nel report di quale giornata: persa, le
+         vendute risultavano sbagliate. Passa dalla coda come tutte le altre. */
+      scrivi({k:"att", row:{
         servizio_id: cloud.servizio.id,
         rullo_lettera: L,
         codici: perRullo[L].codici.join(", "),
@@ -6534,8 +6696,9 @@ function registraStampaDelGiorno(set, copieDi){
         quante: perRullo[L].fogli,
         postazione: nomePostazione(),
         esito: "ok",
-        dettaglio: "giorno=" + oggi
-      }).then(()=>{}, ()=>{});
+        dettaglio: "giorno=" + oggi,
+        creato_il: new Date().toISOString()
+      }}).catch(()=>{});
     });
   }catch(_){}
 }
@@ -6682,9 +6845,7 @@ function venduteRullo(r){ return Math.max(0, stampeGiornata(r) - (r.omaggi||0) -
 async function salvaStat(L, campo, valore){
   state.rulloStats[L] = state.rulloStats[L] || {omaggi:0, scarti:0, file_venduti:0};
   state.rulloStats[L][campo] = valore;
-  if(sb && cloud.rulli[L]){
-    await sbTry(()=>sb.from("rulli").update({[campo]: valore}).eq("id", cloud.rulli[L].id), "report rullo");
-  }
+  if(sb && cloud.servizio) await scrivi({k:"rullo", srv:cloud.servizio.id, L, val:{[campo]: valore}});
   renderTabs();                    // numero corretto a mano nel report: si allinea anche in cima
 }
 
@@ -7076,7 +7237,7 @@ async function loadServizioFoto(){
   const {data:rulli} = await sb.from("rulli").select("*").eq("servizio_id",cloud.servizio.id);
   (rulli||[]).forEach(r=>{ cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
     if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-    state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file_venduti:r.file_venduti||0};
+    state.rulloStats[r.lettera]=statsDaCloud(cloud.servizio.id, r);
     state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num); });
   const rulliById={}; (rulli||[]).forEach(r=>rulliById[r.id]=r);
   const ids=(rulli||[]).map(r=>r.id);
@@ -7199,7 +7360,7 @@ async function pullNuoveFoto(manuale){
     for(const r of (rulli||[])){
       cloud.rulli[r.lettera]={id:r.id, ultimo_num:r.ultimo_num};
       if(r.descrizione) state.letterDesc[r.lettera]=r.descrizione;
-      state.rulloStats[r.lettera]={omaggi:r.omaggi||0, scarti:r.scarti||0, file_venduti:r.file_venduti||0};
+      state.rulloStats[r.lettera]=statsDaCloud(cloud.servizio.id, r);
       state.counters[r.lettera]=Math.max(state.counters[r.lettera]||0, r.ultimo_num||0);
       /* Quante foto di questo rullo ci sono sul cloud? Solo il numero, nessuna riga scaricata.
          Si conta invece di guardare l'ultimo codice: se anche questa postazione ha importato
@@ -7491,6 +7652,7 @@ function addRemotePhotoFast(f, letter){
                con il posto in consegnaDove), "desk" (passa lui), oppure niente */
             consegna: f.consegna||null, consegnaDove: f.consegna_dove||null,
             crop: cropLeggi(f.ritaglio) };
+  applicaCodaFoto(p);
   state.photos.push(p); state.byCode.set(p.code,p);
 }
 
@@ -7523,6 +7685,7 @@ async function addRemotePhoto(f, letter){
     }
   }
   if(blob){ try{ p.thumb=await blobToThumb(blob); }catch(_){}}
+  applicaCodaFoto(p);
   if(fotoModificata(p)) aggiornaMiniatura(p);
   state.photos.push(p); state.byCode.set(p.code,p);
 }
@@ -7599,6 +7762,10 @@ function subscribeRealtime(){
         p.copie=f.copie||1;                       // quante copie ha chiesto il tablet
         p.consegna=f.consegna||null;              // portarle al tavolo o le ritira lui
         p.consegnaDove=f.consegna_dove||null;
+        /* Se questo PC ha ancora in coda una modifica a questa foto (linea caduta), il
+           cloud è indietro: vale la nostra. Altrimenti una stampa fatta offline sparirebbe
+           dal contatore e la stampa successiva scriverebbe un totale sbagliato. */
+        applicaCodaFoto(p);
         /* taglio deciso da un'altra postazione: si adotta subito, cosi' quello che il
            cliente vede sul monitor e quello che esce dalla stampante coincidono ovunque */
         const kNuovo = cropLeggi(f.ritaglio);
@@ -7628,7 +7795,7 @@ function subscribeRealtime(){
     .on("postgres_changes", {event:"UPDATE", schema:"public", table:"rulli"}, payload=>{
       const r = payload.new;
       if(!cloud.servizio || String(r.servizio_id)!==String(cloud.servizio.id)) return;
-      state.rulloStats[r.lettera] = {omaggi:r.omaggi||0, scarti:r.scarti||0, file_venduti:r.file_venduti||0};
+      state.rulloStats[r.lettera] = statsDaCloud(cloud.servizio.id, r);
       if(r.descrizione!=null) state.letterDesc[r.lettera] = r.descrizione;
       renderTabs();
       if($("statsDlg") && $("statsDlg").open) aggiornaVendute();
@@ -7877,12 +8044,12 @@ $("pqPrintAll").onclick=async ()=>{
   pqDaRiaprire=false; $("pqDlg").close();
   if(set.length) await printPhotos(set, {copieGiaDecise:true});
   // dopo la stampa, togli il flag da_stampare
-  for(const p of set){ p.daStampare=false; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, consegna:null, consegna_dove:null}).eq("id",p.dbId),"stampata"); }
+  for(const p of set){ p.daStampare=false; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) scriviFoto(p.dbId, {da_stampare:false, consegna:null, consegna_dove:null}); }
   updatePrintQueueBadge();
 };
 $("pqClear").onclick=async ()=>{
   const list=printQueuePhotos();
-  for(const p of list){ p.daStampare=false; p.copie=1; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) sbTry(()=>sb.from("foto").update({da_stampare:false, copie:1, consegna:null, consegna_dove:null}).eq("id",p.dbId),"coda"); }
+  for(const p of list){ p.daStampare=false; p.copie=1; p.consegna=null; p.consegnaDove=null; toccaLocale(p); if(sb&&p.dbId) scriviFoto(p.dbId, {da_stampare:false, copie:1, consegna:null, consegna_dove:null}); }
   updatePrintQueueBadge(); pqDaRiaprire=false; $("pqDlg").close();
   toast("Lista da stampare svuotata");
 };
@@ -8877,8 +9044,24 @@ async function svuotaMail(tutte){
 $("mailClear").onclick    = ()=> svuotaMail(false);
 $("mailClearAll").onclick = ()=> svuotaMail(true);
 
-// assegna il prossimo numero dal cloud (atomico) o localmente se offline
+/* Assegna i numeri dei codici: dal cloud (atomico tra postazioni) o in locale se offline.
+   DIFETTI CORRETTI (28 set):
+   1) Con la linea giù e il rullo già esistente, la libreria Supabase non lancia errori
+      ma restituisce {data:null}: si finiva nel ripiego "uno alla volta", che calcolava
+      l'inizio come null−1 = −1 e RICOMINCIAVA IL RULLO DA A-000, con codici doppi.
+   2) Dopo un import offline il contatore sul cloud restava indietro: tornata la linea,
+      il cloud riassegnava numeri già usati (es. A-051…A-080 due volte) e la riga della
+      prima foto veniva sovrascritta da quella della seconda.
+   ORA il cloud riceve sempre il numero più alto che questo PC conosce (p_minimo) e parte
+   da lì: funzione SQL prossimo_codice_da. Il ripiego "uno alla volta" è tolto. */
+function numeroMassimoLocale(letter){
+  let m = state.counters[letter]||0;
+  for(const p of state.photos) if(p.letter===letter && p.num>m) m = p.num;
+  return m;
+}
+let avvisoFunzioneCodici = false;
 async function nextNumber(letter, count){
+  const minimo = numeroMassimoLocale(letter);
   if(sb && cloud.servizio){
     try{
       // assicura il rullo
@@ -8889,18 +9072,22 @@ async function nextNumber(letter, count){
         if(error) throw error;
         cloud.rulli[letter]={id:data.id, ultimo_num:data.ultimo_num};
       }
-      // riserva "count" numeri in blocco
-      const {data,error}=await sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count});
-      if(!error && typeof data==="number"){ cloud.rulli[letter].ultimo_num=data; return data-count; }
-      // fallback: uno alla volta
-      let start=null;
-      for(let i=0;i<count;i++){ const {data:n}=await sb.rpc("prossimo_codice",{p_rullo_id:cloud.rulli[letter].id});
-        if(i===0) start=n-1; }
-      if(start!=null){ cloud.rulli[letter].ultimo_num=start+count; return start; }
+      // riserva "count" numeri in blocco, mai sotto quelli che questo PC ha già usato
+      const r = await sb.rpc("prossimo_codice_da",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count, p_minimo:minimo});
+      if(!r.error && typeof r.data==="number"){ cloud.rulli[letter].ultimo_num=r.data; return r.data-count; }
+      if(r.error && r.error.code==="PGRST202"){
+        // funzione SQL non ancora creata: vecchio metodo, ma solo se non si sovrappone
+        if(!avvisoFunzioneCodici){ avvisoFunzioneCodici=true;
+          toast("⚠ Sul cloud manca la funzione prossimo_codice_da: esegui l'SQL dell'aggiornamento", 9000); }
+        const v = await sb.rpc("prossimo_codice_blocco",{p_rullo_id:cloud.rulli[letter].id, p_quanti:count});
+        if(!v.error && typeof v.data==="number" && v.data-count >= minimo){ cloud.rulli[letter].ultimo_num=v.data; return v.data-count; }
+      }
+      throw (r.error || new Error("numerazione dal cloud non disponibile"));
     }catch(err){ console.warn("nextNumber cloud", err); cloud.online=false; setSync("offline"); }
   }
-  // offline: numerazione locale
-  const base=state.counters[letter]||0; return base;
+  // offline: numerazione locale dal numero più alto conosciuto; il cloud si riallinea al ritorno della linea
+  if(sb && cloud.servizio) accoda({k:"num", srv:cloud.servizio.id, L:letter, min:minimo+count});
+  return minimo;
 }
 
 /* Conservazione differenziata.
