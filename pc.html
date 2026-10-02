@@ -1970,7 +1970,13 @@ async function importaFiles(files){
   const batch=[...daRiagganciare];
   for(const f of files){
     n++;
-    const p={ id:"p"+state.photos.length+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
+    /* id interno UNICO per tutta la sessione (2 ott). Prima era "p"+posizione+lettera+numero:
+       aprendo una giornata nuova (sede nuova) senza ricaricare la pagina, la prima foto
+       importata riceveva lo stesso id della prima foto della giornata precedente, e
+       l'anteprima grande già in memoria mostrava la foto dell'ALTRA sede con lo stesso
+       codice. Cambiando sede e tornando indietro si sistemava perché le foto ricaricate
+       dal cloud hanno id diversi. */
+    const p={ id:"p"+(++seqFotoImport)+"_"+Date.now().toString(36)+"_"+L+n, code:fmtCode(L,n), letter:L, num:n,
               srvId: cloud.servizio? cloud.servizio.id : null,
               sig: firmaDi(f),
               file:f, thumb:null, ts:f.lastModified, prints:0, exported:false };
@@ -3525,6 +3531,7 @@ async function ensureOriginalBlob(p){
 
 /* ---------- immagini piene on-demand (per lightbox e monitor) ---------- */
 const bigCache = new Map(); // id -> ImageBitmap  (LRU semplice)
+var seqFotoImport = 0;       // contatore per gli id interni delle foto importate (vedi importaFiles)
 async function decodeBig(p, maxSide){
   const file = await freshFile(p);
   // 1) decodifica diretta
@@ -7601,7 +7608,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "1 ott 2026";
+const VERSIONE = "2 ott 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
