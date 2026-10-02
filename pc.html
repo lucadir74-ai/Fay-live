@@ -6601,6 +6601,12 @@ async function ripassoCloud(){
   return tolti;
 }
 
+// una cancellazione rifiutata dal database diventa un errore visibile, non un "fatto" finto
+async function controllaCanc(promessa, cosa){
+  const r = await promessa;
+  if(r && r.error) throw new Error(`non riesco a cancellare ${cosa}: ${r.error.message||r.error.code||"errore"}`);
+  return r;
+}
 async function deleteSede(s){
   setSync("syncing","Cancello la sede…");
   try{
@@ -6611,11 +6617,16 @@ async function deleteSede(s){
       }
       const {data:rulli}=await sb.from("rulli").select("id").eq("servizio_id",sv.id);
       const rids=(rulli||[]).map(r=>r.id);
-      if(rids.length) await sb.from("foto").delete().in("rullo_id",rids);
-      await sb.from("rulli").delete().eq("servizio_id",sv.id);
+      if(rids.length) await controllaCanc(sb.from("foto").delete().in("rullo_id",rids), "foto");
+      await controllaCanc(sb.from("rulli").delete().eq("servizio_id",sv.id), "rulli");
     }
-    await sb.from("servizi").delete().eq("sede_id",s.id);
-    await sb.from("sedi").delete().eq("id",s.id);
+    await controllaCanc(sb.from("servizi").delete().eq("sede_id",s.id), "giornate");
+    await controllaCanc(sb.from("sedi").delete().eq("id",s.id), "sede");
+    /* Verifica vera (2 ott): prima un rifiuto del database veniva ignorato e compariva
+       comunque "Sede cancellata", mentre la sede restava lì. Ora si controlla che sia
+       davvero sparita e, se no, si dice perché. */
+    const {data:ancora} = await sb.from("sedi").select("id").eq("id",s.id);
+    if(ancora && ancora.length) throw new Error("la sede risulta ancora presente sul database");
     // reset stato locale
     cloud.sede=null; cloud.servizio=null; cloud.rulli={};
     try{ localStorage.removeItem(ULTIMA_KEY); }catch(_){}
@@ -6628,7 +6639,11 @@ async function deleteSede(s){
     setSync(null,"Scegli una sede");
     renderTabs(); layoutGrid(); updateEventInfo();
     toast(`Sede "${s.nome}" cancellata`);
-  }catch(err){ setSync("offline"); toast("Errore cancellando: "+(err.message||err)); console.warn("deleteSede",err); }
+  }catch(err){
+    setSync("offline"); console.warn("deleteSede",err);
+    alert(`⚠ La sede "${s.nome}" NON è stata cancellata del tutto.\n\nMotivo: ${err.message||err}\n\nFai uno screenshot di questo messaggio.`);
+    await loadSedi();
+  }
 }
 
 /* UNA SEDE + UNA DATA = UNA GIORNATA SOLA (1 ott).
