@@ -6384,16 +6384,72 @@ async function ripristinaUltimaScelta(){
   sel.value=s.id;
   await chooseSede(s, o.data);
 }
+function riempiTendinaSedi(sel, data){
+  sel.innerHTML='<option value="">Sede…</option>' +
+    data.map(s=>`<option value="${s.id}">${s.nome.replace(/[<>&"]/g,"")}</option>`).join("") +
+    `<option value="${NEW_SEDE}">+ Nuova sede…</option>`;
+  sel._sedi = data;
+}
+
+/* TENDINA SEDI SEMPRE AGGIORNATA (8 ott). DIFETTO: cancellando (o creando) una sede dal
+   PC centrale, sulla postazione la tendina restava com'era finché non si premeva F5.
+   I dati erano giusti, solo la tendina era vecchia. ORA ogni 15 secondi, e ogni volta
+   che si torna sulla finestra, la tendina si riallinea da sola, sia via cavo (PC centrale)
+   sia via cloud. Regole di prudenza:
+   - se la linea è giù o la risposta non arriva, la tendina resta com'è (niente svuotamenti);
+   - non si tocca mentre l'operatore la sta usando o sta creando una sede;
+   - se sparisce proprio la sede APERTA su questo PC, si aspetta una seconda conferma
+     (giro successivo) e la fine di un eventuale import, poi si chiude la sede con avviso.
+     Gli originali sul disco non vengono toccati. */
+var sediControllo = { inCorso:false, sparita:null };
+async function aggiornaSediDaSole(){
+  if(!sb || sediControllo.inCorso || document.hidden) return;
+  const sel = $("sedeSelect");
+  if(!sel || document.activeElement === sel) return;
+  if($("sedeDlg") && $("sedeDlg").open) return;
+  sediControllo.inCorso = true;
+  try{
+    const r = await conTempo(sb.from("sedi").select("*").order("nome"), 8000);
+    if(!r || r.error || !Array.isArray(r.data)) return;
+    const nuove = r.data;
+    const aperta = cloud.sede;
+    if(aperta && !nuove.some(x=>String(x.id)===String(aperta.id))){
+      // sede aperta qui ma cancellata altrove
+      if(sediControllo.sparita !== aperta.id){ sediControllo.sparita = aperta.id; return; }
+      if(importInCorso || prog.total > 0) return;          // si aspetta la fine dell'import
+      sediControllo.sparita = null;
+      azzeraSedeLocale();
+      riempiTendinaSedi(sel, nuove);
+      setSync(null,"Scegli una sede");
+      renderTabs(); layoutGrid(); updateEventInfo();
+      alert(`La sede "${aperta.nome}" è stata cancellata da un'altra postazione.\n\n`
+          + "Scegli la sede su cui lavorare dalla tendina in alto.\n"
+          + "Gli originali su questo PC non sono stati toccati.");
+      return;
+    }
+    sediControllo.sparita = null;
+    const firma = a => (a||[]).map(x=>x.id+"|"+x.nome).join("\n");
+    if(firma(nuove) !== firma(sel._sedi)){
+      riempiTendinaSedi(sel, nuove);
+      sel.value = aperta ? aperta.id : "";
+    }
+  }catch(err){
+    console.warn("aggiorna sedi", err);
+  }finally{
+    sediControllo.inCorso = false;
+  }
+}
+setInterval(aggiornaSediDaSole, 15000);
+window.addEventListener("focus", ()=>aggiornaSediDaSole());
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) aggiornaSediDaSole(); });
+
 async function loadSedi(){
   const sel=$("sedeSelect");
   if(!sb){ sel.innerHTML='<option value="">Solo locale</option>'; return; }
   try{
     const {data,error}=await sb.from("sedi").select("*").order("nome");
     if(error) throw error;
-    sel.innerHTML='<option value="">Sede…</option>' +
-      data.map(s=>`<option value="${s.id}">${s.nome.replace(/[<>&"]/g,"")}</option>`).join("") +
-      `<option value="${NEW_SEDE}">+ Nuova sede…</option>`;
-    sel._sedi = data;
+    riempiTendinaSedi(sel, data);
   }catch(err){
     sel.innerHTML='<option value="">Sede… (cloud non raggiungibile)</option>';
     console.warn("sedi", err);
@@ -6607,6 +6663,16 @@ async function controllaCanc(promessa, cosa){
   if(r && r.error) throw new Error(`non riesco a cancellare ${cosa}: ${r.error.message||r.error.code||"errore"}`);
   return r;
 }
+// chiude la sede aperta su questo PC (cancellata qui o da un'altra postazione)
+function azzeraSedeLocale(){
+  cloud.sede=null; cloud.servizio=null; cloud.rulli={};
+  try{ localStorage.removeItem(ULTIMA_KEY); }catch(_){}
+  if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
+  state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
+  state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
+  cellPool.forEach(el=>el.remove()); cellPool.clear();
+  $("stTotal").textContent="0"; $("giornoSelect").hidden=true;
+}
 async function deleteSede(s){
   setSync("syncing","Cancello la sede…");
   try{
@@ -6627,14 +6693,7 @@ async function deleteSede(s){
        davvero sparita e, se no, si dice perché. */
     const {data:ancora} = await sb.from("sedi").select("id").eq("id",s.id);
     if(ancora && ancora.length) throw new Error("la sede risulta ancora presente sul database");
-    // reset stato locale
-    cloud.sede=null; cloud.servizio=null; cloud.rulli={};
-    try{ localStorage.removeItem(ULTIMA_KEY); }catch(_){}
-    if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
-    state.photos=[]; state.byCode=new Map(); state.counters={}; state.letterDesc={};
-    state.selection.clear(); state.activeLetter=null; state.filter=""; state.focusIdx=-1;
-    cellPool.forEach(el=>el.remove()); cellPool.clear();
-    $("stTotal").textContent="0"; $("giornoSelect").hidden=true;
+    azzeraSedeLocale();
     await loadSedi();
     setSync(null,"Scegli una sede");
     renderTabs(); layoutGrid(); updateEventInfo();
