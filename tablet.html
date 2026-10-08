@@ -603,12 +603,65 @@ function aggiornaIndicatoreAnteprime(){
 }
 
 /* ---------- caricamento sedi / giornate ---------- */
+function riempiTendinaSedi(data){
+  $("sedeSel").innerHTML='<option value="">Sede…</option>'+data.map(s=>`<option value="${s.id}">${esc(s.nome)}</option>`).join("");
+  $("sedeSel")._sedi=data;
+}
+/* TENDINA SEDI SEMPRE AGGIORNATA (8 ott), come sul PC. Una sede creata o cancellata da un
+   PC compariva/spariva sul tablet solo ricaricando la pagina. Ora ogni 15 secondi, e ogni
+   volta che il tablet torna in primo piano, la tendina si riallinea da sola.
+   - linea giù o nessuna risposta: la tendina resta com'è;
+   - non si tocca mentre la si sta usando;
+   - se sparisce la sede APERTA su questo tablet si aspetta una seconda conferma e che non
+     ci siano finestre aperte (invio, stampa…), poi si chiude la sede con un avviso. */
+var sediCtl = { inCorso:false, sparita:null };
+async function aggiornaSediDaSole(){
+  if(!sb || sediCtl.inCorso || document.hidden) return;
+  const sel = $("sedeSel");
+  if(!sel || document.activeElement === sel) return;
+  sediCtl.inCorso = true;
+  try{
+    const r = await Promise.race([
+      Promise.resolve(sb.from("sedi").select("*").order("nome")),
+      new Promise(res=>setTimeout(()=>res(null), 8000))
+    ]);
+    if(!r || r.error || !Array.isArray(r.data)) return;
+    const nuove = r.data, aperta = S.sede;
+    if(aperta && !nuove.some(x=>String(x.id)===String(aperta.id))){
+      if(sediCtl.sparita !== aperta.id){ sediCtl.sparita = aperta.id; return; }
+      if(document.querySelector("dialog[open]")) return;     // si aspetta che finisca
+      sediCtl.sparita = null;
+      if(S.channel){ try{ sb.removeChannel(S.channel); }catch(_){} S.channel=null; }
+      if(S.selmode) esciDaSelezione();
+      S.sede=null; S.servizio=null; S.photos=[]; S.byId=new Map(); S.rulli={};
+      S.letter=null; S.gruppo=null; S.favOnly=false; S.consOnly=false;
+      try{ localStorage.removeItem(SEDE_KEY); }catch(_){}
+      $("giornoSel").hidden = true;
+      riempiTendinaSedi(nuove); sel.value = "";
+      render(); setDot(true,"Scegli una sede");
+      alert(`La sede "${aperta.nome}" è stata cancellata da un PC.\n\nScegli la sede su cui lavorare dalla tendina in alto.`);
+      return;
+    }
+    sediCtl.sparita = null;
+    const firma = a => (a||[]).map(x=>x.id+"|"+x.nome).join("\n");
+    if(firma(nuove) !== firma(sel._sedi)){
+      riempiTendinaSedi(nuove);
+      sel.value = aperta ? aperta.id : "";
+    }
+  }catch(err){
+    console.warn("aggiorna sedi", err);
+  }finally{
+    sediCtl.inCorso = false;
+  }
+}
+setInterval(aggiornaSediDaSole, 15000);
+window.addEventListener("focus", ()=>aggiornaSediDaSole());
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) aggiornaSediDaSole(); });
 async function loadSedi(){
   if(!sb){ setDot(false,"Cloud non disponibile"); return; }
   const {data,error}=await sb.from("sedi").select("*").order("nome");
   if(error){ setDot(false,"Errore sedi"); return; }
-  $("sedeSel").innerHTML='<option value="">Sede…</option>'+data.map(s=>`<option value="${s.id}">${esc(s.nome)}</option>`).join("");
-  $("sedeSel")._sedi=data;
+  riempiTendinaSedi(data);
   // riapre da sola l'ultima sede usata su questo tablet
   const ultima = (()=>{ try{ return localStorage.getItem(SEDE_KEY); }catch(_){ return null; } })();
   if(ultima){
