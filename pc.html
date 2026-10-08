@@ -2045,7 +2045,7 @@ function archivioFuoriStandard(){
   return !!n && n.trim().toLowerCase() !== "faylive";
 }
 function etichettaArchivio(){
-  if(suCentrale()) return "PC centrale (FayCentrale\\dati)";
+  if(suCentrale()) return "PC centrale (FayCentrale\\Archivio)";
   if(state.archive) return (archivioFuoriStandard()? "⚠ " : "") + state.archive.name;
   if(state.archiveName) return state.archiveName + " (da riattivare)";
   return "non impostato";
@@ -3281,12 +3281,16 @@ function updateOrigCount(){
   }
   if(origFalliti.size) txt += " · ⛔ non caricati: "+origFalliti.size;
   $("stArch").textContent = txt;
-  $("stArch").style.color = state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
+  /* Sul PC centrale l'archivio c'è sempre (lo tiene il programma): verde, rosso solo se
+     qualche originale non è stato salvato. Prima restava rosso e sembrava un errore. */
+  $("stArch").style.color = suCentrale() ? (origFalliti.size ? "var(--danger)" : "var(--ok)")
+                          : state.archive ? "" : (state.archiveName ? "var(--danger)" : "");
   /* Il percorso completo accanto al nome: il browser non lo sa, ma la postazione se l'è
      annotato una volta e da lì in poi si legge sempre a colpo d'occhio. */
   try{
     const sp = $("stArchPath"), pa = percorsoAnnotato();
-    if(sp){ sp.textContent = pa ? "("+pa+")" : ""; sp.hidden = !pa; }
+    // sul PC centrale il percorso annotato (C:\FayLive) è di un'altra modalità: non va mostrato
+    if(sp){ const mostra = pa && !suCentrale(); sp.textContent = mostra ? "("+pa+")" : ""; sp.hidden = !mostra; }
   }catch(_){}
   updateOrigCloud();
   if(urg) setSync("syncing","Carico originali ("+urg+")");
@@ -7682,7 +7686,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "2 ott 2026";
+const VERSIONE = "8 ott 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
