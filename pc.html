@@ -565,12 +565,12 @@
           </div>
           <div style="margin-top:8px">Codice sulla foto
             <select id="evCodePos">
+              <option value="bassoSx">In basso a sinistra (come in griglia)</option>
+              <option value="bassoDx">In basso a destra</option>
+              <option value="altoSx">In alto a sinistra</option>
+              <option value="altoDx">In alto a destra</option>
               <option value="latoDx">Verticale sul lato destro</option>
               <option value="latoSx">Verticale sul lato sinistro</option>
-              <option value="altoDx">In alto a destra</option>
-              <option value="altoSx">In alto a sinistra</option>
-              <option value="bassoDx">In basso a destra</option>
-              <option value="bassoSx">In basso a sinistra</option>
               <option value="centro">In basso al centro</option>
             </select></div>
         </div>
@@ -1290,7 +1290,7 @@ function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
 }
 function drawCodeBadge(ctx, w, h, code, status){
   const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
-  const pos = (state.event && state.event.codePos) || "latoDx";
+  const pos = (state.event && state.event.codePos) || "bassoSx";
   const sfondo = status==="pr" ? "rgba(91,201,138,.95)" : status==="ex" ? "rgba(127,184,240,.95)" : "rgba(11,14,20,.82)";
   const testo  = status==="pr" ? "#06210f" : status==="ex" ? "#0a1f33" : "#F5B942";
   ctx.save();
@@ -1335,7 +1335,7 @@ function openEventPanel(){
   $("evFontInfo").value = ev.fontInfo || FONTS[0].v;
   $("evInfoH").value = ev.infoH ?? 4;
   $("evInfoHOut").textContent = ($("evInfoH").value) + "%";
-  $("evCodePos").value = ev.codePos || "latoDx";
+  $("evCodePos").value = ev.codePos || "bassoSx";
   $("evLogoSize").value = ev.logoSize ?? 30;
   $("evTextSize").value = ev.textSize ?? 4.2;
   syncSizeOut();
@@ -7686,7 +7686,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "8 ott 2026";
+const VERSIONE = "26 ott 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
