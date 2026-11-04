@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory=$true)][ValidateSet('centrale','postazione','avvio','apri','apricentrale')][string]$Azione,
   [switch]$Silenzioso
 )
+$env:PATH = "$PSScriptRoot\node;" + $env:PATH
 $ErrorActionPreference = 'Stop'
 $IP_CENTRALE = '169.254.50.1'
 $MASCHERA    = '255.255.0.0'
@@ -30,9 +31,36 @@ function Schede-Cavo {
 }
 
 function Ha-IpCentrale($scheda) {
-  $a = @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue) +
-       @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)
-  return [bool]($a | Where-Object { $_.IPAddress -eq $IP_CENTRALE })
+  # 1) come lo vede Windows (indirizzi attivi e salvati)
+  try {
+    $a = @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue) +
+         @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)
+    if ($a | Where-Object { $_.IPAddress -eq $IP_CENTRALE }) { return $true }
+  } catch { }
+  # 2) riserva: l'impostazione salvata nel registro della scheda (vale anche a cavo staccato)
+  try {
+    $ip = (Get-ItemProperty -Path (Chiave-Scheda $scheda) -Name IPAddress -ErrorAction Stop).IPAddress
+    if (@($ip) -contains $IP_CENTRALE) { return $true }
+  } catch { }
+  return $false
+}
+
+function Chiave-Scheda($scheda) {
+  return "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($scheda.InterfaceGuid)"
+}
+
+function Diagnosi-Scheda($scheda) {
+  $righe = @("Scheda: $($scheda.Name) / $($scheda.InterfaceDescription) / indice $($scheda.ifIndex) / stato $($scheda.Status)")
+  try {
+    $ip = @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue) +
+          @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)
+    $righe += "Indirizzi visti: " + (($ip | ForEach-Object { "$($_.IPAddress) ($($_.PolicyStore), $($_.AddressState))" }) -join '; ')
+  } catch { $righe += "Lettura indirizzi: ERRORE $($_.Exception.Message)" }
+  try {
+    $r = Get-ItemProperty -Path (Chiave-Scheda $scheda) -ErrorAction Stop
+    $righe += "Registro: DHCP=$($r.EnableDHCP) IP=$(@($r.IPAddress) -join ',')"
+  } catch { $righe += "Registro: non letto ($($_.Exception.Message))" }
+  return ($righe -join "`n      ")
 }
 
 function Collegamento-Desktop($nome, $destinazione, $cartella) {
@@ -60,13 +88,13 @@ function Proteggi-Corrente($scheda) {
 function Configura-Centrale {
   Info "Configuro questo portatile come PC CENTRALE..."
   Write-Host ""
-  if (-not (Test-Path (Join-Path $PSScriptRoot 'avvia.bat'))) {
-    Errore "Non trovo avvia.bat qui accanto. Copia questi file DENTRO la cartella FayCentrale e rilancia."
+  if (-not (Test-Path (Join-Path $PSScriptRoot '_motore.bat'))) {
+    Errore "Non trovo _motore.bat qui accanto. Copia questi file DENTRO la cartella FayCentrale e rilancia."
   }
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Errore "Node.js non e' installato su questo portatile: senza Node il PC centrale non parte. Installalo da nodejs.org (versione LTS), riavvia il PC e rilancia."
   }
-  $schede = Schede-Cavo
+  $schede = @(Schede-Cavo)
   if ($schede.Count -eq 0) { Errore "Nessuna presa di rete via cavo. Inserisci l'adattatore USB-Ethernet e rilancia." }
   $scheda = $null
   if ($schede.Count -eq 1) { $scheda = $schede[0] }
@@ -77,10 +105,16 @@ function Configura-Centrale {
   }
 
   # Indirizzo fisso del PC centrale sulla presa via cavo
-  & netsh interface ipv4 set address "$($scheda.Name)" static $IP_CENTRALE $MASCHERA | Out-Null
+  $rispostaWin = & netsh interface ipv4 set address "$($scheda.Name)" static $IP_CENTRALE $MASCHERA
   & netsh interface ipv4 set dnsservers "$($scheda.Name)" static none | Out-Null
-  Start-Sleep -Seconds 2
-  if (-not (Ha-IpCentrale $scheda)) { Errore "Windows non ha accettato l'indirizzo sulla presa '$($scheda.Name)'. Manda uno screenshot di questa finestra." }
+  # Windows a volte impiega qualche secondo: riprovo il controllo fino a 15 secondi
+  $accettato = $false
+  for ($i = 0; $i -lt 15 -and -not $accettato; $i++) { Start-Sleep -Seconds 1; $accettato = Ha-IpCentrale $scheda }
+  if (-not $accettato) {
+    $testo = (($rispostaWin | Out-String).Trim())
+    if (-not $testo) { $testo = '(nessun messaggio)' }
+    Errore "Windows non ha accettato l'indirizzo sulla presa '$($scheda.Name)'. Risposta di Windows: $testo.`n      $(Diagnosi-Scheda $scheda)`n  Manda uno screenshot di questa finestra."
+  }
   Ok "Presa di rete '$($scheda.Name)' impostata come PC centrale"
 
   # Le altre prese via cavo (se ce ne sono) non devono avere lo stesso indirizzo
@@ -127,7 +161,7 @@ function Configura-Centrale {
 function Configura-Postazione {
   Info "Configuro questo portatile come POSTAZIONE..."
   Write-Host ""
-  $schede = Schede-Cavo
+  $schede = @(Schede-Cavo)
   if ($schede.Count -eq 0) { Errore "Nessuna presa di rete via cavo. Inserisci l'adattatore USB-Ethernet e rilancia." }
   foreach ($s in $schede) {
     & netsh interface ipv4 set address "$($s.Name)" dhcp | Out-Null
@@ -137,8 +171,10 @@ function Configura-Postazione {
   Ok "Presa di rete in automatico (l'indirizzo se lo prende da sola)"
 
   New-Item -ItemType Directory -Force -Path $CARTELLA_POSTAZIONE | Out-Null
-  Copy-Item (Join-Path $PSScriptRoot 'rete.ps1') $CARTELLA_POSTAZIONE -Force
-  Copy-Item (Join-Path $PSScriptRoot 'Apri Fay Live.bat') $CARTELLA_POSTAZIONE -Force
+  if ((Resolve-Path $PSScriptRoot).Path.TrimEnd('\') -ne (Resolve-Path $CARTELLA_POSTAZIONE).Path.TrimEnd('\')) {
+    Copy-Item (Join-Path $PSScriptRoot 'rete.ps1') $CARTELLA_POSTAZIONE -Force
+    Copy-Item (Join-Path $PSScriptRoot 'Apri Fay Live.bat') $CARTELLA_POSTAZIONE -Force
+  }
   Get-ChildItem $CARTELLA_POSTAZIONE | Unblock-File -ErrorAction SilentlyContinue
   Collegamento-Desktop 'Fay Live' (Join-Path $CARTELLA_POSTAZIONE 'Apri Fay Live.bat') $CARTELLA_POSTAZIONE
   Ok "Icona 'Fay Live' creata sul desktop"
@@ -165,14 +201,21 @@ function Configura-Postazione {
   Ok "Sospensione disattivata quando e' in carica"
   Write-Host ""
   Ok "FATTO. In servizio basta collegare il cavo e aprire l'icona 'Fay Live'."
-  Attendi-Tasto
+  if (-not $Silenzioso) { Attendi-Tasto }
 }
 
 # ---------------- AVVIO SUL PC CENTRALE ----------------
 function Controllo-Avvio {
   Write-Host ""
   Info "Controllo la presa di rete per le postazioni..."
-  $schede = Schede-Cavo
+  if (Porta-Aperta) {
+    Write-Host ""
+    Write-Host "  [X] Sul cavo c'e' gia' un PC centrale acceso con Fay Live." -ForegroundColor Red
+    if (@(Schede-Cavo | Where-Object { Ha-IpCentrale $_ }).Count -gt 0) { Info "E' questo stesso PC: Fay Live e' gia' aperto. Cerca la finestra nera o il browser gia' aperti." }
+    else { Info "Ce ne puo' essere uno solo: su questo portatile apri invece l'icona 'Fay Live' (postazione)." }
+    Attendi-Tasto; exit 1
+  }
+  $schede = @(Schede-Cavo)
   if ($schede.Count -eq 0) {
     Attenzione "Adattatore di rete NON inserito: le postazioni via cavo non potranno collegarsi."
     if (-not (Chiedi-SN "Avvio Fay Live lo stesso?")) { exit 1 }
@@ -257,14 +300,25 @@ function Apri-Postazione {
   Write-Host ""
   $limite = (Get-Date).AddSeconds(90)
   $ultimo = ''
+  $giaSistemata = $false
   while ($true) {
-    $schede = Schede-Cavo
+    $schede = @(Schede-Cavo)
     $attive = @($schede | Where-Object Status -eq 'Up')
     if ($schede.Count -eq 0)      { $stato = "Adattatore di rete non inserito: infilalo nella porta USB." }
     elseif ($attive.Count -eq 0)  { $stato = "Cavo non collegato (o switch spento): controlla il cavo." }
     else {
       $fisso = $attive | Where-Object { (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp -eq 'Disabled' }
-      if ($fisso) { $stato = "Questa postazione non e' configurata: lancia 'Configura PC' e scegli 2 (postazione)." }
+      if ($fisso -and -not $giaSistemata) {
+        $giaSistemata = $true
+        Info "Questo portatile l'ultima volta faceva da PC centrale: lo rimetto come postazione."
+        Info "Windows chiedera' il permesso, rispondi Si'."
+        try {
+          Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Azione postazione -Silenzioso"
+          Ok "Fatto: ora e' una postazione"
+        } catch { Attenzione "Permesso negato." }
+        $ultimo = ''; continue
+      }
+      elseif ($fisso) { $stato = "Questa postazione non e' configurata: lancia 'Configura PC' e scegli 2 (postazione)." }
       elseif (Porta-Aperta) { Ok "PC centrale trovato"; if (-not (Controlla-Stampante)) { exit 1 }; Info "Apro Fay Live..."; Apri-Browser $URL; Start-Sleep -Seconds 2; exit 0 }
       else { $stato = "Cavo collegato. Aspetto il PC centrale: deve essere acceso con Fay Live avviato..." }
     }

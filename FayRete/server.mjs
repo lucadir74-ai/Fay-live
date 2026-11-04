@@ -6,7 +6,7 @@
    2) risponde "nello stesso linguaggio di Supabase": pc.html non sa di parlare con
       il PC centrale invece che con il cloud, e resta UN SOLO FILE per locali e piscine;
    3) tiene database (dati/centrale.db) e foto (dati/file/) su questo PC.
-   Avvio: doppio clic su avvia.bat (oppure: node server.mjs)
+   Avvio: doppio clic su Avvia Fay Live.bat (oppure: node server.mjs)
    ===================================================================== */
 import http from "node:http";
 import fs from "node:fs";
@@ -928,6 +928,57 @@ function prepariSpecchio() {
   setTimeout(specchio, Math.min(3000, ogni));
 }
 
+/* ---------------- FOTO DELLE GIORNATE NATE SENZA LINEA ----------------
+   Una giornata nata senza internet è "solo numeri": al cloud salgono i conteggi, non le foto.
+   Qui si può cambiare idea più tardi: la giornata diventa "con linea" e lo specchio manda
+   righe, anteprime e originali (pagina: /foto-cloud.html, solo da questo PC). */
+const soloQui = req => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress)
+  && !(req.headers.origin && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.origin));
+function contaFile(bucket, idGiornata) {
+  try { return fs.readdirSync(path.join(FILE, bucket, String(idGiornata))).filter(n => !n.includes(".tmp-")).length; } catch (_) { return 0; }
+}
+function giornateSoloNumeri() {
+  const out = [];
+  for (const g of tab("servizi").values()) {
+    if (g.solo_locale === false) continue;
+    const rulli = [...tab("rulli").values()].filter(r => String(r.servizio_id) === String(g.id));
+    const idRulli = new Set(rulli.map(r => String(r.id)));
+    const sede = tab("sedi").get(String(g.sede_id));
+    out.push({ id: g.id, data: g.data_servizio, sede: sede ? sede.nome : "?", rulli: rulli.length,
+               foto: [...tab("foto").values()].filter(f => idRulli.has(String(f.rullo_id))).length,
+               file: contaFile("anteprime", g.id) + contaFile("originali", g.id) });
+  }
+  return out.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+}
+function mandaFotoGiornata(id) {
+  const g = tab("servizi").get(String(id));
+  if (!g) throw errore(404, "non_trovata", "giornata sconosciuta");
+  if (g.solo_locale === false) return { gia: true, file: 0 };
+  let file = 0;
+  inTransazione(() => {
+    g.solo_locale = false; salva("servizi", g);
+    const rulli = [...tab("rulli").values()].filter(r => String(r.servizio_id) === String(g.id));
+    const idRulli = new Set(rulli.map(r => String(r.id)));
+    rulli.forEach(r => salva("rulli", r));
+    for (const f of tab("foto").values()) if (idRulli.has(String(f.rullo_id))) salva("foto", f);
+    for (const a of tab("attivita").values()) if (String(a.servizio_id) === String(g.id)) salva("attivita", a);
+    for (const b of ["anteprime", "originali"]) {
+      let nomi = []; try { nomi = fs.readdirSync(path.join(FILE, b, String(g.id))); } catch (_) {}
+      for (const n of nomi) if (!n.includes(".tmp-")) { stSegnaFile.run(b, g.id + "/" + n); file++; }
+    }
+  });
+  return { gia: false, file };
+}
+async function comandiCentrale(req, res, url) {
+  if (!soloQui(req)) throw errore(403, "vietato", "comando ammesso solo da questo PC");
+  if (url.pathname === "/centrale/giornate" && req.method === "GET") return json(res, 200, { cloud: statoCloud.online, giornate: giornateSoloNumeri() });
+  if (url.pathname === "/centrale/invia-foto" && req.method === "POST") {
+    const corpo = JSON.parse((await leggiCorpo(req)).toString("utf8") || "{}");
+    return json(res, 200, mandaFotoGiornata(corpo.id));
+  }
+  throw errore(404, "non_trovato", "comando sconosciuto");
+}
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://centrale");
@@ -941,6 +992,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/rest/v1/")) return await rest(req, res, url);
     if (url.pathname.startsWith("/storage/v1/")) return await storage(req, res, url);
     if (url.pathname.startsWith("/auth/v1/") || url.pathname.startsWith("/realtime/v1/")) return json(res, 404, { message: "non disponibile sul PC centrale" });
+    if (url.pathname.startsWith("/centrale/")) return await comandiCentrale(req, res, url);
     if (url.pathname === "/stato") return json(res, 200, { centrale: true, ora: ora(), foto: tab("foto").size,
       cloud: statoCloud.online, ultimoContatto: statoCloud.ultimoContatto,
       daInviare: db.prepare("SELECT COUNT(*) AS n FROM da_inviare").get().n,
@@ -954,6 +1006,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 404, { message: "non trovato" });
   } catch (e) {
+    if (e instanceof SyntaxError) { e.stato = 400; e.code = "PGRST102"; e.message = "corpo della richiesta non valido"; }
     if (!e.stato) console.error("errore", req.method, url.pathname, e);
     if (!res.headersSent) json(res, e.stato || 500, { code: e.code || "500", message: e.message, details: null, hint: null });
     else res.end();
