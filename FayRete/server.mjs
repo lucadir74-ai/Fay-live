@@ -48,7 +48,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS da_inviare (tab TEXT, chiave TEXT, op TEXT, 
          CREATE TABLE IF NOT EXISTS inviati (tab TEXT, chiave TEXT, PRIMARY KEY(tab, chiave));
          CREATE TABLE IF NOT EXISTS mappa (tab TEXT, locale TEXT, cloud TEXT, PRIMARY KEY(tab, locale));
          CREATE TABLE IF NOT EXISTS file_da_inviare (bucket TEXT, percorso TEXT, ver INTEGER, PRIMARY KEY(bucket, percorso));
-         CREATE TABLE IF NOT EXISTS stato (k TEXT PRIMARY KEY, v TEXT);`);
+         CREATE TABLE IF NOT EXISTS stato (k TEXT PRIMARY KEY, v TEXT);
+         CREATE TABLE IF NOT EXISTS origine_cloud (tab TEXT, chiave TEXT, PRIMARY KEY(tab, chiave));`);
 const SPECCHIATE = new Set(["sedi", "servizi", "rulli", "foto", "attivita"]);
 const stSegna = db.prepare(`INSERT INTO da_inviare (tab, chiave, op, ver) VALUES (?, ?, ?, 1)
                             ON CONFLICT(tab, chiave) DO UPDATE SET op = excluded.op, ver = da_inviare.ver + 1`);
@@ -803,6 +804,7 @@ async function specchio() {
     statoCloud.online = !!ping.ok;
     if (!ping.ok) return;
     statoCloud.ultimoContatto = ora();
+    if (Date.now() - ultimaAuto > Number(process.env.FAY_AUTO_MS || 300000)) { ultimaAuto = Date.now(); autoScarica(); }
     let nRighe = 0, nFile = 0, nCanc = 0;
     // ogni 2 minuti: sedi nuove o cancellate sul cloud
     if (Date.now() - (statoCloud.ultimeSedi || 0) > Number(process.env.FAY_SEDI_MS || 120000)) { statoCloud.ultimeSedi = Date.now(); await scaricaDalCloud(true); }
@@ -858,6 +860,8 @@ async function specchio() {
       const lista = [];
       for (const v of coda.filter(x => x.tab === t && x.op === "del")) {
         if (!inviato(t, v.chiave)) { qFatto.run(t, v.chiave, v.ver); continue; }
+        // righe scaricate dal cloud (fatte da un altro PC): cancellarle QUI non le cancella LASSU'
+        if (t !== "sedi" && qOrigineCloud.get(t, v.chiave)) { qFatto.run(t, v.chiave, v.ver); continue; }
         if (t === "servizi" && qMappa.get("servizi", v.chiave)) { qTogliInviato.run(t, v.chiave); qFatto.run(t, v.chiave, v.ver); continue; }
         lista.push(v);
       }
@@ -975,6 +979,8 @@ function mandaFotoGiornata(id) {
    giornate del cloud e ne porta una su questo PC (righe + anteprime, a scelta gli originali).
    Le righe arrivano già "inviate": lo specchio non le rimanda al cloud. */
 const scarico = { attivo: false, id: null, fase: "", fatte: 0, totale: 0, errori: [], finito: null };
+const qOrigineCloud = db.prepare("SELECT 1 FROM origine_cloud WHERE tab = ? AND chiave = ?");
+const qSegnaOrigine = db.prepare("INSERT OR IGNORE INTO origine_cloud (tab, chiave) VALUES (?, ?)");
 const aLocale = u => typeof u === "string" ? u.replace(/^https?:\/\/[^/]+(?=\/storage\/v1\/)/, "") : u;
 async function jsonCloud(percorso) {
   const r = await chiediCloud(percorso);
@@ -993,7 +999,7 @@ async function giornateDelCloud() {
   const g = await jsonCloud("/rest/v1/servizi?select=id,sede_id,data_servizio,solo_locale&order=data_servizio.desc&limit=60");
   const sedi = new Map((await jsonCloud("/rest/v1/sedi?select=id,nome")).map(s => [String(s.id), s.nome]));
   return g.map(x => ({ id: x.id, data: x.data_servizio, sede: sedi.get(String(x.sede_id)) || "?",
-                       soloNumeri: x.solo_locale === true, qui: tab("servizi").has(String(x.id)) }));
+                       soloNumeri: x.solo_locale === true, qui: tab("servizi").has(String(x.id)) || !!qMappata.get(String(x.id)) }));
 }
 async function scaricaGiornata(id, conOriginali) {
   id = String(id);
@@ -1016,6 +1022,7 @@ async function scaricaGiornata(id, conOriginali) {
     const metti = (t, riga) => {
       if (tab(t).has(chiaveDi(t, riga))) return;       // già qui: resta com'è
       salva(t, riga, true); qSegnaInviato.run(t, chiaveDi(t, riga));
+      if (t !== "sedi") qSegnaOrigine.run(t, chiaveDi(t, riga));
     };
     if (sedeRiga) metti("sedi", sedeRiga);
     metti("servizi", g);
@@ -1047,6 +1054,41 @@ function avviaScarico(id, conOriginali) {
   scaricaGiornata(id, conOriginali)
     .catch(e => scarico.errori.push(e.message))
     .finally(() => { scarico.attivo = false; scarico.fase = "finito"; scarico.finito = ora(); });
+}
+
+/* SCARICO AUTOMATICO: con internet, ogni 5 minuti, le giornate RECENTI del cloud che questo PC
+   non ha ancora vengono portate qui (righe + anteprime; gli originali solo dalla pagina).
+   Cautele:
+   · una sola volta per giornata e per PC: se la togli da qui (svuota giornata) non torna da sola;
+   · mai su una giornata che c'è già qui, né se qui ne esiste una della stessa sede e data;
+   · solo gli ultimi FAY_AUTO_GIORNI giorni (14), così un PC nuovo non scarica mezzo archivio;
+   · prima si manda su quello che c'è qui (se la coda di invio non è vuota si aspetta);
+   · spegnibile con FAY_AUTO_SCARICO=0. */
+const AUTO_GIORNI = Number(process.env.FAY_AUTO_GIORNI || 14);
+const qVista = db.prepare("SELECT 1 FROM stato WHERE k = ?");
+const qSegnaVista = db.prepare("INSERT OR IGNORE INTO stato (k, v) VALUES (?, ?)");
+const qMappata = db.prepare("SELECT 1 FROM mappa WHERE tab = 'servizi' AND cloud = ?");
+let ultimaAuto = 0, autoInCorso = false;
+async function autoScarica() {
+  if (autoInCorso || scarico.attivo || process.env.FAY_AUTO_SCARICO === "0" || !statoCloud.online) return;
+  if (db.prepare("SELECT COUNT(*) AS n FROM file_da_inviare").get().n > 0) return;
+  autoInCorso = true;
+  try {
+    const da = new Date(Date.now() - AUTO_GIORNI * 864e5).toISOString().slice(0, 10);
+    for (const g of (await giornateDelCloud()).filter(x => String(x.data) >= da)) {
+      if (g.qui || qMappata.get(String(g.id)) || qVista.get("auto:" + g.id)) continue;
+      Object.assign(scarico, { attivo: true, id: String(g.id), fase: "avvio", fatte: 0, totale: 0, errori: [], finito: null });
+      try {
+        await scaricaGiornata(g.id, false);
+        qSegnaVista.run("auto:" + g.id, ora());
+        console.log(`  ↓ ${g.sede} ${g.data}: scaricata dal cloud` + (scarico.errori.length ? ` (${scarico.errori.length} file non arrivati: usa la pagina Cloud)` : ""));
+      } catch (e) {
+        if (/esiste già/.test(e.message)) qSegnaVista.run("auto:" + g.id, ora());     // inutile riprovare
+        console.log(`  · ${g.sede} ${g.data}: non scaricata (${e.message})`);
+      } finally { scarico.attivo = false; scarico.fase = "finito"; scarico.finito = ora(); }
+    }
+  } catch (_) { /* senza linea si riprova al giro dopo */ }
+  finally { autoInCorso = false; }
 }
 
 async function comandiCentrale(req, res, url) {
