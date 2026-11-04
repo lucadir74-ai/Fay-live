@@ -649,10 +649,10 @@
 </div>
 
 <dialog id="archDlg">
-  <h3 style="margin-bottom:10px">Dove salvo le foto di questa postazione</h3>
+  <h3 style="margin-bottom:10px">Versione online: senza PC centrale</h3>
   <div id="archBody" style="font-size:13px;line-height:1.55"></div>
   <div id="archHelp" style="margin-top:12px;padding:10px;border:1px solid var(--danger);border-radius:10px;font-size:12.5px;line-height:1.5">
-    <b>Scegli solo DOVE: la cartella <code>FayLive</code> la crea l'app.</b><br>
+    <b>Solo se devi importare foto da qui: scegli solo DOVE, la cartella <code>FayLive</code> la crea l'app.</b><br>
     Premi <b>Scegli cartella…</b> → seleziona <b>Disco locale (C:)</b> → conferma. Dentro ci troverai <code>C:\FayLive</code>,
     uguale su tutte le postazioni. Non serve creare né rinominare niente a mano.
     Se Windows non lascia scegliere <code>C:</code>, seleziona <b>Documenti</b>: la cartella FayLive nasce lì.<br>
@@ -2282,13 +2282,17 @@ function apriArchDlg(motivo){
       ? `<b>Archivio di questa postazione: ${percorsoAnnotato() ? percorsoAnnotato().replace(/[<>&]/g,"") : n}</b><br>`+
         `È lo stesso di sempre e non va riscelto. Windows però richiede il permesso a ogni `+
         `ricaricamento della pagina: basta premere <b>Riattiva questa cartella</b> qui sotto.`
-      : `Questa postazione non ha ancora una cartella dove salvare gli originali delle foto importate.`;
+      : `<b>Stai usando la versione online, senza PC centrale.</b><br>`+
+        `Le foto che importi da qui non arrivano sul PC centrale e gli originali restano solo su questo PC. `+
+        `Per importare, di norma, apri Fay Live dal PC centrale. `+
+        `Se vuoi solo vedere e stampare, premi <b>Continua senza archivio</b>.`;
   $("archBody").innerHTML = `<p>${testo}</p>`;
   $("archKeep").hidden = (motivo !== "riattivare");
   /* Quando la cartella è già nota, l'azione giusta è riattivarla: "Scegli cartella…" resta
      disponibile ma non deve più essere il tasto che si preme d'istinto. */
   $("archKeep").classList.toggle("primary", motivo === "riattivare");
-  $("archPick").classList.toggle("primary", motivo !== "riattivare");
+  $("archPick").classList.toggle("primary", motivo !== "riattivare" && motivo !== "assente");
+  $("archSkip").classList.toggle("primary", motivo === "assente");     // senza centrale, di norma si guarda e si stampa soltanto
   $("archPick").textContent = (motivo === "riattivare") ? "Scegli un'altra cartella…" : "Scegli cartella…";
   try{ $("archHelp").hidden = (motivo === "riattivare"); }catch(_){}
   try{ $("archDlg").showModal(); }catch(_){ /* un'altra finestra è già aperta */ }
