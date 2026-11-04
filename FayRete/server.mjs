@@ -969,8 +969,98 @@ function mandaFotoGiornata(id) {
   });
   return { gia: false, file };
 }
+/* ---------------- DAL CLOUD A QUESTO PC (a richiesta) ----------------
+   Di solito il centrale non copia le giornate del cloud: pesano e in piscina non servono.
+   Con internet, però, si possono voler vedere qui: la pagina /foto-cloud.html elenca le
+   giornate del cloud e ne porta una su questo PC (righe + anteprime, a scelta gli originali).
+   Le righe arrivano già "inviate": lo specchio non le rimanda al cloud. */
+const scarico = { attivo: false, id: null, fase: "", fatte: 0, totale: 0, errori: [], finito: null };
+const aLocale = u => typeof u === "string" ? u.replace(/^https?:\/\/[^/]+(?=\/storage\/v1\/)/, "") : u;
+async function jsonCloud(percorso) {
+  const r = await chiediCloud(percorso);
+  if (!r.ok) throw new Error("cloud: risposta " + r.status);
+  return r.json();
+}
+async function righeCloud(percorso) {          // tutte le righe, a pagine da 1000
+  const out = [];
+  for (let da = 0; ; da += 1000) {
+    const p = await jsonCloud(`${percorso}&limit=1000&offset=${da}`);
+    out.push(...p);
+    if (p.length < 1000) return out;
+  }
+}
+async function giornateDelCloud() {
+  const g = await jsonCloud("/rest/v1/servizi?select=id,sede_id,data_servizio,solo_locale&order=data_servizio.desc&limit=60");
+  const sedi = new Map((await jsonCloud("/rest/v1/sedi?select=id,nome")).map(s => [String(s.id), s.nome]));
+  return g.map(x => ({ id: x.id, data: x.data_servizio, sede: sedi.get(String(x.sede_id)) || "?",
+                       soloNumeri: x.solo_locale === true, qui: tab("servizi").has(String(x.id)) }));
+}
+async function scaricaGiornata(id, conOriginali) {
+  id = String(id);
+  const g = (await jsonCloud(`/rest/v1/servizi?select=*&id=eq.${encodeURIComponent(id)}`))[0];
+  if (!g) throw new Error("giornata non trovata sul cloud");
+  if ([...tab("servizi").values()].some(x => String(x.id) !== id && String(x.sede_id) === String(g.sede_id) && x.data_servizio === g.data_servizio))
+    throw new Error("su questo PC esiste già una giornata di quella sede e di quel giorno, creata qui: non la sovrascrivo");
+  scarico.fase = "righe";
+  const sedeRiga = tab("sedi").has(String(g.sede_id)) ? null : (await jsonCloud(`/rest/v1/sedi?select=*&id=eq.${g.sede_id}`))[0];
+  const rulli = await righeCloud(`/rest/v1/rulli?select=*&servizio_id=eq.${id}`);
+  const foto = [];
+  for (const r of rulli) foto.push(...await righeCloud(`/rest/v1/foto?select=*&rullo_id=eq.${r.id}&order=id.asc`));
+  const attivita = await righeCloud(`/rest/v1/attivita?select=*&servizio_id=eq.${id}&order=id.asc`);
+  const file = new Map();                        // i file che il cloud ha già (chiave "bucket/percorso")
+  for (const f of foto) {
+    for (const c of ["mini_url", "anteprima_url"]) { const k = chiaveFile(f[c]); if (k) file.set(k[0] + "/" + k[1], k); }
+    if (conOriginali && f.originale_url) file.set("originali/" + f.originale_url, ["originali", f.originale_url]);
+  }
+  inTransazione(() => {
+    const metti = (t, riga) => {
+      if (tab(t).has(chiaveDi(t, riga))) return;       // già qui: resta com'è
+      salva(t, riga, true); qSegnaInviato.run(t, chiaveDi(t, riga));
+    };
+    if (sedeRiga) metti("sedi", sedeRiga);
+    metti("servizi", g);
+    rulli.forEach(r => metti("rulli", r));
+    foto.forEach(f => metti("foto", Object.assign({}, f, { mini_url: aLocale(f.mini_url), anteprima_url: aLocale(f.anteprima_url) })));
+    attivita.forEach(a => metti("attivita", a));
+    for (const k of file.keys()) qSegnaInviato.run("file", k);
+  });
+  const mancanti = [...file.values()].filter(([b, p]) => { try { return !fs.statSync(percorsoFile(b, p)).isFile(); } catch (_) { return true; } });
+  scarico.fase = "file"; scarico.totale = mancanti.length; scarico.fatte = 0;
+  const uno = async ([b, p]) => {
+    try {
+      const r = await fetch(`${CLOUD_URL}/storage/v1/object/public/${b}/${p.split("/").map(encodeURIComponent).join("/")}`,
+                            { headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY }, signal: AbortSignal.timeout(120000) });
+      if (!r.ok) throw new Error("risposta " + r.status);
+      const dati = Buffer.from(await r.arrayBuffer());
+      const f = percorsoFile(b, p);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      const tmp = f + ".tmp-" + process.pid; fs.writeFileSync(tmp, dati); fs.renameSync(tmp, f);
+      if (b === "originali") collegaLeggibile(p, true);
+    } catch (e) { scarico.errori.push(`${b}/${p}: ${e.message}`); }
+    scarico.fatte++;
+  };
+  for (let i = 0; i < mancanti.length; i += 6) await Promise.all(mancanti.slice(i, i + 6).map(uno));
+}
+function avviaScarico(id, conOriginali) {
+  if (scarico.attivo) throw errore(409, "occupato", "c'è già uno scarico in corso");
+  Object.assign(scarico, { attivo: true, id: String(id), fase: "avvio", fatte: 0, totale: 0, errori: [], finito: null });
+  scaricaGiornata(id, conOriginali)
+    .catch(e => scarico.errori.push(e.message))
+    .finally(() => { scarico.attivo = false; scarico.fase = "finito"; scarico.finito = ora(); });
+}
+
 async function comandiCentrale(req, res, url) {
   if (!soloQui(req)) throw errore(403, "vietato", "comando ammesso solo da questo PC");
+  if (url.pathname === "/centrale/cloud-giornate" && req.method === "GET") {
+    try { return json(res, 200, { cloud: true, giornate: await giornateDelCloud() }); }
+    catch (e) { return json(res, 200, { cloud: false, giornate: [], motivo: e.message }); }
+  }
+  if (url.pathname === "/centrale/scarico" && req.method === "GET") return json(res, 200, scarico);
+  if (url.pathname === "/centrale/scarica" && req.method === "POST") {
+    const corpo = JSON.parse((await leggiCorpo(req)).toString("utf8") || "{}");
+    avviaScarico(corpo.id, !!corpo.originali);
+    return json(res, 200, { avviato: true });
+  }
   if (url.pathname === "/centrale/giornate" && req.method === "GET") return json(res, 200, { cloud: statoCloud.online, giornate: giornateSoloNumeri() });
   if (url.pathname === "/centrale/invia-foto" && req.method === "POST") {
     const corpo = JSON.parse((await leggiCorpo(req)).toString("utf8") || "{}");
