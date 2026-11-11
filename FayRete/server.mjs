@@ -1198,10 +1198,35 @@ async function comandiCentrale(req, res, url) {
 process.on("uncaughtException", e => console.log("  ⚠ errore imprevisto (il PC centrale continua):", e && e.stack || e));
 process.on("unhandledRejection", e => console.log("  ⚠ errore imprevisto (il PC centrale continua):", e && e.stack || e));
 
+/* ---------------- POSTAZIONI COLLEGATE (spia del cavo) ----------------
+   Ogni pagina aperta su una postazione chiede "/stato" ogni 3 secondi. Qui si tiene conto di
+   chi si è fatto sentire: una postazione muta da 10 secondi è scollegata (cavo staccato,
+   pagina chiusa, PC spento). Lo si scrive nella finestra nera e la pagina del PC centrale lo
+   mostra nella barra in basso ("Postazioni collegate: N"). */
+const postazioni = new Map();      // indirizzo -> { nome, visto, viva }
+const oraBreve = () => new Date().toLocaleTimeString("it-IT");
+function vistaPostazione(ip, url) {
+  let p = postazioni.get(ip);
+  if (!p) { p = { nome: null, visto: 0, viva: false }; postazioni.set(ip, p); }
+  p.visto = Date.now();
+  const nome = url.pathname === "/stato" ? url.searchParams.get("p") : null;
+  if (nome) p.nome = nome.slice(0, 24);
+  if (!p.viva) { p.viva = true; console.log(`  ＋ ${oraBreve()} postazione collegata: ${p.nome || "(senza nome)"} — ${ip}`); }
+}
+setInterval(() => {
+  for (const [ip, p] of postazioni) if (p.viva && Date.now() - p.visto > 10000) {
+    p.viva = false;
+    console.log(`  − ${oraBreve()} la postazione ${p.nome || ""} (${ip}) NON risponde più: cavo staccato, pagina chiusa o PC spento`);
+  }
+}, 2000).unref();
+const postazioniVive = () => [...postazioni].filter(([, p]) => p.viva && Date.now() - p.visto <= 10000).map(([ip, p]) => ({ ip, nome: p.nome }));
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://centrale");
   if (process.env.FAY_LOG) res.on("finish", () => { if (res.statusCode >= 400) console.log("  [" + res.statusCode + "]", req.method, url.pathname + url.search); });
+  { const ip = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+    if (ip && ip !== "127.0.0.1" && ip !== "::1") vistaPostazione(ip, url); }
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,HEAD,OPTIONS");
@@ -1213,7 +1238,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/auth/v1/") || url.pathname.startsWith("/realtime/v1/")) return json(res, 404, { message: "non disponibile sul PC centrale" });
     if (url.pathname.startsWith("/centrale/")) return await comandiCentrale(req, res, url);
     if (url.pathname === "/stato") return json(res, 200, { centrale: true, ora: ora(), foto: tab("foto").size,
-      cloud: statoCloud.online, ultimoContatto: statoCloud.ultimoContatto,
+      cloud: statoCloud.online, ultimoContatto: statoCloud.ultimoContatto, postazioni: postazioniVive(),
       daInviare: db.prepare("SELECT COUNT(*) AS n FROM da_inviare").get().n,
       fileDaInviare: db.prepare("SELECT COUNT(*) AS n FROM file_da_inviare").get().n, avvisi: statoCloud.avvisi });
     if (url.pathname === "/" ) { res.writeHead(302, { Location: "/pc.html" }); return res.end(); }

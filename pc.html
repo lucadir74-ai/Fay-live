@@ -630,6 +630,7 @@
     <div class="toast" id="toast"></div>
   </main>
 
+  <div id="cavoBanner" hidden style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#c62828;color:#fff;font-weight:800;font-size:20px;line-height:1.35;padding:14px 18px;text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.5)"></div>
   <div id="statusBar">
     <span title="Versione di Fay Live caricata in questo momento. Se non corrisponde all'ultimo file caricato, la pagina è vecchia: ricaricare con Ctrl+F5">Versione: <b id="stVersione">—</b></span>
     <span>Foto: <b id="stTotal">0</b></span>
@@ -642,6 +643,7 @@
     <span id="stRipristino" hidden style="color:var(--accent);font-weight:700;cursor:pointer" title="Clicca per fermare il ripristino"></span>
     <b id="stThumbs" hidden></b>
     <span id="monitorState"><span class="dot" id="monDot"></span><span id="monLabel">Monitor cliente chiuso</span></span>
+    <span id="cavoState" hidden style="font-weight:700"><span id="cavoDot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:6px"></span><span id="cavoLabel">Cavo…</span></span>
     <span id="syncState"><span id="syncDot"></span><span id="syncLabel">Solo locale</span></span>
     <div class="spacer"></div>
     <span id="stMode">—</span>
@@ -931,10 +933,18 @@
 </dialog>
 
 <dialog id="confirmImport">
-  <h3 style="margin-bottom:10px">Conferma import</h3>
-  <div id="ciSede" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:19px;font-weight:700"></div>
-  <div id="ciGiorno" style="margin:-6px 0 12px;padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:17px"></div>
-  <p id="ciText" style="margin-bottom:14px"></p>
+  <h3 style="margin-bottom:10px">Importa foto</h3>
+  <p id="ciText" style="margin-bottom:12px"></p>
+  <div class="field" id="ciSedeField" style="margin-bottom:12px">
+    <label>Sede (piscina o locale)</label>
+    <select id="ciSedeSel" style="width:100%;font-size:17px;font-weight:700"></select>
+    <input type="text" id="ciSedeNuova" maxlength="60" placeholder="Nome della nuova sede" style="width:100%;margin-top:6px;font-size:17px" hidden>
+  </div>
+  <div class="field" id="ciDataField" style="margin-bottom:12px">
+    <label>Giornata</label>
+    <input type="date" id="ciData" style="font-size:17px;background:var(--bg);color:#E8ECF4;border:1px solid var(--line);border-radius:8px;padding:8px 10px;color-scheme:dark">
+    <div id="ciGiorno" style="margin-top:6px;font-size:15px"></div>
+  </div>
   <div class="field" id="ciLetterField" style="margin-bottom:12px">
     <label>Sigla del rullo (fotografo) — da 1 a 3 lettere, es. A, GT</label>
     <input type="text" id="ciLetter" maxlength="3" style="text-transform:uppercase;font-family:var(--mono);font-weight:700;font-size:18px;width:110px;text-align:center">
@@ -1927,6 +1937,59 @@ async function riportaSuOggiPerImport(){
   if(prima) toast("Eri sulla giornata del " + dataItaliana(prima) + ": importo in quella di OGGI", 6000);
   return true;
 }
+/* Porta la griglia sulla sede e sulla giornata scelte nella finestra di import, creandole
+   se non esistono. Se sono già quelle aperte non tocca niente. false = import da annullare. */
+async function destinazioneImport(scelta){
+  const norm = x => String(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ").trim();
+  try{
+    let s = scelta.sedeId ? ((($("sedeSelect")._sedi)||[]).find(x=>x.id===scelta.sedeId) || null) : null;
+    if(!s){
+      const r = await conTempo(sb.from("sedi").select("*"), 8000);
+      if(r.error) throw new Error(r.error.message || "elenco sedi non disponibile");
+      // niente sedi doppie: stesso nome (maiuscole, spazi e accenti non contano) = stessa sede
+      s = (r.data||[]).find(x=> scelta.sedeId ? x.id===scelta.sedeId : norm(x.nome)===norm(scelta.sedeNome)) || null;
+      if(!s){
+        if(!scelta.sedeNome) throw new Error("la sede scelta non esiste più");
+        const codice = scelta.sedeNome.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12) + Math.floor(Math.random()*90+10);
+        const c = await conTempo(sb.from("sedi").insert({nome:scelta.sedeNome, codice}).select().single(), 8000);
+        if(c.error || !c.data) throw new Error((c.error && c.error.message) || "sede non creata");
+        s = c.data;
+        toast(`Sede "${s.nome}" creata`, 4000);
+      }
+      await loadSedi();
+    }
+    const giaAperta = cloud.sede && cloud.sede.id === s.id && cloud.servizio && cloud.servizio.data_servizio === scelta.data;
+    if(giaAperta) return true;
+    // si sta per cambiare sede o giornata: le stesse cautele della tendina in alto
+    if(prog.total > 0){
+      alert("⛔ C'è ancora un import in lavorazione (la barra in basso lo dice).\n\n"
+          + "Aspetta che finisca prima di importare in un'altra sede o in un'altra giornata.");
+      return false;
+    }
+    const n = anteprimeInCoda();
+    if(n && cloud.servizio && !confirm(`Ci sono ancora ${n} anteprime da caricare per la giornata aperta.\n\n`
+        + "Cambiando sede o giornata si fermano, e riprendono solo quando riapri quella giornata.\n\nContinuare lo stesso?")) return false;
+    if(scelta.data !== serviceDateStr()){
+      // una data diversa da oggi: la giornata si crea qui se non c'è (quella di oggi la crea chooseSede)
+      const g = await conTempo(sb.from("servizi").select("id").eq("sede_id", s.id).eq("data_servizio", scelta.data), 8000);
+      if(g.error) throw new Error(g.error.message || "giornate non leggibili");
+      if(!(g.data||[]).length){
+        const c = await conTempo(sb.from("servizi").insert({id:idGiornata(s.id, scelta.data), sede_id:s.id, data_servizio:scelta.data}).select().single(), 8000);
+        if(c.error && String(c.error.code) !== "23505") throw new Error(c.error.message || "giornata non creata");
+      }
+    }
+    $("sedeSelect").value = s.id;
+    await chooseSede(s, scelta.data);
+    if(!cloud.sede || cloud.sede.id !== s.id || !cloud.servizio || cloud.servizio.data_servizio !== scelta.data)
+      throw new Error("la giornata non si è aperta");
+    return true;
+  }catch(err){
+    console.warn("destinazione import", err);
+    alert("⛔ Import annullato.\n\nNon sono riuscito ad aprire la sede e la giornata scelte ("
+        + (err && err.message ? err.message : err) + ").\nNessuna foto è stata importata: riprova.");
+    return false;
+  }
+}
 async function importaFiles(files){
   files = [...files];   // copia: la ripresa import può scartarne alcuni
   // se è ancora a schermo l'avviso verde dell'import precedente, sparisce qui
@@ -1936,47 +1999,77 @@ async function importaFiles(files){
   /* Prima di toccare qualsiasi cosa: la giornata dev'essere quella di oggi. Sta qui e
      non solo nel tasto perché da qui passano TUTTI gli import (tasto cartella, finestra
      classica, lettore schede). */
-  if(!(await riportaSuOggiPerImport())) return;
+  /* (11 nov) Sede e giornata si scelgono NELLA finestra di import, prima della sigla: la
+     giornata proposta è sempre quella di oggi, e la finestra dice in rosso se è un'altra. */
   importInCorso = true;
   try{
 
   const suggested = detectLetter(files[0]);
   /* Sede bene in vista: le foto di una serata finivano divise su due sedi perché la
      postazione era partita da quella sbagliata, e in griglia non se ne vedeva traccia. */
-  const nomeSede = cloud.sede ? cloud.sede.nome : null;
-  $("ciSede").innerHTML = nomeSede
-    ? `Sede: <span style="color:var(--accent)">${nomeSede}</span>`
-    : `<span style="color:var(--danger)">Nessuna sede selezionata — import solo locale</span>`;
+  /* SEDE: la tendina propone quelle che esistono (già scelta quella aperta) e in fondo
+     "+ Nuova sede…": scrivendo il nome la sede viene creata e compare anche nella solita
+     casella delle sedi in alto. Così la prima cosa che si fa aprendo il programma può
+     essere direttamente "Importa cartella". */
+  const ciSel = $("ciSedeSel"), ciNuova = $("ciSedeNuova");
+  {
+    const sedi = ($("sedeSelect")._sedi) || [];
+    $("ciSedeField").hidden = !sb; $("ciDataField").hidden = !sb;
+    ciSel.innerHTML = ((!cloud.sede && sedi.length > 1) ? '<option value="">Scegli la sede…</option>' : "")
+      + sedi.map(s=>`<option value="${s.id}">${s.nome.replace(/[<>&"]/g,"")}</option>`).join("")
+      + `<option value="${NEW_SEDE}">+ Nuova sede…</option>`;
+    ciSel.value = cloud.sede ? cloud.sede.id : (sedi.length === 1 ? sedi[0].id : (sedi.length ? "" : NEW_SEDE));
+    ciNuova.value = "";
+    const agg = ()=>{ ciNuova.hidden = ciSel.value !== NEW_SEDE; if(!ciNuova.hidden && $("confirmImport").open) ciNuova.focus(); };
+    ciSel.onchange = agg; agg();
+  }
   $("ciText").textContent = `${files.length} foto trovate.`;
   /* Detto prima di premere Importa: sede, GIORNATA e sigla stanno nella stessa finestra,
      così quello che sta per succedere è leggibile in un colpo d'occhio. La giornata a
      questo punto è già stata riportata su oggi (vedi riportaSuOggiPerImport): qui si
      mostra, non si sceglie. */
-  const gio = $("ciGiorno");
-  if(cloud.servizio){
-    const g = cloud.servizio.data_servizio;
-    const oggi = (g === serviceDateStr());
-    gio.innerHTML = `Giornata: <b style="color:${oggi?"var(--ok)":"var(--danger)"}">`
-      + (oggi ? "OGGI" : "⚠ NON È OGGI") + `</b> — ${dataItaliana(g)}`;
-  }else{
-    gio.innerHTML = `<b style="color:var(--danger)">Nessuna giornata aperta — import solo locale</b>`;
+  {
+    const inD = $("ciData"), gio = $("ciGiorno"), oggi = serviceDateStr();
+    inD.value = oggi;                    // sempre OGGI di partenza: un'altra data va scelta apposta
+    const agg = ()=>{
+      const g = inD.value;
+      gio.innerHTML = !g ? `<b style="color:var(--danger)">Scegli la giornata</b>`
+        : g === oggi ? `<b style="color:var(--ok)">OGGI</b> — ${dataItaliana(g)}`
+        : `<b style="color:var(--danger)">⚠ NON È OGGI</b> — le foto andranno nella giornata del ${dataItaliana(g)}`;
+    };
+    inD.oninput = agg; agg();
   }
   $("ciLetter").value = suggested || "";
   $("ciDesc").value = suggested ? (state.letterDesc[suggested]||"") : "";
 
   const dlg=$("confirmImport"); dlg.showModal();
-  $("ciLetter").focus();
-  const L = await new Promise(res=>{
+  (sb && ciSel.value === NEW_SEDE ? ciNuova : sb && !ciSel.value ? ciSel : $("ciLetter")).focus();
+  const scelta = await new Promise(res=>{
     $("ciYes").onclick=()=>{
+      let sedeId = null, sedeNome = null;
+      const data = $("ciData").value;
+      if(sb){
+        if(ciSel.value === NEW_SEDE){
+          sedeNome = ciNuova.value.trim();
+          if(!sedeNome){ toast("Scrivi il nome della nuova sede"); ciNuova.focus(); return; }
+        }else if(!ciSel.value){ toast("Scegli la sede"); ciSel.focus(); return; }
+        else sedeId = ciSel.value;
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(data)){ toast("Scegli la giornata"); $("ciData").focus(); return; }
+      }
       const v=$("ciLetter").value.trim().toUpperCase();
       if(!/^[A-Z]{1,3}$/.test(v)){ toast("Sigla del rullo: da 1 a 3 lettere (es. A, GT, ABC)"); $("ciLetter").focus(); return; }
-      const d=$("ciDesc").value.trim();
-      if(d) state.letterDesc[v]=d;
-      dlg.close(); res(v);
+      res({L:v, desc:$("ciDesc").value.trim(), sedeId, sedeNome, data});
+      dlg.close();
     };
-    $("ciNo").onclick=()=>{ dlg.close(); res(null); };
+    $("ciNo").onclick=()=>{ res(null); dlg.close(); };
+    /* chiusa con Esc: prima la risposta non arrivava mai e "C'è già un import in corso"
+       restava acceso fino al ricaricamento della pagina */
+    dlg.onclose = ()=> res(null);
   });
-  if(!L) return;
+  if(!scelta) return;
+  const L = scelta.L;
+  if(sb && !(await destinazioneImport(scelta))) return;      // apre (o crea) sede e giornata scelte
+  if(scelta.desc) state.letterDesc[L] = scelta.desc;
   // e una volta partito resta scritto dove sta andando: rullo e giornata
   if(cloud.servizio) toast(`Importo il rullo ${L} nella giornata del ${dataItaliana(cloud.servizio.data_servizio)}`, 5000);
 
@@ -7764,6 +7857,71 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    Va cambiata a ogni consegna. */
 const VERSIONE = "11 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
+
+/* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
+   Prima un cavo staccato o entrato male non si vedeva: la pagina restava lì, le foto nuove
+   non arrivavano e le stampe restavano "in attesa" senza un motivo a schermo.
+   Ogni 3 secondi si chiede al PC centrale se c'è:
+   · POSTAZIONE: spia verde "Cavo OK"; dopo due risposte mancate (6 secondi) spia rossa e
+     una fascia rossa in alto che dice di controllare il cavo. Appena torna, sparisce da sola.
+   · PC CENTRALE: la spia dice quante postazioni sono collegate in questo momento e avvisa
+     quando una smette di rispondere.
+   Il battito parte da un thread separato: Chrome rallenta i timer delle schede in secondo
+   piano (finestra di stampa aperta) e una postazione viva sembrerebbe scollegata. */
+(function spiaCavo(){
+  if(!suCentrale()) return;
+  const sonoIlCentrale = ["localhost","127.0.0.1","[::1]"].includes(location.hostname);
+  const box=$("cavoState"), dot=$("cavoDot"), lab=$("cavoLabel"), ban=$("cavoBanner");
+  if(!box || !ban) return;
+  box.hidden = false;
+  let mancate = 0, giu = false, quantePrima = null, inCorso = false;
+  async function giro(){
+    if(inCorso) return; inCorso = true;
+    let st = null;
+    try{
+      const ac = new AbortController(); const t = setTimeout(()=>ac.abort(), 2500);
+      try{
+        const r = await fetch("/stato?p=" + encodeURIComponent(nomePostazione()) + "&nc=" + Date.now(), {signal:ac.signal, cache:"no-store"});
+        if(r.ok) st = await r.json();
+      }finally{ clearTimeout(t); }
+    }catch(_){}
+    inCorso = false;
+    if(st){
+      mancate = 0;
+      if(giu){
+        giu = false; ban.hidden = true; quantePrima = null;   // dopo un riavvio il conto riparte, senza falsi allarmi
+        toast(sonoIlCentrale ? "PC centrale di nuovo attivo" : "Collegamento col PC centrale ripristinato", 5000);
+        try{ svuotaCoda(); pullNuoveFoto(); }catch(_){}
+      }
+      if(sonoIlCentrale){
+        const lista = st.postazioni || [], n = lista.length;
+        dot.style.background = n ? "var(--ok)" : "var(--muted)";
+        lab.textContent = n ? ("Postazioni collegate: " + n) : "Nessuna postazione collegata";
+        box.title = n ? lista.map(p=>(p.nome||"postazione") + " (" + p.ip + ")").join("\n") : "Nessuna postazione sta rispondendo sul cavo";
+        if(quantePrima !== null && n < quantePrima) toast("⚠ Una postazione non risponde più: controlla il suo cavo di rete", 9000);
+        if(quantePrima !== null && n > quantePrima) toast("Postazione collegata (" + n + " in tutto)", 4000);
+        quantePrima = n;
+      }else{
+        dot.style.background = "var(--ok)";
+        lab.textContent = "Cavo OK — PC centrale collegato";
+        box.title = "Il PC centrale risponde sul cavo di rete";
+      }
+    }else if(++mancate >= 2 && !giu){
+      giu = true;
+      dot.style.background = "var(--danger)";
+      lab.textContent = sonoIlCentrale ? "PC centrale FERMO" : "CAVO STACCATO";
+      ban.textContent = sonoIlCentrale
+        ? "⛔ Il programma del PC centrale si è fermato (finestra nera chiusa): riapri «Fay Live» dall'icona e premi 1"
+        : "⛔ COLLEGAMENTO COL PC CENTRALE PERSO — controlla il cavo di rete: staccalo e riattaccalo bene, qui e sullo switch, e guarda che il PC centrale sia acceso";
+      ban.hidden = false;
+    }
+  }
+  try{
+    const w = new Worker(URL.createObjectURL(new Blob(["setInterval(()=>postMessage(0), 3000)"], {type:"text/javascript"})));
+    w.onmessage = ()=> giro();
+  }catch(_){ setInterval(giro, 3000); }
+  giro();
+})();
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud
 function updateThumbCloud(){
