@@ -1405,8 +1405,37 @@ function maskKey(which){                       // legata alla sede, non al PC
 function maskCloudPath(which){
   return "mascherine/" + (cloud.sede ? cloud.sede.id : "nosede") + "-" + which + ".png";
 }
+/* CONTROLLO DEL FILE (11 nov). Prima si accettava qualunque immagine con "Mascherina salvata":
+   un JPG senza trasparenza copriva di bianco tutta la foto in stampa, e la verticale messa
+   nella casella delle orizzontali usciva deformata. Nessuno se ne accorgeva fino alla stampa.
+   Ora il file sbagliato viene RIFIUTATO con un messaggio che dice cosa fare. */
+function controllaMascherina(which, img){
+  const w = img.naturalWidth, h = img.naturalHeight, oriz = which === "maskH";
+  if(!w || !h) return {ok:false, msg:"Il file non è un'immagine leggibile."};
+  if(oriz ? h > w : w > h)
+    return {ok:false, msg:"Questa mascherina è " + (oriz ? "VERTICALE" : "ORIZZONTALE") + " (" + w + "×" + h + "): va nella casella «" + (oriz ? "Verticali" : "Orizzontali") + "», non in questa."};
+  // trasparenza, misurata su una copia piccola: una mascherina vera è quasi tutta trasparente
+  const k = Math.min(1, 256/Math.max(w,h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w*k)); c.height = Math.max(1, Math.round(h*k));
+  const x = c.getContext("2d", {willReadFrequently:true});
+  x.drawImage(img, 0, 0, c.width, c.height);
+  const d = x.getImageData(0, 0, c.width, c.height).data;
+  let vuoti = 0;
+  for(let i=3; i<d.length; i+=4) if(d[i] < 128) vuoti++;
+  if(vuoti / (d.length/4) < 0.05)
+    return {ok:false, msg:"Questo file NON ha parti trasparenti: in stampa coprirebbe tutta la foto.\nServe il PNG trasparente della mascherina (non un JPG, non una foto)."};
+  const r = Math.max(w,h)/Math.min(w,h);
+  return {ok:true, avviso: Math.abs(r-1.5) > 0.04
+    ? "Attenzione: la mascherina è " + w + "×" + h + ", non in formato 3:2 come le foto: logo e scritte potrebbero uscire un po' deformati" : null};
+}
 async function setMask(which, file){
-  const img = await loadImg(URL.createObjectURL(file));
+  let img;
+  try{ img = await loadImg(URL.createObjectURL(file)); }
+  catch(_){ alert("MASCHERINA NON CARICATA\n\nIl file non è un'immagine leggibile."); return false; }
+  const esame = controllaMascherina(which, img);
+  if(!esame.ok){ alert("MASCHERINA NON CARICATA\n\n" + esame.msg); return false; }
+  if(esame.avviso) toast(esame.avviso, 9000);
   state.event[which] = img;
   try{ await idb.set(maskKey(which), file); }catch(_){}
   maskStateText(); renderOverlayPreview();
@@ -1415,14 +1444,20 @@ async function setMask(which, file){
     const up = await sbTry(()=>sb.storage.from("anteprime")
       .upload(maskCloudPath(which), file, {contentType:"image/png", upsert:true}), "mascherina");
     toast(up && !up.error ? "Mascherina salvata per questa sede" : "Mascherina caricata solo su questo PC");
+    try{ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; }catch(_){}
   }else{
     toast("ATTENZIONE: nessuna sede selezionata — la mascherina vale solo per questa sessione. Scegli la sede e ricaricala.");
   }
 }
 // all'apertura di una sede: prima il cloud, poi la copia locale
 async function loadMasksForSede(){
+  /* Prima le mascherine venivano azzerate SUBITO e ricaricate dopo: una stampa partita in
+     quel mezzo secondo usciva senza cornice. Ora si azzerano subito solo cambiando sede;
+     ricaricando la stessa sede restano quelle di prima finché non sono pronte le nuove. */
+  const sedeDiPartenza = cloud.sede ? cloud.sede.id : null;
+  if(mascherineDiSede !== sedeDiPartenza){ state.event.maskH = null; state.event.maskV = null; firmaMaschere = null; }
+  mascherineDiSede = sedeDiPartenza;
   for(const which of ["maskH","maskV"]){
-    state.event[which] = null;
     let blob = null;
     if(sb && cloud.sede){
       // 1) download autenticato: funziona anche se il bucket non è pubblico
@@ -1457,13 +1492,13 @@ async function loadMasksForSede(){
         toast("Mascherina recuperata e assegnata alla sede " + cloud.sede.nome);
       }
     }
-    if(blob){
-      try{
-        state.event[which] = await loadImg(URL.createObjectURL(blob));
-        await idb.set(maskKey(which), blob);
-      }catch(_){}
-    }
+    let img = null;
+    if(blob){ try{ img = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
+    if((cloud.sede ? cloud.sede.id : null) !== sedeDiPartenza) return;   // sede cambiata nel frattempo: ci pensa il suo giro
+    if(img){ try{ await idb.set(maskKey(which), blob); }catch(_){} }
+    state.event[which] = img;
   }
+  try{ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; }catch(_){}
   await caricaImpostazioni();
   await caricaLogo();
   maskStateText();
@@ -1535,18 +1570,55 @@ async function caricaLogo(){
   if(blob){ try{ state.event.logoImg = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
 }
 
-$("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f); };
-$("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f); };
+$("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f).then(ok=>{ if(ok===false) e.target.value=""; }); };
+$("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f).then(ok=>{ if(ok===false) e.target.value=""; }); };
 $("evMaskClear").onclick = async ()=>{
   state.event.maskH = null; state.event.maskV = null;
   $("evMaskH").value = ""; $("evMaskV").value = "";
   try{ await idb.set(maskKey("maskH"), null); await idb.set(maskKey("maskV"), null); }catch(_){}
   if(sb && cloud.sede) await sbTry(()=>sb.storage.from("anteprime")
     .remove([maskCloudPath("maskH"), maskCloudPath("maskV")]), "rimuovi mascherine");
+  try{ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; }catch(_){}
   maskStateText(); renderOverlayPreview();
   toast("Mascherine rimosse");
 };
 setTimeout(()=>{ if(cloud.sede) loadMasksForSede(); else maskStateText(); }, 0);
+
+/* MASCHERINE SEMPRE ALLINEATE FRA LE POSTAZIONI (11 nov). DIFETTO: le mascherine si leggevano
+   solo all'apertura della sede. Se venivano caricate (o cambiate, o tolte) dopo, le postazioni
+   già aperte continuavano a stampare SENZA cornice, o con quella vecchia, fino al primo F5,
+   e niente lo segnalava. ORA ogni 20 secondi si guarda l'elenco dei file delle mascherine
+   della sede (nome, data, peso: pochi byte): se è cambiato qualcosa si ricaricano da sole. */
+var firmaMaschere = null;        // "impronta" delle mascherine della sede aperta, come le ha viste questo PC
+var mascherineDiSede = null;     // di quale sede sono quelle in memoria
+var controlloMaschere = false;
+async function firmaMascherineSede(){
+  if(!sb || !cloud.sede) return null;
+  const sid = String(cloud.sede.id);
+  const r = await conTempo(sb.storage.from("anteprime").list("mascherine", {limit:1000, search:sid}), 8000);
+  if(!r || r.error || !Array.isArray(r.data)) return null;       // linea giù: non si sa, non si tocca niente
+  return r.data.filter(x=>x && x.name && x.name.startsWith(sid+"-mask"))
+    .map(x=>x.name.slice(sid.length+1) + "|" + (x.updated_at||"") + "|" + ((x.metadata && x.metadata.size)||""))
+    .sort().join(";");
+}
+async function controllaMascherineNuove(){
+  if(controlloMaschere || !sb || !cloud.sede || firmaMaschere === null) return;
+  controlloMaschere = true;
+  try{
+    const sede = cloud.sede.id;
+    const f = await firmaMascherineSede();
+    if(f === null || !cloud.sede || cloud.sede.id !== sede || f === firmaMaschere) return;
+    // tolta altrove: via anche la copia tenuta da questo PC, altrimenti tornerebbe fuori da lì
+    for(const which of ["maskH","maskV"]){
+      if(!f.includes(which + ".png|")){ try{ await idb.set(maskKey(which), null); }catch(_){} }
+    }
+    await loadMasksForSede();
+    toast(f ? "Mascherina aggiornata da un'altra postazione" : "Mascherine rimosse da un'altra postazione", 6000);
+    if($("eventPanel") && $("eventPanel").classList.contains("open")) renderOverlayPreview();
+  }catch(err){ console.warn("controllo mascherine", err); }
+  finally{ controlloMaschere = false; }
+}
+setInterval(controllaMascherineNuove, 20000);
 
 function renderOverlayPreview(){
   const saved = state.event;
@@ -7690,7 +7762,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 ott 2026";
+const VERSIONE = "11 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 // indicatore: quante foto della giornata hanno l'anteprima sul cloud

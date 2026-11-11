@@ -55,6 +55,19 @@ const stSegna = db.prepare(`INSERT INTO da_inviare (tab, chiave, op, ver) VALUES
                             ON CONFLICT(tab, chiave) DO UPDATE SET op = excluded.op, ver = da_inviare.ver + 1`);
 const stSegnaFile = db.prepare(`INSERT INTO file_da_inviare (bucket, percorso, ver) VALUES (?, ?, 1)
                                 ON CONFLICT(bucket, percorso) DO UPDATE SET ver = file_da_inviare.ver + 1`);
+/* FILE DI IMPOSTAZIONE DI UNA SEDE: mascherine, logo, impostazioni salvate.
+   Prima, caricati dal PC centrale, restavano SOLO su questo PC: il cloud non li riceveva mai e
+   al riavvio con la linea la copia (magari vecchia) del cloud tornava sopra a quella nuova.
+   Ora ogni caricamento o rimozione fatta qui si segna e lo specchio lo ripete sul cloud;
+   finché è in sospeso, la copia del cloud NON sovrascrive quella di questo PC. */
+db.exec("CREATE TABLE IF NOT EXISTS sede_file_da_inviare (percorso TEXT PRIMARY KEY, op TEXT, ver INTEGER)");
+const reFileSede = /^(mascherine|loghi|impostazioni)\/[0-9a-f-]{36}(-mask[HV])?\.(png|json)$/;
+const MODELLI_FILE_SEDE = ["mascherine/ID-maskH.png", "mascherine/ID-maskV.png", "loghi/ID.png", "impostazioni/ID.json"];
+const stSegnaFileSede = db.prepare(`INSERT INTO sede_file_da_inviare (percorso, op, ver) VALUES (?, ?, 1)
+                                    ON CONFLICT(percorso) DO UPDATE SET op = excluded.op, ver = sede_file_da_inviare.ver + 1`);
+const qFileSedeSospeso = db.prepare("SELECT 1 FROM sede_file_da_inviare WHERE percorso = ?");
+const stFileSedeFatto = db.prepare("DELETE FROM sede_file_da_inviare WHERE percorso = ? AND ver = ?");
+const stFileSedeVia = db.prepare("DELETE FROM sede_file_da_inviare WHERE percorso = ?");
 const stIns = db.prepare("INSERT OR REPLACE INTO righe (tab, chiave, dati) VALUES (?, ?, ?)");
 const stDel = db.prepare("DELETE FROM righe WHERE tab = ? AND chiave = ?");
 
@@ -223,10 +236,23 @@ function righeFiltrate(nomeTab, q, voci) {
   for (const [k, v] of q) {
     if (RISERVATI.has(k)) continue;
     if (k === "or" || k === "and") throw errore(400, "PGRST100", "filtro or/and non supportato");
-    filtri.push([k, v]);
+    filtri.push([k, preparaFiltro(v)]);
   }
   return [...tab(nomeTab).values()].filter(r =>
-    filtri.every(([k, v]) => provaFiltro(valoreDi(nomeTab, r, k), v)) && (!voci || innerOk(nomeTab, r, voci)));
+    filtri.every(([k, f]) => f(valoreDi(nomeTab, r, k))) && (!voci || innerOk(nomeTab, r, voci)));
+}
+/* Un filtro si prepara UNA volta per richiesta, non a ogni riga. Prima l'elenco di "in.(...)"
+   veniva riletto carattere per carattere per OGNI foto del database: con 300 rulli e 60.000
+   foto una sola richiesta teneva fermo il server per 10 secondi. Ora l'elenco diventa un insieme. */
+function preparaFiltro(espr) {
+  let e = espr, neg = false;
+  if (e.startsWith("not.")) { neg = true; e = e.slice(4); }
+  if (!e.startsWith("in.")) return a => provaFiltro(a, espr);
+  const lista = listaIn(e.slice(3)), testi = new Set(lista), numeri = new Set(lista.filter(v => v !== "").map(Number));
+  return a => {
+    const ok = a === null || a === undefined ? false : typeof a === "number" ? numeri.has(a) : testi.has(String(a));
+    return neg ? !ok : ok;
+  };
 }
 function ordina(righe, ordine) {
   if (!ordine) return righe;
@@ -390,9 +416,20 @@ const TIPI = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
 function serviFile(res, f, extra) {
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) return json(res, 400, { statusCode: "404", error: "not_found", message: "Object not found" });
-    res.writeHead(200, Object.assign({ "Content-Type": TIPI[path.extname(f).toLowerCase()] || "application/octet-stream",
-      "Content-Length": st.size, "Cache-Control": "no-cache" }, extra || {}));
-    fs.createReadStream(f).pipe(res);
+    /* Un file che non si riesce ad aprire (bloccato dall'antivirus o da un altro programma,
+       cancellato un attimo prima) NON deve far cadere il PC centrale: prima l'errore di
+       lettura non era gestito e fermava il programma, cioè tutte le postazioni. */
+    const flusso = fs.createReadStream(f);
+    flusso.on("error", e => {
+      console.log("  ⚠ file non leggibile:", f, e.code || e.message);
+      if (!res.headersSent) json(res, 503, { statusCode: "503", error: "busy", message: "file momentaneamente non leggibile" });
+      else res.destroy();
+    });
+    flusso.on("open", () => {
+      res.writeHead(200, Object.assign({ "Content-Type": TIPI[path.extname(f).toLowerCase()] || "application/octet-stream",
+        "Content-Length": st.size, "Cache-Control": "no-cache" }, extra || {}));
+      flusso.pipe(res);
+    });
   });
 }
 async function storage(req, res, url) {
@@ -425,6 +462,7 @@ async function storage(req, res, url) {
     const tolti = [];
     for (const pr of (corpo.prefixes || [])) {
       try { fs.unlinkSync(percorsoFile(m[1], pr)); tolti.push({ name: pr, bucket_id: m[1] }); } catch (_) {}
+      if (m[1] === "anteprime" && reFileSede.test(pr)) stSegnaFileSede.run(pr, "del");   // "Rimuovi" vale anche sul cloud
     }
     return json(res, 200, tolti);
   }
@@ -450,6 +488,8 @@ async function storage(req, res, url) {
       if (m[1] === "originali") collegaLeggibile(decodeURIComponent(m[2]), true);   // copia leggibile in Archivio
       if ((m[1] === "anteprime" || m[1] === "originali") && /^[0-9a-f-]{36}\//.test(decodeURIComponent(m[2])))
         stSegnaFile.run(m[1], decodeURIComponent(m[2]));
+      if (m[1] === "anteprime" && reFileSede.test(decodeURIComponent(m[2])))
+        stSegnaFileSede.run(decodeURIComponent(m[2]), "up");          // mascherina/logo/impostazioni: va anche sul cloud
       return json(res, 200, { Key: `${m[1]}/${m[2]}`, Id: crypto.randomUUID() });
     }
   }
@@ -539,12 +579,24 @@ function adattaPagina(html) {
     .replace(/const SB_URL\s*=\s*"[^"]*";/, "const SB_URL = location.origin;")
     .replace(/<head>/i, "<head><script>window.FAY_CENTRALE = true;</script>");
 }
+const MESI = { gen: 0, feb: 1, mar: 2, apr: 3, mag: 4, giu: 5, lug: 6, ago: 7, set: 8, ott: 9, nov: 10, dic: 11 };
+function dataVersione(html) {          // legge  const VERSIONE = "26 ott 2026";  → numero confrontabile (0 se non c'è)
+  const m = /const VERSIONE\s*=\s*"(\d{1,2})\s+([a-z]{3})[a-z]*\s+(\d{4})/i.exec(html || "");
+  if (!m || !(m[2].toLowerCase() in MESI)) return 0;
+  return Date.UTC(Number(m[3]), MESI[m[2].toLowerCase()], Number(m[1]));
+}
 async function aggiornaPagine() {
   for (const nome of ["pc.html", "report.html"]) {
     try {
       const r = await fetch(`${SITO}/${nome}?nc=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
       const t = await r.text();
-      if (r.ok && t.includes("Fay Live")) { fs.writeFileSync(path.join(PAGINE, nome), t); console.log(`  ✓ ${nome} aggiornata dal sito`); }
+      if (!(r.ok && t.includes("Fay Live"))) continue;
+      /* MAI TORNARE INDIETRO: se la pagina su questo PC porta una data di versione più nuova
+         di quella del sito (correzione consegnata nella cartella ma non ancora pubblicata),
+         si tiene questa. Prima il sito vinceva sempre e cancellava la correzione al primo avvio. */
+      let qui = ""; try { qui = fs.readFileSync(path.join(PAGINE, nome), "utf8"); } catch (_) {}
+      if (dataVersione(qui) > dataVersione(t)) { console.log(`  · ${nome}: la copia su questo PC è più nuova di quella del sito, tengo questa`); continue; }
+      fs.writeFileSync(path.join(PAGINE, nome), t); console.log(`  ✓ ${nome} aggiornata dal sito`);
     } catch (_) {
       console.log(`  · ${nome}: sito non raggiungibile, uso la copia salvata`);
     }
@@ -603,6 +655,16 @@ async function scaricaDalCloud(silenzioso) {
           } else { g.sede_id = sc.id; salva("servizi", g); }
         }
         if (![...tab("servizi").values()].some(g => String(g.sede_id) === String(doppia.id))) elimina("sedi", doppia);
+        /* mascherine, logo e impostazioni caricati qui sotto la sede "di qui" passano alla sede
+           del cloud (prima restavano sotto il vecchio identificativo e sparivano dalla stampa) */
+        for (const modello of MODELLI_FILE_SEDE) {
+          try {
+            const da = modello.replace("ID", doppia.id), a = modello.replace("ID", sc.id);
+            if (!fs.existsSync(percorsoFile("anteprime", da))) continue;
+            fs.copyFileSync(percorsoFile("anteprime", da), percorsoFile("anteprime", a));
+            stSegnaFileSede.run(a, "up"); stFileSedeVia.run(da);
+          } catch (_) {}
+        }
         unite++;
       }
     }
@@ -660,6 +722,7 @@ async function scaricaDalCloud(silenzioso) {
   for (const sc of (silenzioso ? sediNuove : sedi)) daCopiare.push(`mascherine/${sc.id}-maskH.png`, `mascherine/${sc.id}-maskV.png`, `loghi/${sc.id}.png`, `impostazioni/${sc.id}.json`);
   {
     for (const rel of daCopiare) {
+      if (qFileSedeSospeso.get(rel)) continue;      // cambiato QUI e non ancora salito: vale la copia di questo PC
       try {
         const r = await chiediCloud(`/storage/v1/object/public/anteprime/${rel}`);
         if (!r.ok) continue;
@@ -883,6 +946,25 @@ async function specchio() {
         inTransazione(() => pezzo.forEach(v => { qTogliInviato.run(t, v.chiave); qFatto.run(t, v.chiave, v.ver); }));
         nCanc += pezzo.length;
       }
+    }
+    // 2 bis) mascherine, logo e impostazioni di sede caricati o rimossi da questo PC
+    for (const f of db.prepare("SELECT percorso, op, ver FROM sede_file_da_inviare").all()) {
+      if (f.op === "del") {
+        const r = await cloudJson("DELETE", "/storage/v1/object/anteprime", { prefixes: [f.percorso] });
+        if (!r.ok) break;
+        stFileSedeFatto.run(f.percorso, f.ver); nCanc++;
+        continue;
+      }
+      let dati;
+      try { dati = fs.readFileSync(percorsoFile("anteprime", f.percorso)); } catch (_) { stFileSedeFatto.run(f.percorso, f.ver); continue; }
+      const r = await fetch(`${CLOUD_URL}/storage/v1/object/anteprime/${f.percorso}`, {
+        method: "POST", signal: AbortSignal.timeout(60000),
+        headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY, "x-upsert": "true",
+                   "Content-Type": TIPI[path.extname(f.percorso).toLowerCase()] || "application/octet-stream" },
+        body: dati }).catch(() => null);
+      if (!r || !r.ok) break;
+      stFileSedeFatto.run(f.percorso, f.ver); nFile++;
+      console.log(`  ↑ ${f.percorso}: mandato al cloud`);
     }
     // 3) file delle giornate "con linea": prima le anteprime, poi gli originali (pochi per giro)
     const files = db.prepare("SELECT bucket, percorso, ver FROM file_da_inviare ORDER BY CASE bucket WHEN 'anteprime' THEN 0 ELSE 1 END LIMIT 40").all();
@@ -1110,6 +1192,11 @@ async function comandiCentrale(req, res, url) {
   }
   throw errore(404, "non_trovato", "comando sconosciuto");
 }
+
+/* Rete di sicurezza: un errore imprevisto in un punto qualunque si scrive nella finestra nera
+   ma NON spegne il PC centrale a metà servizio. */
+process.on("uncaughtException", e => console.log("  ⚠ errore imprevisto (il PC centrale continua):", e && e.stack || e));
+process.on("unhandledRejection", e => console.log("  ⚠ errore imprevisto (il PC centrale continua):", e && e.stack || e));
 
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
