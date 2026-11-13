@@ -386,6 +386,7 @@
       <button id="btnArchiveChange" title="Sceglie una cartella diversa dove salvare gli originali importati d'ora in avanti">Cambia cartella archivio…</button>
       <button id="btnSyncNow" title="Va a vedere subito sul cloud se le altre postazioni hanno importato altre foto">Aggiorna dal cloud</button>
       <button id="btnRelink" title="Ritrova nell'archivio gli originali della giornata aperta e li ricollega alle foto (serve dopo aver ricaricato la pagina)">Ricollega originali</button>
+      <button id="btnCambiaScheda" title="Sceglie un'altra cartella da cui importare: da lì in poi «Importa cartella» userà quella">Cambia cartella della scheda…</button>
       <button id="btnExportDir">Cartella export…</button>
       <button id="btnPushAll" title="Carica ORA sul cloud gli originali di questa giornata (utile per giornate vecchie o se il caricamento automatico era spento)">Carica originali sul cloud</button>
       <button id="btnRestore" title="Rigenera le anteprime mancanti dagli originali su questo PC">Ripristina anteprime</button>
@@ -1741,8 +1742,33 @@ async function leggiCartellaFoto(dir){
   }
   return files;
 }
+/* LA SCHEDA SI RICONOSCE DA SOLA (13 nov). Il lettore di schede è sempre nella stessa porta
+   (stessa lettera, es. E:), quindi la cartella scelta la prima volta si ricorda: dal secondo
+   import in poi "Importa cartella" la legge direttamente, senza la finestra di Windows.
+   Chrome può chiedere UNA volta per sessione "Consentire di vedere i file?" (un clic).
+   Se la scheda non c'è (tolta, o lettore in un'altra porta) si apre la finestra come prima.
+   Per scegliere un'altra cartella: Altro → "Cambia cartella della scheda…". */
+const SCHEDA_KEY = "faylive_cartella_scheda";
+async function permessoScheda(){
+  // va chiesto SUBITO al clic: Chrome lo permette solo a ridosso di un gesto dell'utente
+  let h = null;
+  try{ h = await idb.get(SCHEDA_KEY); }catch(_){}
+  if(!h || !h.queryPermission) return null;
+  try{
+    let perm = await h.queryPermission({mode:"read"});
+    if(perm !== "granted") perm = await h.requestPermission({mode:"read"});
+    return perm === "granted" ? h : null;
+  }catch(_){ return null; }
+}
+async function schedaInserita(h){
+  try{ const it = h.entries(); await it.next(); return true; }   // si legge? allora la scheda c'è
+  catch(_){ return false; }
+}
+let sceltaSchedaForzata = false;
 $("btnImport").onclick = async ()=>{
   if(!window.showDirectoryPicker){ $("fileInput").click(); return; }   // browser vecchi
+  const forza = sceltaSchedaForzata; sceltaSchedaForzata = false;
+  const salvata = forza ? null : await permessoScheda();
   /* La giornata si sistema PRIMA di tutto: se resta aperta una serata passata, la
      finestra dell'archivio e la scelta della cartella si riferirebbero al giorno
      sbagliato. (Il controllo c'è anche in importaFiles: qui è solo più presto.) */
@@ -1750,9 +1776,20 @@ $("btnImport").onclick = async ()=>{
   /* La cartella dove finiscono gli originali si decide PRIMA di leggere la scheda:
      se non è a posto qui non si importa, si apre la finestra dell'archivio. */
   if(!(await archivioProntoPerImport())) return;
-  let dir;
-  try{ dir = await showDirectoryPicker({mode:"read", id:"fayimport"}); }
-  catch(_){ return; }                                                  // annullato
+  let dir = null;
+  if(salvata){
+    if(await schedaInserita(salvata)){ dir = salvata; toast("Leggo la scheda («" + salvata.name + "»)…"); }
+    else toast("Scheda non trovata in «" + salvata.name + "»: inseriscila, oppure scegli la cartella", 7000);
+  }
+  if(!dir){
+    try{ dir = await showDirectoryPicker({mode:"read", id:"fayimport"}); }
+    catch(_){ return; }                                                // annullato
+    try{ await idb.set(SCHEDA_KEY, dir); }catch(_){}                   // la prossima volta va da sola
+    // una sottocartella della macchina (es. 100CANON) cambia nome fra una scheda e l'altra
+    if(/^\d{3}[A-Z0-9_]{5}$/i.test(dir.name))
+      toast("Ricordo la cartella «" + dir.name + "». Meglio scegliere la scheda intera o DCIM: Altro → Cambia cartella della scheda", 9000);
+    else toast("D'ora in poi «Importa cartella» legge da sola «" + dir.name + "»", 6000);
+  }
   if(!(await cartelleCompatibili(dir))) return;
   /* Teniamo da parte la cartella da cui stiamo importando: a import finito serve per
      accorgersi che la scheda è stata tolta (vedi vegliaScheda in fineImport). */
@@ -1766,6 +1803,8 @@ $("btnImport").onclick = async ()=>{
     $("fileInput").click();
   }
 };
+
+$("btnCambiaScheda").onclick = ()=>{ sceltaSchedaForzata = true; $("btnImport").onclick(); };
 
 // --- Ripristino anteprime dagli originali locali (stessi codici dal nome file) ---
 $("btnRestore").onclick = ()=>{
