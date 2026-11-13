@@ -433,7 +433,12 @@ function Controlla-Stampante {
 function Apri-Browser($url) {
   $chrome = Trova-Chrome
   if (-not $chrome) { Attenzione "Chrome non trovato: apro il browser normale, con la finestra di stampa."; Start-Process $url; return }
-  Start-Process $chrome -ArgumentList @("--user-data-dir=`"$PROFILO_CHROME`"", "--kiosk-printing", "--no-first-run", "--no-default-browser-check", $url)
+  # Sulla postazione la pagina arriva dal centrale come http://169.254.50.1: per Chrome e' "non sicura"
+  # e gli nega di sapere dov'e' il secondo schermo, quindi il monitor cliente non si apriva da solo
+  # sul monitor esterno (sul centrale, che e' localhost, si'). Al Chrome di Fay Live (profilo suo)
+  # si dice che il PC centrale e' affidabile: cosi' anche la postazione apre il monitor sullo schermo giusto.
+  $sicuro = "--unsafely-treat-insecure-origin-as-secure=http://$($IP_CENTRALE):$PORTA"
+  Start-Process $chrome -ArgumentList @("--user-data-dir=`"$PROFILO_CHROME`"", "--kiosk-printing", "--no-first-run", "--no-default-browser-check", $sicuro, $url)
 }
 
 function Apri-Centrale {

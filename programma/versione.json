@@ -1,10 +1,10 @@
 {
-    "versione":  2026111301,
-    "data":  "13 nov 2026 n.1",
-    "note":  "aggiornamento automatico dei portatili",
+    "versione":  2026111302,
+    "data":  "13 nov 2026 n.2",
+    "note":  "monitor cliente sullo schermo esterno anche dalle postazioni",
     "file":  {
                  "server.mjs":  "007ac5847fca8dd532d9f793f8da2cd5b9454c0aaa22fcb2c9be5927bb3a47d4",
-                 "rete.ps1":  "147b89d0d96e002211e571167a449c3b4c4b3d4d6001f9605e4422ea487c62d7",
+                 "rete.ps1":  "26384d132220a0538a3958a5847a4bf6110f35cc0e5705ea573095df56a5b7ad",
                  "aggiorna.ps1":  "6c9dda2a78c8261e0839a4a589fb9c77ccb2e6c2f30121caaed52c0cfe70c78f",
                  "_avvio.bat":  "829428458378bb47280feb9093ced0057d2a04bf4f907deef70060c90befd2be",
                  "_motore.bat":  "997e116e62410ef350e8f1f72aba810cce6f5800c5bdc323d47b7d542f0cda10",
