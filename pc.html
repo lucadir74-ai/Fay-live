@@ -240,6 +240,17 @@
   .field input[type=text],.field select{width:100%}
   .row{display:flex;gap:10px}
   .row>*{flex:1}
+  /* tasti delle mascherine (Impostazioni): riquadri grandi al posto dei campi file di Windows */
+  .maskBtns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .field label.maskBtn{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;
+           background:var(--surface);cursor:pointer;font-weight:400;color:var(--ink);font-size:14px;margin:0;transition:border-color .15s}
+  .maskBtn:hover{border-color:var(--accent)}
+  .maskBtn b{display:block;font-size:15px}
+  .maskBtn small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+  .maskBtn.ok small{color:#4cc38a}
+  .maskIco{flex:none;border:2px solid currentColor;border-radius:3px;opacity:.75}
+  .maskIco.oriz{width:30px;height:20px}
+  .maskIco.vert{width:20px;height:30px;margin:0 5px}
   #ovPreview{display:flex;gap:10px}
   #ovPreview canvas{background:#000;border-radius:8px;border:1px solid var(--line)}
   .hint{color:var(--muted);font-size:12px}
@@ -531,11 +542,20 @@
       <h2>Impostazioni <span id="evSedeNome" style="font-weight:400;color:var(--muted)"></span></h2>
       <div class="body">
         <div class="field"><label>Mascherina della sede (PNG trasparente)</label>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <span style="flex:1;min-width:150px">Orizzontali<br><input type="file" id="evMaskH" accept="image/png,image/*"></span>
-            <span style="flex:1;min-width:150px">Verticali<br><input type="file" id="evMaskV" accept="image/png,image/*"></span>
+          <!-- i campi file veri sono nascosti: si usano i due riquadri, più leggibili -->
+          <input type="file" id="evMaskH" accept="image/png,image/*" hidden>
+          <input type="file" id="evMaskV" accept="image/png,image/*" hidden>
+          <div class="maskBtns">
+            <label for="evMaskH" class="maskBtn" id="evMaskHBtn">
+              <span class="maskIco oriz"></span>
+              <span><b>Orizzontale</b><small id="evMaskHStato">—</small></span>
+            </label>
+            <label for="evMaskV" class="maskBtn" id="evMaskVBtn">
+              <span class="maskIco vert"></span>
+              <span><b>Verticale</b><small id="evMaskVStato">—</small></span>
+            </label>
           </div>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
             <span id="evMaskState" class="hint" style="flex:1"></span>
             <button id="evMaskClear" type="button">Rimuovi</button>
           </div>
@@ -1356,10 +1376,16 @@ function maskStateText(){
   const ev = state.event || {};
   const h = ev.maskH ? "orizzontali ✓" : "orizzontali —";
   const v = ev.maskV ? "verticali ✓" : "verticali —";
+  for(const [w, ok] of [["H", !!ev.maskH], ["V", !!ev.maskV]]){
+    const b = $("evMask"+w+"Btn"), s = $("evMask"+w+"Stato");
+    if(b) b.classList.toggle("ok", ok);
+    if(s) s.textContent = ok ? "✓ caricata" : "da caricare";
+    if(b) b.title = ok ? "Clic per sostituirla" : "Clic per scegliere il file PNG";
+  }
   const el = $("evMaskState"); if(!el) return;
   el.textContent = (!ev.maskH && !ev.maskV)
     ? "Nessuna mascherina per questa sede: le stampe escono senza cornice."
-    : (ev.maskH && ev.maskV) ? "Mascherine caricate: " + h + " · " + v
+    : (ev.maskH && ev.maskV) ? ""
     : "Attenzione: " + h + " · " + v + " — le foto senza mascherina escono senza cornice.";
 }
 function maskKey(which, sid){                  // legata alla sede, non al PC
