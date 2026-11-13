@@ -406,7 +406,9 @@
     <button id="btnSelAll" title="Seleziona tutte le foto che vedi — rullo attivo e ricerca compresi (Ctrl+A)">Seleziona tutte</button>
     <input type="text" id="searchBox" placeholder="Cerca codice  ( / )" title="Un codice apre la foto. Più codici insieme (anche separati da spazio o virgola) si selezionano: invio apre la vista insieme.">
     <span id="searchHint" hidden></span>
+    <button id="btnSlidePrev" title="Slideshow: schermata precedente (poi riparte da solo)" hidden>◀</button>
     <button id="btnMonitor">Avvia slideshow</button>
+    <button id="btnSlideNext" title="Slideshow: schermata successiva (poi riparte da solo)" hidden>▶</button>
     <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
 
@@ -6145,6 +6147,7 @@ function setMonState(mode){
                              : "Fa ripartire lo slideshow trasmettendo "+tab;
   }
   if(x) x.hidden = (mode==="off");
+  for(const id of ["btnSlidePrev","btnSlideNext"]){ const f=$(id); if(f) f.hidden = (mode!=="slideshow"); }
 }
 /* COSA STA VEDENDO IL CLIENTE, scritto per esteso.
    Una foto mandata sul monitor ci resta finché non si torna allo slideshow: se ci si
@@ -6201,10 +6204,31 @@ function startSlideshow(){
   if(!M.win || M.win.closed) return;
   setMonState("slideshow");
   M.queue = buildSlideshowQueue(); M.qPos=0;
+  avviaGiroSlideshow();
+}
+/* FRECCE ◀ ▶ (13 nov): l'operatore porta lo slideshow avanti o indietro di una schermata
+   (es. il cliente vuole rivedere quella di prima); da lì il giro automatico riparte da solo,
+   con il tempo pieno sulla schermata scelta. */
+function slideshowSposta(delta){
+  const M=state.monitor;
+  if(!M.win || M.win.closed || M.mode!=="slideshow") return;
+  M.queue = buildSlideshowQueue();
+  const n = M.queue.length; if(!n) return;
+  const passo = fotoPerPagina(), pagine = Math.ceil(n/passo);
+  let pag = Math.floor((M.qShown||0)/passo) + delta;
+  pag = ((pag % pagine) + pagine) % pagine;
+  M.qPos = pag*passo;
+  avviaGiroSlideshow();
+}
+$("btnSlidePrev").onclick = ()=> slideshowSposta(-1);
+$("btnSlideNext").onclick = ()=> slideshowSposta(1);
+function avviaGiroSlideshow(){
+  const M=state.monitor; stopTimer();
   const step=async()=>{
     if(!M.win || M.win.closed || M.mode!=="slideshow") return;
     if(!M.queue.length){ paintMonitorMessage(M.letter ? `Rullo ${M.letter}: in attesa di foto…` : "In attesa di foto…"); return; }
     if(M.qPos>=M.queue.length) M.qPos=0;
+    M.qShown = M.qPos;                       // la schermata che il cliente sta vedendo
     await paintMonitorMosaic(M.qPos);
     /* Si avanza di una SCHERMATA intera, non di una foto: se il cliente ne vede 6,
        al cambio deve trovarne altre 6 nuove, non le stesse cinque spostate di un posto. */
