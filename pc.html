@@ -450,6 +450,7 @@
         <button id="lbFav">♡ Segna <kbd>spazio</kbd></button>
         <button id="lbMigliora" title="Applica la correzione automatica di luce, contrasto e dominanti. Premuto di nuovo torna all'originale">✦ Migliora <kbd>m</kbd></button>
         <button id="lbQr">QR al cliente</button>
+        <button id="lbAnteprima" title="Mostra la foto come esce dalla stampante: cornice, mascherina e taglio della sede aperta. Non stampa niente">👁 Anteprima stampa</button>
         <button id="lbPrint" class="primary">Stampa</button>
         <button id="lbShow">Monitor <kbd>-</kbd></button>
         <button id="lbMore" title="Altre azioni">Altro ▾</button>
@@ -527,7 +528,7 @@
 
     <!-- Pannello servizio -->
     <div class="panel" id="eventPanel">
-      <h2>Servizio</h2>
+      <h2>Servizio <span id="evSedeNome" style="font-weight:400;color:var(--muted)"></span></h2>
       <div class="body">
         <div class="field"><label>Nome servizio (facoltativo)</label><input type="text" id="evName"></div>
         <div class="row">
@@ -688,6 +689,22 @@
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="delSedeNo">Annulla</button>
     <button id="delSedeYes" style="background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600">Cancella sede</button>
+  </div>
+</dialog>
+
+<dialog id="apDlg" style="max-width:min(94vw,1200px);padding:16px">
+  <div style="display:flex;gap:10px;align-items:baseline;margin-bottom:10px;flex-wrap:wrap">
+    <h3 style="margin:0">Anteprima stampa</h3>
+    <span id="apInfo" style="color:var(--muted);font-size:14px"></span>
+  </div>
+  <div id="apBox" style="display:flex;align-items:center;justify-content:center;min-height:200px;background:#3a3f4a;border-radius:10px;padding:14px">
+    <img id="apImg" alt="Anteprima della stampa" style="max-width:100%;max-height:72vh;box-shadow:0 4px 18px rgba(0,0,0,.5);display:none">
+    <span id="apAttesa" style="color:#fff">Preparo l'anteprima…</span>
+  </div>
+  <p id="apNota" class="hint" style="margin:8px 0 0"></p>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+    <button id="apChiudi">Chiudi <kbd>esc</kbd></button>
+    <button id="apStampa" class="primary">Stampa</button>
   </div>
 </dialog>
 
@@ -1208,8 +1225,10 @@ function statsDaCloud(srv, r){
   return s;
 }
 
+// impostazioni di partenza del servizio: si torna a queste a ogni cambio di sede (vedi staccaCorniceSede)
+const EVENTO_VUOTO = () => ({name:"", secs:4, qrSecs:120, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2, maskH:null, maskV:null});
 const state = {
-  event: {name:"", secs:4, qrSecs:120, tiles:6, text:"", infoLine:"", logoImg:null, logoSize:30, textSize:4.2, maskH:null, maskV:null}, // configurabile dal pannello Servizio, tutto facoltativo
+  event: EVENTO_VUOTO(), // configurabile dal pannello Servizio, tutto facoltativo
   photos: [],             // {id, code, letter, num, file, thumb, w, h, ts}
   byCode: new Map(),
   counters: {},           // lettera -> ultimo numero
@@ -1331,9 +1350,12 @@ function drawCodeBadge(ctx, w, h, code, status){
 /* ---------- pannello serata ---------- */
 
 let pendingLogo = null;
+let pannelloDiSede = null;      // la sede per cui è stato aperto il pannello Servizio
 $("btnEvent").onclick = ()=>{ openEventPanel(); };
 function openEventPanel(){
   const ev = state.event;
+  pannelloDiSede = cloud.sede ? cloud.sede.id : null;
+  $("evSedeNome").textContent = cloud.sede ? "— sede " + cloud.sede.nome : "— nessuna sede scelta";
   $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
   $("evQrSecs").value = ev.qrSecs ?? 120;
   $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
@@ -1357,8 +1379,9 @@ function openEventPanel(){
 $("evCancel").onclick = ()=> $("eventPanel").classList.remove("open");
 $("evLogo").onchange = async e=>{
   const f=e.target.files[0]; if(!f) return;
+  if(!stessaSedeDelPannello()){ e.target.value=""; return; }
   pendingLogo = await loadImg(URL.createObjectURL(f));
-  salvaLogo(f);                       // resta legato alla sede, non va ricaricato ogni volta
+  salvaLogo(f);                     // resta legato alla sede, non va ricaricato ogni volta
   renderOverlayPreview();
 };
 $("evText").oninput = renderOverlayPreview;
@@ -1408,12 +1431,55 @@ function maskStateText(){
     : (ev.maskH && ev.maskV) ? "Mascherine caricate: " + h + " · " + v
     : "Attenzione: " + h + " · " + v + " — le foto senza mascherina useranno logo e scritta.";
 }
-function maskKey(which){                       // legata alla sede, non al PC
-  const sid = cloud.sede ? cloud.sede.id : "nosede";
+function maskKey(which, sid){                  // legata alla sede, non al PC
+  if(sid === undefined) sid = cloud.sede ? cloud.sede.id : "nosede";
   return "faylive_mask_" + sid + "_" + which;
 }
-function maskCloudPath(which){
-  return "mascherine/" + (cloud.sede ? cloud.sede.id : "nosede") + "-" + which + ".png";
+function maskCloudPath(which, sid){
+  if(sid === undefined) sid = cloud.sede ? cloud.sede.id : "nosede";
+  return "mascherine/" + sid + "-" + which + ".png";
+}
+
+/* OGNI SEDE HA LA SUA CORNICE, E SOLO LA SUA (13 nov).
+   Con più servizi contemporanei in sedi diverse, la mascherina (e logo, scritta, cornice)
+   di una sede non deve MAI finire su un'altra. Difetti trovati e chiusi:
+   · "recupero": una sede senza mascherina adottava quella caricata senza sede scelta (in
+     memoria su quel PC) e la salvava sul cloud come SUA. Così una mascherina di Phi Beach
+     è finita anche su NAMMOS. Il recupero è stato tolto: la mascherina si carica solo a mano,
+     con la sede giusta aperta;
+   · cambiando sede, per un attimo (e finché la rete non rispondeva) restavano in memoria
+     mascherina, logo e scritta della sede di prima: una stampa in quel momento usciva con la
+     cornice sbagliata. Ora al cambio si svuota tutto subito, e la stampa ASPETTA che la
+     cornice della sede aperta sia caricata;
+   · logo e impostazioni: se la nuova sede non li aveva, restavano quelli della sede di prima;
+   · pannello Servizio aperto su una sede e salvato dopo aver cambiato sede: le impostazioni
+     della prima finivano sulla seconda. Ora il pannello si chiude al cambio di sede. */
+var corniceCaricataPer = null;   // sede di cui sono in memoria mascherine/logo/impostazioni COMPLETE
+function staccaCorniceSede(){
+  state.event = EVENTO_VUOTO();
+  corniceCaricataPer = null; mascherineDiSede = null; firmaMaschere = null;
+  pendingLogo = null;
+  if($("eventPanel") && $("eventPanel").classList.contains("open")){
+    $("eventPanel").classList.remove("open");
+    toast("Hai cambiato sede: il pannello Servizio è stato chiuso senza salvare", 6000);
+  }
+  try{ maskStateText(); }catch(_){}
+}
+function stessaSedeDelPannello(){
+  const ora = cloud.sede ? cloud.sede.id : null;
+  if(ora === pannelloDiSede) return true;
+  alert("SEDE CAMBIATA\n\nIl pannello Servizio era aperto per un'altra sede: niente è stato salvato.\nRiapri «Servizio…» con la sede giusta.");
+  $("eventPanel").classList.remove("open");
+  return false;
+}
+/* Prima di comporre una stampa (o l'anteprima): la cornice in memoria deve essere quella
+   della sede aperta. Se non è ancora caricata, si aspetta. */
+async function corniceProntaPerSede(){
+  const sid = cloud.sede ? cloud.sede.id : null;
+  if(!sid || corniceCaricataPer === sid) return;
+  await loadMasksForSede();
+  if(corniceCaricataPer !== (cloud.sede ? cloud.sede.id : null))
+    throw new Error("La sede è cambiata mentre preparavo la cornice: riprova");
 }
 /* CONTROLLO DEL FILE (11 nov). Prima si accettava qualunque immagine con "Mascherina salvata":
    un JPG senza trasparenza copriva di bianco tutta la foto in stampa, e la verticale messa
@@ -1440,77 +1506,88 @@ function controllaMascherina(which, img){
     ? "Attenzione: la mascherina è " + w + "×" + h + ", non in formato 3:2 come le foto: logo e scritte potrebbero uscire un po' deformati" : null};
 }
 async function setMask(which, file){
+  // senza sede la mascherina non si accetta: non saprebbe a chi appartiene
+  if(!cloud.sede){ alert("MASCHERINA NON CARICATA\n\nPrima scegli la sede in alto: ogni mascherina appartiene a una sede."); return false; }
+  if(!stessaSedeDelPannello()) return false;
+  const sede = cloud.sede, sid = sede.id;
   let img;
   try{ img = await loadImg(URL.createObjectURL(file)); }
   catch(_){ alert("MASCHERINA NON CARICATA\n\nIl file non è un'immagine leggibile."); return false; }
   const esame = controllaMascherina(which, img);
   if(!esame.ok){ alert("MASCHERINA NON CARICATA\n\n" + esame.msg); return false; }
+  if(!cloud.sede || cloud.sede.id !== sid){ alert("MASCHERINA NON CARICATA\n\nLa sede è cambiata mentre la caricavi."); return false; }
   if(esame.avviso) toast(esame.avviso, 9000);
   state.event[which] = img;
-  try{ await idb.set(maskKey(which), file); }catch(_){}
+  try{ await idb.set(maskKey(which, sid), file); }catch(_){}
   maskStateText(); renderOverlayPreview();
   // sul cloud, così resta alla sede e la vedono tutte le postazioni, tutte le sere
-  if(sb && cloud.sede){
+  if(sb){
     const up = await sbTry(()=>sb.storage.from("anteprime")
-      .upload(maskCloudPath(which), file, {contentType:"image/png", upsert:true}), "mascherina");
-    toast(up && !up.error ? "Mascherina salvata per questa sede" : "Mascherina caricata solo su questo PC");
-    try{ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; }catch(_){}
-  }else{
-    toast("ATTENZIONE: nessuna sede selezionata — la mascherina vale solo per questa sessione. Scegli la sede e ricaricala.");
+      .upload(maskCloudPath(which, sid), file, {contentType:"image/png", upsert:true}), "mascherina");
+    toast(up && !up.error ? "Mascherina salvata per la sede " + sede.nome : "Mascherina della sede " + sede.nome + " caricata solo su questo PC");
+    try{ if(cloud.sede && cloud.sede.id === sid){ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; } }catch(_){}
   }
 }
 // all'apertura di una sede: prima il cloud, poi la copia locale
-async function loadMasksForSede(){
-  /* Prima le mascherine venivano azzerate SUBITO e ricaricate dopo: una stampa partita in
-     quel mezzo secondo usciva senza cornice. Ora si azzerano subito solo cambiando sede;
-     ricaricando la stessa sede restano quelle di prima finché non sono pronte le nuove. */
-  const sedeDiPartenza = cloud.sede ? cloud.sede.id : null;
+let caricamentoCornice = null;   // {sid, promessa}: due richieste per la stessa sede aspettano lo stesso giro
+function loadMasksForSede(){
+  const sid = cloud.sede ? cloud.sede.id : null;
+  if(caricamentoCornice && caricamentoCornice.sid === sid) return caricamentoCornice.promessa;
+  const promessa = caricaCorniceDi(sid).finally(()=>{ if(caricamentoCornice && caricamentoCornice.promessa === promessa) caricamentoCornice = null; });
+  caricamentoCornice = {sid, promessa};
+  return promessa;
+}
+async function caricaCorniceDi(sedeDiPartenza){
+  /* Ricaricando la STESSA sede le mascherine restano quelle di prima finché non sono pronte
+     le nuove (una stampa in quel mezzo secondo non esce senza cornice). Cambiando sede invece
+     si è già svuotato tutto in chooseSede (staccaCorniceSede). */
+  const ancoraLei = ()=> (cloud.sede ? cloud.sede.id : null) === sedeDiPartenza;
   if(mascherineDiSede !== sedeDiPartenza){ state.event.maskH = null; state.event.maskV = null; firmaMaschere = null; }
   mascherineDiSede = sedeDiPartenza;
+  /* Elenco delle mascherine della sede (cloud o PC centrale). Se risponde e una mascherina
+     NON c'è, è stata tolta: si butta anche la copia tenuta da questo PC, che altrimenti
+     tornerebbe fuori (era il caso di una mascherina sbagliata tolta mentre il PC era spento).
+     La copia di questo PC si usa solo quando l'elenco non si può leggere (niente linea). */
+  let elenco = null;
+  try{ elenco = await firmaMascherineSede(); }catch(_){}
+  if(!ancoraLei()) return;
   for(const which of ["maskH","maskV"]){
     let blob = null;
-    if(sb && cloud.sede){
+    if(elenco !== null && !elenco.includes(which + ".png|")){
+      try{ await idb.set(maskKey(which, sedeDiPartenza), null); }catch(_){}
+      if(!ancoraLei()) return;
+      state.event[which] = null;
+      continue;
+    }
+    if(sb && sedeDiPartenza){
       // 1) download autenticato: funziona anche se il bucket non è pubblico
       try{
-        const dl = await sb.storage.from("anteprime").download(maskCloudPath(which));
+        const dl = await sb.storage.from("anteprime").download(maskCloudPath(which, sedeDiPartenza));
         if(!dl.error && dl.data && dl.data.size > 100) blob = dl.data;
       }catch(_){}
       // 2) ripiego sull'indirizzo pubblico
       if(!blob){
         try{
-          const url = sb.storage.from("anteprime").getPublicUrl(maskCloudPath(which)).data.publicUrl;
+          const url = sb.storage.from("anteprime").getPublicUrl(maskCloudPath(which, sedeDiPartenza)).data.publicUrl;
           const r = await fetch(url + "?t=" + Date.now());
           if(r.ok){ const b = await r.blob(); if(b.size > 100) blob = b; }
         }catch(_){}
       }
     }
-    if(!blob){ try{ blob = await idb.get(maskKey(which)); }catch(_){} }
-    // 3) recupero: mascherine salvate quando nessuna sede era selezionata ("nosede").
-    //    Se le trovo, le adotto per questa sede e le ricarico sul cloud, una volta sola.
-    if(!blob && cloud.sede){
-      let orfana = null;
-      try{ orfana = await idb.get("faylive_mask_nosede_" + which); }catch(_){}
-      if(!orfana){
-        try{
-          const dl = await sb.storage.from("anteprime").download("mascherine/nosede-" + which + ".png");
-          if(!dl.error && dl.data && dl.data.size > 100) orfana = dl.data;
-        }catch(_){}
-      }
-      if(orfana){
-        blob = orfana;
-        try{ await sb.storage.from("anteprime").upload(maskCloudPath(which), orfana, {contentType:"image/png", upsert:true}); }catch(_){}
-        toast("Mascherina recuperata e assegnata alla sede " + cloud.sede.nome);
-      }
-    }
+    // 3) copia tenuta da questo PC, SOLO di questa sede (senza sede: nessuna mascherina)
+    if(!blob && sedeDiPartenza){ try{ blob = await idb.get(maskKey(which, sedeDiPartenza)); }catch(_){} }
     let img = null;
     if(blob){ try{ img = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
-    if((cloud.sede ? cloud.sede.id : null) !== sedeDiPartenza) return;   // sede cambiata nel frattempo: ci pensa il suo giro
-    if(img){ try{ await idb.set(maskKey(which), blob); }catch(_){} }
+    if(!ancoraLei()) return;   // sede cambiata nel frattempo: ci pensa il suo giro
+    if(img){ try{ await idb.set(maskKey(which, sedeDiPartenza), blob); }catch(_){} }
     state.event[which] = img;
   }
-  try{ const f = await firmaMascherineSede(); if(f !== null) firmaMaschere = f; }catch(_){}
-  await caricaImpostazioni();
-  await caricaLogo();
+  try{ const f = await firmaMascherineSede(); if(f !== null && ancoraLei()) firmaMaschere = f; }catch(_){}
+  await caricaImpostazioni(sedeDiPartenza);
+  if(!ancoraLei()) return;
+  await caricaLogo(sedeDiPartenza);
+  if(!ancoraLei()) return;
+  corniceCaricataPer = sedeDiPartenza;
   maskStateText();
   if(state.monitor.win && !state.monitor.win.closed) repaintMonitor();
 }
@@ -1534,17 +1611,19 @@ async function salvaImpostazioni(){
     }catch(err){ console.warn("salvaImpostazioni", err); }
   }
 }
-async function caricaImpostazioni(){
+async function caricaImpostazioni(sid){
+  if(sid === undefined) sid = cloud.sede ? cloud.sede.id : null;
   let dati = null;
-  if(sb && cloud.sede){
+  if(sb && sid){
     try{
-      const dl = await sb.storage.from("anteprime").download(impCloudPath());
+      const dl = await sb.storage.from("anteprime").download("impostazioni/" + sid + ".json");
       if(!dl.error && dl.data) dati = JSON.parse(await dl.data.text());
     }catch(_){}
   }
   if(!dati){
-    try{ const raw = localStorage.getItem(impKey()); if(raw) dati = JSON.parse(raw); }catch(_){}
+    try{ const raw = localStorage.getItem("faylive_imp_" + (sid || "nosede")); if(raw) dati = JSON.parse(raw); }catch(_){}
   }
+  if((cloud.sede ? cloud.sede.id : null) !== sid) return;    // sede cambiata intanto: non sono sue
   if(!dati) return;
   state.event = Object.assign({}, state.event || {}, dati);
   /* Il caricamento automatico degli originali segue la SEDE, non la singola postazione.
@@ -1570,19 +1649,24 @@ async function salvaLogo(file){
     try{ await sb.storage.from("anteprime").upload("loghi/"+cloud.sede.id+".png", file, {contentType:file.type||"image/png", upsert:true}); }catch(_){}
   }
 }
-async function caricaLogo(){
+async function caricaLogo(sid){
+  if(sid === undefined) sid = cloud.sede ? cloud.sede.id : null;
   let blob = null;
-  if(sb && cloud.sede){
-    try{ const dl = await sb.storage.from("anteprime").download("loghi/"+cloud.sede.id+".png");
+  if(sb && sid){
+    try{ const dl = await sb.storage.from("anteprime").download("loghi/"+sid+".png");
       if(!dl.error && dl.data && dl.data.size>100) blob = dl.data; }catch(_){}
   }
-  if(!blob){ try{ blob = await idb.get("faylive_logo_" + (cloud.sede?cloud.sede.id:"nosede")); }catch(_){} }
-  if(blob){ try{ state.event.logoImg = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
+  if(!blob){ try{ blob = await idb.get("faylive_logo_" + (sid || "nosede")); }catch(_){} }
+  let img = null;
+  if(blob){ try{ img = await loadImg(URL.createObjectURL(blob)); }catch(_){} }
+  if((cloud.sede ? cloud.sede.id : null) !== sid) return;    // sede cambiata intanto: non è suo
+  if(img) state.event.logoImg = img;
 }
 
 $("evMaskH").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskH", f).then(ok=>{ if(ok===false) e.target.value=""; }); };
 $("evMaskV").onchange = e=>{ const f=e.target.files[0]; if(f) setMask("maskV", f).then(ok=>{ if(ok===false) e.target.value=""; }); };
 $("evMaskClear").onclick = async ()=>{
+  if(!stessaSedeDelPannello()) return;
   state.event.maskH = null; state.event.maskV = null;
   $("evMaskH").value = ""; $("evMaskV").value = "";
   try{ await idb.set(maskKey("maskH"), null); await idb.set(maskKey("maskV"), null); }catch(_){}
@@ -1646,6 +1730,7 @@ function renderOverlayPreview(){
   state.event = saved;
 }
 $("evSave").onclick = ()=>{
+  if(!stessaSedeDelPannello()) return;
   const name=$("evName").value.trim();
   state.event = {
     name, secs: Math.max(2, +$("evSecs").value||4),
@@ -4331,6 +4416,9 @@ $("cmpSend").onclick = async ()=>{ const set=selSet(); if(!set.length) return; c
 
 /* ---------- stampa ed esportazione ---------- */
 async function renderFull(p, withOverlay=true){
+  // la cornice in memoria deve essere quella della sede aperta (le foto in lista sono sue)
+  const sedeStampa = cloud.sede ? cloud.sede.id : null;
+  if(withOverlay) await corniceProntaPerSede();
   let src, lowQuality=false;
   const blob = await ensureOriginalBlob(p); // originale: locale → cloud → (null)
   if(blob){
@@ -4364,6 +4452,8 @@ async function renderFull(p, withOverlay=true){
   drawAdjusted(ctx, src, border, border, iw, ih, p); src.close();
   // logo + scritta, posizionati rispetto alla foto e alla banda inferiore
   if(withOverlay) drawOverlay(ctx, iw, ih, border, bottomExtra);
+  if((cloud.sede ? cloud.sede.id : null) !== sedeStampa || (withOverlay && sedeStampa && corniceCaricataPer !== sedeStampa))
+    throw new Error(p.code + ": la sede è cambiata mentre preparavo la stampa, non stampo");
   c._lowQuality = lowQuality;
   return c;
 }
@@ -5780,6 +5870,42 @@ $("lbSelect").onclick=()=>{ const p=fotoAperta(); if(p){ toggleSel(p); paintLigh
 $("lbFav").onclick=()=>{ $("lbSelect").click(); };
 $("lbShow").onclick=()=>{ const p=fotoAperta(); if(p) presentSet([p]); };
 $("lbPrint").onclick=()=>{ const p=fotoAperta(); if(p) printPhotos([p]); };
+/* ANTEPRIMA STAMPA (13 nov): la foto composta ESATTAMENTE come la stampa (stessa funzione
+   renderFull: cornice bianca, mascherina o logo e scritta della sede aperta, taglio, luce e
+   colore), ma mostrata qui invece di andare alla stampante. Il nome della sede è scritto in
+   alto: si vede subito se la cornice è quella giusta. */
+let anteprimaDi = null;
+$("lbAnteprima").onclick = async ()=>{
+  const p = fotoAperta(); if(!p) return;
+  const dlg = $("apDlg"), img = $("apImg");
+  anteprimaDi = p;
+  img.style.display = "none"; img.removeAttribute("src");
+  $("apAttesa").textContent = "Preparo l'anteprima…"; $("apAttesa").style.display = "";
+  $("apInfo").textContent = p.code + " — sede " + (cloud.sede ? cloud.sede.nome : "nessuna");
+  $("apNota").textContent = "";
+  $("apStampa").disabled = true;
+  dlg.showModal();
+  try{
+    const c = await renderFull(p, true);
+    if(anteprimaDi !== p || !dlg.open) return;          // chiusa o cambiata foto nel frattempo
+    img.src = c.toDataURL("image/jpeg", 0.9);
+    img.style.display = ""; $("apAttesa").style.display = "none";
+    const ev = state.event || {};
+    const or = c.width >= c.height ? "orizzontale" : "verticale";
+    const cornice = (or === "orizzontale" ? ev.maskH : ev.maskV) ? "mascherina della sede"
+                  : (ev.logoImg || ev.text) ? "logo e scritta della sede" : "nessuna mascherina né logo per questa sede";
+    $("apNota").textContent = "Foto " + or + " · " + cornice +
+      (c.width > c.height ? " · sul foglio verrà girata per riempirlo" : "") +
+      (c._lowQuality ? " · ATTENZIONE: l'originale non è ancora arrivato, questa è la copia piccola" : "");
+    $("apStampa").disabled = false;
+  }catch(err){
+    if(anteprimaDi !== p) return;
+    $("apAttesa").textContent = "Anteprima non riuscita: " + (err && err.message ? err.message : err);
+  }
+};
+$("apChiudi").onclick = ()=>{ anteprimaDi = null; $("apDlg").close(); };
+$("apDlg").addEventListener("close", ()=>{ anteprimaDi = null; $("apImg").removeAttribute("src"); });
+$("apStampa").onclick = ()=>{ const p = anteprimaDi; $("apDlg").close(); if(p) printPhotos([p]); };
 $("lbExport").onclick=()=>{ const p=fotoAperta(); if(p) exportPhotos([p]); };
 
 /* --- cursori luce e colore --- */
@@ -6838,6 +6964,7 @@ async function controllaCanc(promessa, cosa){
 }
 // chiude la sede aperta su questo PC (cancellata qui o da un'altra postazione)
 function azzeraSedeLocale(){
+  staccaCorniceSede();
   cloud.sede=null; cloud.servizio=null; cloud.rulli={};
   try{ localStorage.removeItem(ULTIMA_KEY); }catch(_){}
   if(cloud.channel){ try{ sb.removeChannel(cloud.channel); }catch(_){} cloud.channel=null; }
@@ -6902,6 +7029,8 @@ function idGiornata(sedeId, data){
   return x.slice(0,8)+"-"+x.slice(8,12)+"-4"+x.slice(13,16)+"-"+((parseInt(x[16],16)&3)|8).toString(16)+x.slice(17,20)+"-"+x.slice(20,32);
 }
 async function chooseSede(s, dataVoluta){
+  // cornice della sede di prima: via SUBITO (la stampa aspetta quella nuova, vedi corniceProntaPerSede)
+  if(!cloud.sede || String(cloud.sede.id) !== String(s.id)) staccaCorniceSede();
   setTimeout(loadMasksForSede, 400);   // le cornici di questa sede
   cloud.sede=s;
   ricordaScelta();
@@ -7855,7 +7984,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "11 nov 2026";
+const VERSIONE = "13 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
