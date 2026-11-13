@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fay Live - cloud</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2330; }
+  main { max-width: 780px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 4px; }
+  p { margin: 6px 0 14px; line-height: 1.45; color: #4a5568; font-size: 14px; }
+  .stato { padding: 10px 14px; border-radius: 8px; background: #fff; border: 1px solid #dde1e7; margin-bottom: 8px; font-size: 14px; }
+  .on { color: #1a7f45; font-weight: 600; } .off { color: #b4561a; font-weight: 600; }
+  .giornata { background: #fff; border: 1px solid #dde1e7; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .giornata .info { flex: 1; min-width: 200px; }
+  .giornata b { font-size: 16px; }
+  .giornata small { display: block; color: #667085; margin-top: 2px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: #e7f6ec; color: #1a7f45; margin-left: 6px; }
+  .tag.num { background: #fdf0e3; color: #b4561a; }
+  button { background: #1f5fd1; color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 14px; cursor: pointer; }
+  button:disabled { background: #98a2b3; cursor: default; }
+  a.online { display: inline-block; margin-top: 4px; font-size: 14px; }
+  label.orig { font-size: 13px; color: #4a5568; display: block; margin: 0 0 10px; }
+  .vuoto { padding: 16px; text-align: center; color: #667085; background: #fff; border: 1px dashed #c8cdd6; border-radius: 10px; font-size: 14px; }
+  .avanza { padding: 10px 14px; border-radius: 8px; background: #eef4ff; border: 1px solid #c9dbfb; margin: 8px 0; font-size: 14px; display: none; }
+  .errore { color: #b42318; margin-top: 10px; font-size: 14px; white-space: pre-line; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cloud</h1>
+  <div class="stato" id="stato">Controllo...</div>
+  <a class="online" href="https://fay-live.vercel.app/pc.html" target="_blank" rel="noopener">Apri la versione online di Fay Live (legge direttamente dal cloud)</a>
+
+  <h2>Dal cloud a questo PC</h2>
+  <p>Con internet, questo PC porta qui da solo le giornate recenti (ultimi 14 giorni) che gli mancano, con le anteprime: ci pensa ogni 5 minuti. Questo elenco serve per le giornate pi&ugrave; vecchie, per scaricare gli originali (file pesanti) o per ritirare subito una giornata senza aspettare. Non cancella niente e non cambia quello che c'&egrave; gi&agrave;.</p>
+  <label class="orig"><input type="checkbox" id="orig"> scarica anche gli originali (file pesanti: serve una buona connessione)</label>
+  <div class="avanza" id="avanza"></div>
+  <div id="cloud"></div>
+
+  <h2>Da questo PC al cloud</h2>
+  <p>Le giornate create senza internet sono "solo numeri": sul cloud sono arrivati solo i conteggi. Qui puoi mandare anche le foto. L'invio &egrave; automatico, un po' alla volta, e riparte da solo se internet cade.</p>
+  <div id="elenco"></div>
+
+  <div class="errore" id="errore"></div>
+</main>
+<script>
+  var statoEl = document.getElementById("stato");
+  var erroreEl = document.getElementById("errore");
+  var cloudEl = document.getElementById("cloud");
+  var elencoEl = document.getElementById("elenco");
+  var avanzaEl = document.getElementById("avanza");
+
+  function post(url, corpo) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.message || r.status); return d; }); });
+  }
+  function vuoto(testo) { var v = document.createElement("div"); v.className = "vuoto"; v.textContent = testo; return v; }
+  function tag(testo, classe) { var t = document.createElement("span"); t.className = "tag " + (classe || ""); t.textContent = testo; return t; }
+
+  /* ---- dal cloud a questo PC ---- */
+  function rigaCloud(g) {
+    var div = document.createElement("div"); div.className = "giornata";
+    var info = document.createElement("div"); info.className = "info";
+    var b = document.createElement("b"); b.textContent = g.sede + " – " + g.data;
+    if (g.soloNumeri) b.appendChild(tag("solo numeri", "num"));
+    if (g.qui) b.appendChild(tag("già su questo PC"));
+    info.appendChild(b);
+    var btn = document.createElement("button");
+    btn.textContent = g.qui ? "Scarica le foto mancanti" : "Scarica su questo PC";
+    btn.onclick = function () {
+      btn.disabled = true; erroreEl.textContent = "";
+      post("/centrale/scarica", { id: g.id, originali: document.getElementById("orig").checked })
+        .then(function () { seguiScarico(); })
+        .catch(function (e) { erroreEl.textContent = "Non riuscito: " + e.message; btn.disabled = false; });
+    };
+    div.appendChild(info); div.appendChild(btn);
+    return div;
+  }
+  function caricaCloud() {
+    fetch("/centrale/cloud-giornate").then(function (r) { return r.json(); }).then(function (d) {
+      cloudEl.textContent = "";
+      if (!d.cloud) { cloudEl.appendChild(vuoto("Senza internet non posso leggere il cloud. Riprova quando c'è la linea.")); return; }
+      if (!d.giornate.length) { cloudEl.appendChild(vuoto("Nessuna giornata sul cloud.")); return; }
+      d.giornate.forEach(function (g) { cloudEl.appendChild(rigaCloud(g)); });
+    }).catch(function () { erroreEl.textContent = "Questa pagina funziona solo sul PC centrale (http://localhost:8787/foto-cloud.html)."; });
+  }
+  var seguendo = false;
+  function seguiScarico() {
+    if (seguendo) return; seguendo = true;
+    (function giro() {
+      fetch("/centrale/scarico").then(function (r) { return r.json(); }).then(function (s) {
+        avanzaEl.style.display = "block";
+        if (s.attivo) {
+          avanzaEl.textContent = s.fase === "file" ? "Scarico i file: " + s.fatte + " di " + s.totale + "..." : "Leggo la giornata dal cloud...";
+          setTimeout(giro, 1000);
+        } else {
+          seguendo = false;
+          avanzaEl.textContent = s.errori.length ? "Finito con problemi:\n" + s.errori.slice(0, 5).join("\n") + (s.errori.length > 5 ? "\n... e altri " + (s.errori.length - 5) : "")
+                                                 : "Fatto: la giornata è su questo PC. Aprila da Fay Live.";
+          avanzaEl.style.whiteSpace = "pre-line";
+          caricaCloud();
+        }
+      }).catch(function () { seguendo = false; });
+    })();
+  }
+
+  /* ---- da questo PC al cloud ---- */
+  function rigaSu(g) {
+    var div = document.createElement("div"); div.className = "giornata";
+    var info = document.createElement("div"); info.className = "info";
+    var b = document.createElement("b"); b.textContent = g.sede + " – " + g.data;
+    var s = document.createElement("small"); s.textContent = g.foto + " foto · " + g.rulli + " rulli · " + g.file + " file da inviare";
+    info.appendChild(b); info.appendChild(s);
+    var btn = document.createElement("button"); btn.textContent = "Manda le foto al cloud";
+    btn.onclick = function () {
+      if (!confirm("Mandare le foto di " + g.sede + " del " + g.data + " sul cloud?\nPuo' richiedere tempo e traffico internet.\nDopo questo passaggio non si torna a \"solo numeri\".")) return;
+      btn.disabled = true; erroreEl.textContent = "";
+      post("/centrale/invia-foto", { id: g.id }).then(function () { caricaSu(); aggiornaStato(); })
+        .catch(function (e) { erroreEl.textContent = "Non riuscito: " + e.message; btn.disabled = false; });
+    };
+    div.appendChild(info); div.appendChild(btn);
+    return div;
+  }
+  function caricaSu() {
+    fetch("/centrale/giornate").then(function (r) { return r.json(); }).then(function (d) {
+      elencoEl.textContent = "";
+      if (!d.giornate.length) { elencoEl.appendChild(vuoto("Nessuna giornata \"solo numeri\": tutto quello che c'è su questo PC è già destinato al cloud.")); return; }
+      d.giornate.forEach(function (g) { elencoEl.appendChild(rigaSu(g)); });
+    }).catch(function () {});
+  }
+
+  function aggiornaStato() {
+    fetch("/stato").then(function (r) { return r.json(); }).then(function (s) {
+      statoEl.textContent = "";
+      var i = document.createElement("span"); i.className = s.cloud ? "on" : "off";
+      i.textContent = s.cloud ? "Internet: collegato" : "Internet: non collegato (l'invio parte appena torna la linea)";
+      statoEl.appendChild(i);
+      statoEl.appendChild(document.createTextNode(" · da inviare al cloud: " + s.daInviare + " righe, " + s.fileDaInviare + " file"));
+    }).catch(function () { statoEl.textContent = "Stato non disponibile"; });
+  }
+
+  caricaCloud(); caricaSu(); aggiornaStato(); seguiScarico();
+  setInterval(aggiornaStato, 4000);
+</script>
+</body>
+</html>

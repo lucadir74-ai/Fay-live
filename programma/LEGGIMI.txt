@@ -1,0 +1,105 @@
+﻿FAY LIVE
+========
+
+Una sola cartella, uguale su TUTTI i portatili. A ogni avvio scegli il ruolo:
+  1 = PC CENTRALE  (raccoglie le foto)
+  2 = POSTAZIONE   (si collega al centrale, vede e stampa)
+Lo stesso portatile puo' fare da centrale in un evento e da postazione in un altro.
+
+INSTALLAZIONE (una volta per portatile)
+1. Copia questa cartella dove vuoi, FUORI da OneDrive (per esempio C:\FayLive).
+2. Doppio clic su "Fay Live.bat". Sul desktop compare l'icona "Fay Live":
+   da li' in poi usa sempre quella.
+3. Servono Google Chrome e la stampante DNP come predefinita.
+4. PREPARA IL PC (consigliato, una volta sola, con l'adattatore di rete inserito):
+   doppio clic su "Prepara questo PC.bat" e rispondi Si' alla richiesta di Windows
+   (oppure premi P nella schermata dove si sceglie 1 o 2).
+   Da quel momento chi usa Fay Live deve solo aprire l'icona e premere 1 o 2: niente piu'
+   richieste di permesso, niente finestra del firewall, DNP gia' predefinita, e la scheda
+   di rete non si "addormenta" piu' (era il motivo per cui il cavo andava staccato e riattaccato).
+   Se sposti o aggiorni la cartella, rifai la preparazione.
+   Senza preparazione funziona lo stesso: Windows chiede il permesso quando cambi ruolo e,
+   la prima volta, quello del firewall per Node.js ("Consenti accesso").
+
+IL CAVO E' COLLEGATO BENE?
+- All'avvio la finestra dice "Cavo collegato a 1 Gbps" oppure "CAVO NON COLLEGATO".
+- Dentro Fay Live, nella barra in basso c'e' una spia:
+  * postazione: verde "Cavo OK - PC centrale collegato". Se il cavo si stacca, dopo pochi
+    secondi compare una fascia rossa in alto; quando torna, sparisce da sola;
+  * PC centrale: "Postazioni collegate: N" (passandoci sopra col mouse si vede quali).
+- Nella finestra nera del centrale resta scritto quando una postazione si collega o sparisce.
+- SE IL CAVO VA STACCATO E RIATTACCATO: su QUEL portatile, subito dopo, doppio clic su
+  "Diagnosi cavo.bat". Scrive sul desktop un file "FayLive-diagnosi-cavo-...txt" (non cambia
+  niente): mandalo a chi segue Fay Live, dice perche' il collegamento e' caduto.
+
+L'ICONA E LA BARRA DELLE APPLICAZIONI
+L'icona "Fay Live" sul desktop ha il logo Frame. Per averla anche nella barra in basso:
+tasto destro sull'icona > (Mostra altre opzioni >) "Aggiungi alla barra delle applicazioni".
+
+OGNI EVENTO
+- Centrale: collega il cavo verso le postazioni, apri "Fay Live", premi 1.
+  Si apre una finestra nera: NON chiuderla finche' si lavora.
+- Postazione: collega il cavo, apri "Fay Live", premi 2.
+  Aspetta il centrale (deve essere gia' acceso) e si apre da sola.
+Quando cambi ruolo la rete si sistema da sola (su un PC non preparato Windows chiede il permesso: Si').
+Ci puo' essere un solo centrale per cavo.
+- La prima cosa da fare e' "Importa cartella": nella finestra si sceglie (o si scrive) la sede,
+  la giornata (proposta: oggi) e la sigla del rullo. Una sede nuova compare poi nella casella in alto.
+
+DOVE STANNO LE FOTO
+Le crea e le tiene SOLO il portatile che fa da centrale, nelle cartelle che nascono
+al primo avvio come centrale:
+- dati\centrale.db  = database (sedi, giornate, rulli, foto, attivita')
+- dati\file\        = anteprime e originali
+- Archivio\         = originali con nome leggibile: Sede\data\lettera\codice
+Una postazione non salva foto. Quando un portatile smette di fare il centrale,
+le sue cartelle dati e Archivio restano li': NON cancellarle.
+Per portare un evento su un altro portatile copia dati\ e Archivio\.
+Con internet, il centrale manda da solo i dati al cloud ogni 20 secondi.
+
+AGGIORNAMENTI (da soli, niente piu' zip)
+- A ogni avvio "Fay Live.bat" controlla se c'e' una versione nuova del programma:
+  * sul PC centrale, se e' gia' acceso sul cavo (cosi' le postazioni senza internet
+    si aggiornano lo stesso);
+  * sul sito, se c'e' internet.
+  Basta quindi accendere PRIMA il centrale con internet, poi le postazioni.
+- I file nuovi vengono controllati prima di sostituire quelli vecchi: se uno arriva
+  rovinato non cambia niente e Fay Live parte come prima. Dati, foto e Archivio non
+  vengono mai toccati.
+- Se dopo un aggiornamento qualcosa non va: doppio clic su "Torna alla versione di prima.bat".
+  Quella versione viene saltata finche' non ne esce una corretta.
+- Se e' cambiata la parte della rete, alla scelta 1/2 compare "premi P": ripreparare il PC
+  e' consigliato (una volta), ma funziona anche senza.
+
+I FILE
+- Fay Live.bat   = l'unico da aprire per lavorare (controlla gli aggiornamenti e parte)
+- aggiorna.ps1   = l'aggiornamento automatico
+- versione.json  = quale versione c'e' su questo PC
+- riserva\       = i file della versione di prima
+- Torna alla versione di prima.bat = se un aggiornamento da' problemi
+- Cloud.bat       = pagina del cloud sul centrale (scarica giornate, manda foto)
+- _motore.bat    = parte interna (avvia il server del centrale)
+- rete.ps1       = scelta ruolo e rete
+- server.mjs     = il server del centrale
+- pagine\, lib\, node\ = pagine, librerie e Node.js: servono anche senza internet
+All'avvio, se c'e' internet, pc.html e report.html vengono riscaricati dal sito.
+
+CLOUD (quando c'e' internet)
+- In automatico: il centrale, con internet, ogni 5 minuti si porta qui da solo le giornate
+  RECENTI (ultimi 14 giorni) che gli mancano, con righe e anteprime. Non scarica gli
+  originali. Una giornata viene presa una sola volta per PC: se la svuoti qui non torna da
+  sola. Cancellare qui una giornata scaricata dal cloud NON la cancella sul cloud.
+  Prima di scaricare aspetta di aver finito di mandare su quello che c'e' qui.
+  Se non vuoi lo scarico automatico: imposta FAY_AUTO_SCARICO=0.
+- A mano: "Cloud.bat" (oppure http://localhost:8787/foto-cloud.html). La pagina:
+  * elenca le giornate del cloud: serve per quelle piu' vecchie, per scaricare anche gli
+    originali (file pesanti) o per ritirare subito una giornata;
+  * elenca le giornate create qui senza internet ("solo numeri") e con un pulsante manda
+    anche le foto al cloud (invio automatico, a poco a poco, riparte se cade internet);
+  * ha il link per aprire la versione online di Fay Live, che legge direttamente dal cloud.
+POSTAZIONE SENZA CAVO
+Se la postazione non trova il centrale, mentre aspetta premi O: apre la versione online
+di Fay Live (lavora sul cloud, serve internet). Con il cavo e il centrale acceso si
+collega come sempre al centrale.
+REPORT SUL CENTRALE
+http://localhost:8787/report.html?k=<codice del report>

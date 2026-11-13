@@ -1,0 +1,20 @@
+{
+    "versione":  2026111301,
+    "data":  "13 nov 2026 n.1",
+    "note":  "aggiornamento automatico dei portatili",
+    "file":  {
+                 "server.mjs":  "007ac5847fca8dd532d9f793f8da2cd5b9454c0aaa22fcb2c9be5927bb3a47d4",
+                 "rete.ps1":  "147b89d0d96e002211e571167a449c3b4c4b3d4d6001f9605e4422ea487c62d7",
+                 "aggiorna.ps1":  "6c9dda2a78c8261e0839a4a589fb9c77ccb2e6c2f30121caaed52c0cfe70c78f",
+                 "_avvio.bat":  "829428458378bb47280feb9093ced0057d2a04bf4f907deef70060c90befd2be",
+                 "_motore.bat":  "997e116e62410ef350e8f1f72aba810cce6f5800c5bdc323d47b7d542f0cda10",
+                 "Cloud.bat":  "1c5cef6b6009c2c290390ccc4277107d979f38c0f0d63744572902970de3cca0",
+                 "Diagnosi cavo.bat":  "5e89180df0c0ed725945b7c57b5c2f13f940eb897e2ed374eb1d80ee2b6f2518",
+                 "Prepara questo PC.bat":  "8e711edf9c8e929a64bf3fa3b996bd8ffc841cf6f19f597dbf12db7a97c6fb63",
+                 "LEGGIMI.txt":  "9a13d5c88a643ded06a0ee72817fe8342527fc487eec5d658d2c78888003500b",
+                 "faylive.ico":  "168c56ce9c79ab31fe7d5f2713de1c1066982d76818730581418f89a079cbfd0",
+                 "pagine/foto-cloud.html":  "446fcabaf343701cea3f89aa02ca43d660276b1e2d2cca19b19e76011f02d86b",
+                 "lib/qrcode.js":  "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
+                 "lib/supabase.js":  "59d39487c3589843b410322d8a3d562ce022aba1e5ccb16898ef3fb2a0da2ecd"
+             }
+}
