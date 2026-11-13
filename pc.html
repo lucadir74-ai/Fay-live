@@ -358,7 +358,7 @@
     <select id="sedeSelect" title="Sede di lavoro"><option value="">Sede…</option></select>
     <select id="giornoSelect" title="Giornata" hidden></select>
     <span id="eventInfo"></span>
-    <button id="btnEvent">Servizio…</button>
+    <button id="btnEvent">Impostazioni…</button>
     <button id="btnPrintQueue">Da stampare <span id="pqBadge" class="pqbadge">0</span></button>
     <button id="btnMail">Da inviare <span id="mailBadge" class="pqbadge">0</span></button>
     <button id="btnVetrine" title="Gallerie mandate ai clienti che non erano in postazione">Vetrine <span id="vetBadge" class="pqbadge">0</span></button>
@@ -410,7 +410,7 @@
     <div id="gridWrap"><div id="gridSpacer"></div></div>
 
     <div id="empty">
-      <div>Importa la cartella della SD: i codici vengono assegnati in automatico. Logo, scritte e slideshow si regolano da "Servizio…" (facoltativo).</div>
+      <div>Importa la cartella della SD: i codici vengono assegnati in automatico. Mascherina e slideshow si regolano da "Impostazioni…".</div>
       <div id="shortcuts">
         <span><kbd>clic</kbd></span><span>seleziona / deseleziona</span>
         <span><kbd>doppio clic</kbd></span><span>ingrandisce la foto (anche clic destro)</span>
@@ -528,9 +528,24 @@
 
     <!-- Pannello servizio -->
     <div class="panel" id="eventPanel">
-      <h2>Servizio <span id="evSedeNome" style="font-weight:400;color:var(--muted)"></span></h2>
+      <h2>Impostazioni <span id="evSedeNome" style="font-weight:400;color:var(--muted)"></span></h2>
       <div class="body">
-        <div class="field"><label>Nome servizio (facoltativo)</label><input type="text" id="evName"></div>
+        <div class="field"><label>Mascherina della sede (PNG trasparente)</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <span style="flex:1;min-width:150px">Orizzontali<br><input type="file" id="evMaskH" accept="image/png,image/*"></span>
+            <span style="flex:1;min-width:150px">Verticali<br><input type="file" id="evMaskV" accept="image/png,image/*"></span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+            <span id="evMaskState" class="hint" style="flex:1"></span>
+            <button id="evMaskClear" type="button">Rimuovi</button>
+          </div>
+        </div>
+        <div class="field"><label>Anteprima (orizzontale / verticale)</label>
+          <div id="ovPreview">
+            <canvas id="pvH" width="220" height="147"></canvas>
+            <canvas id="pvV" width="110" height="165"></canvas>
+          </div>
+        </div>
         <div class="row">
           <div class="field"><label>Slideshow: secondi per scatto</label><input type="number" id="evSecs" min="2" max="15" value="4"></div>
           <div class="field"><label>QR al cliente: si chiude dopo (secondi · 0 = mai)</label><input type="number" id="evQrSecs" min="0" max="900" step="10" value="120"></div>
@@ -542,29 +557,15 @@
               <option value="9">9 (3×3)</option>
             </select></div>
         </div>
-        <div class="field"><label>Mascherina (PNG trasparente, grande quanto tutta la foto)</label>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <span style="flex:1;min-width:150px">Orizzontali<br><input type="file" id="evMaskH" accept="image/png,image/*"></span>
-            <span style="flex:1;min-width:150px">Verticali<br><input type="file" id="evMaskV" accept="image/png,image/*"></span>
+        <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
+          <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo">
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+            <span style="flex:1;min-width:150px">Carattere <select id="evFontInfo"></select></span>
+            <span style="flex:1;min-width:150px">Altezza <output id="evInfoHOut" style="color:var(--muted)">4%</output>
+              <input type="range" id="evInfoH" min="2" max="10" step="0.5" value="4" style="width:100%"></span>
           </div>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
-            <span id="evMaskState" class="hint" style="flex:1"></span>
-            <button id="evMaskClear" type="button">Rimuovi</button>
-          </div>
-          <p class="hint">Se carichi la mascherina, logo e scritta qui sotto vengono ignorati: vale quello che hai disegnato tu. Serve un file per le orizzontali e uno per le verticali; restano salvati su questo PC anche dopo la chiusura.</p>
         </div>
-        <div class="field"><label>Aspetto delle scritte</label>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <span style="flex:1;min-width:150px">Scritta sulla cornice
-              <select id="evFont"></select></span>
-            <span style="flex:1;min-width:150px">Barra info slideshow
-              <select id="evFontInfo"></select></span>
-          </div>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
-            <span style="flex:1">Altezza barra info <input type="range" id="evInfoH" min="2" max="10" step="0.5" value="4" style="width:100%"></span>
-            <output id="evInfoHOut" style="min-width:42px;text-align:right;color:var(--muted)">4%</output>
-          </div>
-          <div style="margin-top:8px">Codice sulla foto
+        <div class="field"><label>Codice sulla foto</label>
             <select id="evCodePos">
               <option value="bassoSx">In basso a sinistra (come in griglia)</option>
               <option value="bassoDx">In basso a destra</option>
@@ -573,41 +574,16 @@
               <option value="latoDx">Verticale sul lato destro</option>
               <option value="latoSx">Verticale sul lato sinistro</option>
               <option value="centro">In basso al centro</option>
-            </select></div>
+            </select>
         </div>
-        <div class="field"><label>Logo (PNG con trasparenza) — in alto a destra</label>
-          <input type="file" id="evLogo" accept="image/*">
-          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-            <span style="flex:1">Dimensione <input type="range" id="evLogoSize" min="5" max="60" step="1" value="30" style="width:100%"></span>
-            <output id="evLogoSizeOut" style="min-width:42px;text-align:right;color:var(--muted)">30%</output>
-          </div></div>
-        <div class="field"><label>Scritta — in basso a sinistra</label>
-          <input type="text" id="evText" placeholder="Es. fotoserata.it · Porto Cervo">
-          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-            <span style="flex:1">Dimensione <input type="range" id="evTextSize" min="1.5" max="10" step="0.1" value="4.2" style="width:100%"></span>
-            <output id="evTextSizeOut" style="min-width:42px;text-align:right;color:var(--muted)">4.2%</output>
-          </div></div>
-        <div class="field"><label>Riga informativa sullo slideshow (prezzi, info)</label>
-          <input type="text" id="evInfoLine" placeholder="Es. Stampa 15x23 · 10 € — chiedi al fotografo"></div>
         <div class="field"><label>Cornice bianca in stampa</label>
           <label style="font-weight:400"><input type="checkbox" id="evFrameOn" checked> Aggiungi bordo bianco alle stampe</label>
-          <div style="display:flex;gap:12px;margin-top:6px">
-            <span style="flex:1">Bordo <input type="range" id="evFrameBorder" min="0" max="6" step="0.5" value="2.5" style="width:100%"></span>
-            <span style="flex:1">Spazio sotto <input type="range" id="evFrameBottom" min="0" max="14" step="1" value="6" style="width:100%"></span>
-          </div>
-          <p class="hint">Solo in stampa: bordo sottile su 4 lati e più spazio sotto per la scritta. Non cambia lo slideshow né gli originali.</p>
-        </div>
-        <div class="field"><label>Anteprima overlay (orizzontale / verticale)</label>
-          <div id="ovPreview">
-            <canvas id="pvH" width="220" height="147"></canvas>
-            <canvas id="pvV" width="110" height="165"></canvas>
-          </div>
-          <p class="hint">Logo e scritta sono ancorati agli angoli in proporzione al lato corto: la posizione resta corretta su entrambi gli orientamenti. Gli originali non vengono toccati.</p>
+          <div style="margin-top:6px">Bordo <input type="range" id="evFrameBorder" min="0" max="6" step="0.5" value="2.5" style="width:100%"></div>
         </div>
       </div>
       <footer>
         <button id="evCancel">Annulla</button>
-        <button id="evSave" class="primary">Salva serata</button>
+        <button id="evSave" class="primary">Salva</button>
       </footer>
     </div>
 
@@ -1280,42 +1256,15 @@ function serviceDateStr(){
 function fmtCode(letter,num){ return letter+"-"+pad3(num); }
 function isImage(f){ return /\.(jpe?g|png|webp)$/i.test(f.name); }
 
-/* ---------- overlay: logo alto-dx, scritta basso-sx, ancorati al lato corto ---------- */
-/* La cornice con logo e scritta si applica SOLO alla stampa (e all'anteprima della
-   cornice nelle impostazioni). Su monitor cliente, visualizzatore e tablet le foto si
-   vedono pulite: la cornice sullo schermo copriva parte dell'immagine mentre il cliente
-   la stava valutando. */
-function drawOverlay(ctx, iw, ih, border=0, bottomExtra=0){
-  const ev = state.event; if(!ev) return;
-  // mascherina a tutta foto: se c'è quella dell'orientamento giusto, disegno solo lei
+/* ---------- cornice in stampa: SOLO la mascherina della sede ----------
+   Si applica SOLO alla stampa (e alle anteprime). Su monitor cliente, visualizzatore e
+   tablet le foto si vedono pulite.
+   Dal 13 nov non esistono più logo e scritta composti a mano nel pannello: la cornice è
+   sempre e solo la mascherina caricata per la sede. Logo e scritta salvati prima nelle
+   impostazioni delle sedi vengono ignorati. */
+function drawOverlay(ctx, iw, ih, border=0){
   const mask = maskFor(iw, ih);
-  if(mask){ ctx.drawImage(mask, border, border, iw, ih); return; }
-  const S = Math.min(iw,ih), m = S*0.035;
-  // logo: angolo in alto a destra della FOTO (dentro la cornice), dimensione regolabile
-  if(ev.logoImg){
-    const lw = S * ((ev.logoSize ?? 30)/100), lh = lw * (ev.logoImg.height/ev.logoImg.width);
-    ctx.drawImage(ev.logoImg, border+iw-m-lw, border+m, lw, lh);
-  }
-  // scritta: se c'è banda bianca sotto, la centro lì in nero; altrimenti sulla foto in bianco
-  if(ev.text){
-    if(bottomExtra>0){
-      // nella banda bianca: allineata a sinistra, sul filo sinistro della foto
-      let fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
-      if(fs > bottomExtra*0.8) fs = bottomExtra*0.8;
-      ctx.font = `600 ${fs}px ${ev.font || '"Segoe UI", sans-serif'}`;
-      ctx.textBaseline = "middle"; ctx.textAlign="left";
-      ctx.fillStyle = ev.frameTextColor || "#111";
-      ctx.fillText(ev.text, border+m, border+ih+bottomExtra/2);
-    } else {
-      const fs = Math.max(10, S * ((ev.textSize ?? 4.2)/100));
-      ctx.font = `600 ${fs}px ${ev.font || '"Segoe UI", sans-serif'}`;
-      ctx.textBaseline = "bottom";
-      ctx.shadowColor="rgba(0,0,0,.75)"; ctx.shadowBlur=fs*0.35; ctx.shadowOffsetY=1;
-      ctx.fillStyle="#fff";
-      ctx.fillText(ev.text, border+m, border+ih-m);
-      ctx.shadowBlur=0; ctx.shadowOffsetY=0;
-    }
-  }
+  if(mask) ctx.drawImage(mask, border, border, iw, ih);
 }
 function drawCodeBadge(ctx, w, h, code, status){
   const S=Math.min(w,h), fs=S*0.075, m=S*0.03;
@@ -1349,42 +1298,29 @@ function drawCodeBadge(ctx, w, h, code, status){
 
 /* ---------- pannello serata ---------- */
 
-let pendingLogo = null;
-let pannelloDiSede = null;      // la sede per cui è stato aperto il pannello Servizio
+let pendingLogo = null;          // non più usato (logo a mano tolto il 13 nov), resta per compatibilità
+let pannelloDiSede = null;      // la sede per cui è stato aperto il pannello Impostazioni
 $("btnEvent").onclick = ()=>{ openEventPanel(); };
 function openEventPanel(){
   const ev = state.event;
   pannelloDiSede = cloud.sede ? cloud.sede.id : null;
   $("evSedeNome").textContent = cloud.sede ? "— sede " + cloud.sede.nome : "— nessuna sede scelta";
-  $("evName").value=ev.name; $("evSecs").value=ev.secs; $("evText").value=ev.text;
+  $("evSecs").value=ev.secs;
   $("evQrSecs").value = ev.qrSecs ?? 120;
   $("evInfoLine").value=ev.infoLine||""; $("evTiles").value=String(ev.tiles||6);
   $("evFrameOn").checked = ev.frameOn!==false;
   $("evFrameBorder").value = ev.frameBorder ?? 2.5;
-  $("evFrameBottom").value = ev.frameBottom ?? 6;
   riempiFont();
-  $("evFont").value = ev.font || FONTS[0].v;
   $("evFontInfo").value = ev.fontInfo || FONTS[0].v;
   $("evInfoH").value = ev.infoH ?? 4;
   $("evInfoHOut").textContent = ($("evInfoH").value) + "%";
   $("evCodePos").value = ev.codePos || "bassoSx";
-  $("evLogoSize").value = ev.logoSize ?? 30;
-  $("evTextSize").value = ev.textSize ?? 4.2;
-  syncSizeOut();
-  pendingLogo = ev.logoImg;
+  $("evMaskH").value = ""; $("evMaskV").value = "";
   maskStateText();
   $("eventPanel").classList.add("open");
   renderOverlayPreview();
 }
 $("evCancel").onclick = ()=> $("eventPanel").classList.remove("open");
-$("evLogo").onchange = async e=>{
-  const f=e.target.files[0]; if(!f) return;
-  if(!stessaSedeDelPannello()){ e.target.value=""; return; }
-  pendingLogo = await loadImg(URL.createObjectURL(f));
-  salvaLogo(f);                     // resta legato alla sede, non va ricaricato ogni volta
-  renderOverlayPreview();
-};
-$("evText").oninput = renderOverlayPreview;
 // caratteri già presenti su Windows: nessun download, funzionano anche sul monitor
 const FONTS = [
   {n:"Segoe UI (predefinito)", v:'"Segoe UI", sans-serif'},
@@ -1398,20 +1334,15 @@ const FONTS = [
   {n:"Comic Sans",             v:'"Comic Sans MS", cursive'},
 ];
 function riempiFont(){
-  for(const id of ["evFont","evFontInfo"]){
+  for(const id of ["evFontInfo"]){
     const sel = $(id); if(sel.options.length) continue;
     sel.innerHTML = FONTS.map(f=>`<option value='${f.v}' style="font-family:${f.v}">${f.n}</option>`).join("");
   }
 }
 $("evInfoH").oninput = ()=>{ $("evInfoHOut").textContent = $("evInfoH").value + "%"; renderOverlayPreview(); };
-$("evFont").onchange = renderOverlayPreview;
 $("evCodePos").onchange = renderOverlayPreview;
-function syncSizeOut(){
-  $("evLogoSizeOut").textContent = $("evLogoSize").value + "%";
-  $("evTextSizeOut").textContent = $("evTextSize").value + "%";
-}
-$("evLogoSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
-$("evTextSize").oninput = ()=>{ syncSizeOut(); renderOverlayPreview(); };
+$("evFrameOn").onchange = renderOverlayPreview;
+$("evFrameBorder").oninput = renderOverlayPreview;
 function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
 
 /* ---------- mascherina: PNG trasparente grande quanto la foto ----------
@@ -1427,9 +1358,9 @@ function maskStateText(){
   const v = ev.maskV ? "verticali ✓" : "verticali —";
   const el = $("evMaskState"); if(!el) return;
   el.textContent = (!ev.maskH && !ev.maskV)
-    ? "Nessuna mascherina: valgono logo e scritta qui sotto."
+    ? "Nessuna mascherina per questa sede: le stampe escono senza cornice."
     : (ev.maskH && ev.maskV) ? "Mascherine caricate: " + h + " · " + v
-    : "Attenzione: " + h + " · " + v + " — le foto senza mascherina useranno logo e scritta.";
+    : "Attenzione: " + h + " · " + v + " — le foto senza mascherina escono senza cornice.";
 }
 function maskKey(which, sid){                  // legata alla sede, non al PC
   if(sid === undefined) sid = cloud.sede ? cloud.sede.id : "nosede";
@@ -1461,14 +1392,14 @@ function staccaCorniceSede(){
   pendingLogo = null;
   if($("eventPanel") && $("eventPanel").classList.contains("open")){
     $("eventPanel").classList.remove("open");
-    toast("Hai cambiato sede: il pannello Servizio è stato chiuso senza salvare", 6000);
+    toast("Hai cambiato sede: le Impostazioni sono state chiuse senza salvare", 6000);
   }
   try{ maskStateText(); }catch(_){}
 }
 function stessaSedeDelPannello(){
   const ora = cloud.sede ? cloud.sede.id : null;
   if(ora === pannelloDiSede) return true;
-  alert("SEDE CAMBIATA\n\nIl pannello Servizio era aperto per un'altra sede: niente è stato salvato.\nRiapri «Servizio…» con la sede giusta.");
+  alert("SEDE CAMBIATA\n\nLe Impostazioni erano aperte per un'altra sede: niente è stato salvato.\nRiapri «Impostazioni…» con la sede giusta.");
   $("eventPanel").classList.remove("open");
   return false;
 }
@@ -1714,49 +1645,40 @@ async function controllaMascherineNuove(){
 }
 setInterval(controllaMascherineNuove, 20000);
 
+// anteprime nel pannello: foto finta + bordo bianco (se acceso) + mascherina della sede, come in stampa
 function renderOverlayPreview(){
-  const saved = state.event;
-  const tmp = { logoImg: pendingLogo, text: $("evText").value,
-               logoSize: +$("evLogoSize").value, textSize: +$("evTextSize").value,
-               maskH: (saved&&saved.maskH)||null, maskV: (saved&&saved.maskV)||null };
-  state.event = Object.assign({}, saved||{}, tmp);
+  const on = $("evFrameOn").checked, perc = on ? (+$("evFrameBorder").value || 0) : 0;
   for(const id of ["pvH","pvV"]){
     const c=$(id), ctx=c.getContext("2d");
-    ctx.fillStyle="#2A3550"; ctx.fillRect(0,0,c.width,c.height);
+    const b = Math.round(Math.min(c.width,c.height) * perc/100);
+    ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,c.width,c.height);
+    const iw = c.width - 2*b, ih = c.height - 2*b;
+    ctx.fillStyle="#2A3550"; ctx.fillRect(b,b,iw,ih);
     ctx.fillStyle="#3A4768";
-    ctx.beginPath(); ctx.arc(c.width*0.45,c.height*0.42,Math.min(c.width,c.height)*0.18,0,7); ctx.fill();
-    drawOverlay(ctx,c.width,c.height);
+    ctx.beginPath(); ctx.arc(b+iw*0.45,b+ih*0.42,Math.min(iw,ih)*0.18,0,7); ctx.fill();
+    drawOverlay(ctx, iw, ih, b);
   }
-  state.event = saved;
 }
 $("evSave").onclick = ()=>{
   if(!stessaSedeDelPannello()) return;
-  const name=$("evName").value.trim();
-  state.event = {
-    name, secs: Math.max(2, +$("evSecs").value||4),
+  // si parte da quello che c'è (preset, caricamento originali…) e si cambia solo quello del pannello
+  state.event = Object.assign({}, state.event, {
+    name: "", text: "", logoImg: null,      // nome servizio, scritta e logo a mano non esistono più
+    secs: Math.max(2, +$("evSecs").value||4),
     qrSecs: Math.max(0, +$("evQrSecs").value||0),
     tiles: +$("evTiles").value||6,
-    text: $("evText").value.trim(),
     infoLine: $("evInfoLine").value.trim(),
-    logoImg: pendingLogo,
     frameOn: $("evFrameOn").checked,
     frameBorder: +$("evFrameBorder").value,
-    frameBottom: +$("evFrameBottom").value,
-    logoSize: +$("evLogoSize").value,
-    textSize: +$("evTextSize").value,
-    font: $("evFont").value,
     fontInfo: $("evFontInfo").value,
     infoH: +$("evInfoH").value,
     codePos: $("evCodePos").value,
-    maskH: state.event.maskH || null,
-    maskV: state.event.maskV || null,
-    presets: (state.event && state.event.presets) || [],   // i preset dei cursori restano
-  };
+  });
   updateEventInfo();
   salvaImpostazioni();
   $("eventPanel").classList.remove("open");
   toast(cloud.sede ? "Impostazioni salvate per la sede " + cloud.sede.nome
-                   : "Servizio salvato solo su questo PC: nessuna sede selezionata");
+                   : "Impostazioni salvate solo su questo PC: nessuna sede selezionata");
 };
 function updateEventInfo(){
   let d;
@@ -4440,7 +4362,7 @@ async function renderFull(p, withOverlay=true){
   // cornice bianca: bordo sottile su 4 lati + banda extra sotto per la scritta
   const border = ev.frameOn===false ? 0 : Math.round(S * ((ev.frameBorder ?? 2.5)/100)); // % del lato corto
   const hasMask = (iw >= ih) ? !!ev.maskH : !!ev.maskV;
-  const bottomExtra = (ev.frameOn===false || !ev.text || hasMask) ? 0 : Math.round(S * ((ev.frameBottom ?? 6)/100));
+  const bottomExtra = 0;     // la banda sotto serviva alla scritta a mano, tolta il 13 nov
   const c=document.createElement("canvas");
   c.width = iw + border*2;
   c.height = ih + border*2 + bottomExtra;
@@ -5893,7 +5815,7 @@ $("lbAnteprima").onclick = async ()=>{
     const ev = state.event || {};
     const or = c.width >= c.height ? "orizzontale" : "verticale";
     const cornice = (or === "orizzontale" ? ev.maskH : ev.maskV) ? "mascherina della sede"
-                  : (ev.logoImg || ev.text) ? "logo e scritta della sede" : "nessuna mascherina né logo per questa sede";
+                  : "ATTENZIONE: nessuna mascherina " + or + " per questa sede";
     $("apNota").textContent = "Foto " + or + " · " + cornice +
       (c.width > c.height ? " · sul foglio verrà girata per riempirlo" : "") +
       (c._lowQuality ? " · ATTENZIONE: l'originale non è ancora arrivato, questa è la copia piccola" : "");
