@@ -23,7 +23,7 @@ const DATI = path.join(BASE, "dati");
 const FILE = path.join(DATI, "file");
 const PAGINE = path.join(BASE, "pagine");
 const LIB = path.join(BASE, "lib");
-const SITO = "https://fay-live.vercel.app";
+const SITO = process.env.FAY_SITO || "https://fay-live.vercel.app";   // FAY_SITO solo per le prove
 // il cloud di Fay Live (stessi indirizzo e chiave pubblica che stanno dentro pc.html)
 const CLOUD_URL = process.env.FAY_CLOUD_URL || "https://uqaddhbayyhudbmqixic.supabase.co";
 const statoCloud = { online: false, ultimoContatto: null, avvisi: [] };
@@ -1221,6 +1221,55 @@ setInterval(() => {
 }, 2000).unref();
 const postazioniVive = () => [...postazioni].filter(([, p]) => p.viva && Date.now() - p.visto <= 10000).map(([ip, p]) => ({ ip, nome: p.nome }));
 
+/* ---------------- INVIO EMAIL (Filemail) DAL PC CENTRALE ----------------
+   L'invio dei digitali lo fa il sito (/api/invia… su Vercel): scarica gli originali dal
+   cloud e li passa a Filemail. Dal centrale la pagina chiedeva /api/invia a QUESTO PC, che
+   non l'aveva: "404 non trovato". Ora la richiesta passa di qui: gli originali indicati
+   (che qui hanno indirizzi del PC, irraggiungibili da internet) vengono caricati sul cloud
+   se non ci sono già, si chiede al cloud un indirizzo firmato valido 15 minuti, e la
+   richiesta va al sito con quegli indirizzi. Serve internet sul centrale. */
+async function apiDalCentrale(req, res, url) {
+  let corpo = {};
+  try { corpo = JSON.parse((await leggiCorpo(req)).toString("utf8") || "{}"); }
+  catch (_) { return json(res, 400, { errore: "richiesta non valida" }); }
+  try {
+    if (Array.isArray(corpo.files)) {
+      const nuovi = [];
+      for (const f of corpo.files) {
+        const m = /\/object\/sign\/originali\/([^?]+)/.exec(String(f && f.url || ""));
+        if (!m || /^https:\/\//i.test(String(f.url)) && String(f.url).startsWith(CLOUD_URL)) { nuovi.push(f); continue; }
+        const percorso = decodeURIComponent(m[1]);
+        const enc = percorso.split("/").map(encodeURIComponent).join("/");
+        if (!qFileInviato.get("originali/" + percorso)) {
+          let dati;
+          try { dati = fs.readFileSync(percorsoFile("originali", percorso)); }
+          catch (_) { return json(res, 404, { errore: `Originale di ${f.nome || percorso} non trovato su questo PC` }); }
+          const up = await fetch(`${CLOUD_URL}/storage/v1/object/originali/${enc}`, {
+            method: "POST", signal: AbortSignal.timeout(120000),
+            headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY, "x-upsert": "true",
+                       "Content-Type": TIPI[path.extname(percorso).toLowerCase()] || "image/jpeg" },
+            body: dati });
+          if (!up.ok) return json(res, 502, { errore: `Non riesco a mettere ${f.nome || percorso} sul cloud (risposta ${up.status})` });
+          qSegnaInviato.run("file", "originali/" + percorso);
+        }
+        const s = await cloudJson("POST", `/storage/v1/object/sign/originali/${enc}`, { expiresIn: 900 });
+        if (!s.ok || !s.dati || !s.dati.signedURL) return json(res, 502, { errore: `Il cloud non dà l'indirizzo di ${f.nome || percorso} (risposta ${s.stato})` });
+        nuovi.push(Object.assign({}, f, { url: CLOUD_URL + "/storage/v1" + s.dati.signedURL }));
+      }
+      corpo.files = nuovi;
+    }
+    const r = await fetch(SITO + url.pathname, { method: "POST", signal: AbortSignal.timeout(170000),
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
+    const testo = await r.text();
+    res.writeHead(r.status, { "Content-Type": r.headers.get("content-type") || "application/json" });
+    return res.end(testo);
+  } catch (e) {
+    console.log("  ⚠ invio email:", e && e.message || e);
+    return json(res, 503, { errore: "Il PC centrale non riesce a raggiungere internet: per inviare le foto via email serve la linea.",
+                            dettaglio: String(e && e.message || e) });
+  }
+}
+
 /* ---------------- AGGIORNAMENTO DELLE POSTAZIONI ----------------
    All'avvio ogni portatile lancia aggiorna.ps1: se il sito ha una versione più nuova del
    programma (server.mjs, rete.ps1, .bat…) la scarica. Le postazioni di solito non hanno
@@ -1249,6 +1298,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/storage/v1/")) return await storage(req, res, url);
     if (url.pathname.startsWith("/auth/v1/") || url.pathname.startsWith("/realtime/v1/")) return json(res, 404, { message: "non disponibile sul PC centrale" });
     if (url.pathname.startsWith("/centrale/")) return await comandiCentrale(req, res, url);
+    if (/^\/api\/invia(-apri|-pezzo|-chiudi)?$/.test(url.pathname) && req.method === "POST") return await apiDalCentrale(req, res, url);
     if (url.pathname === "/stato") return json(res, 200, { centrale: true, ora: ora(), foto: tab("foto").size,
       cloud: statoCloud.online, ultimoContatto: statoCloud.ultimoContatto, postazioni: postazioniVive(),
       daInviare: db.prepare("SELECT COUNT(*) AS n FROM da_inviare").get().n,
