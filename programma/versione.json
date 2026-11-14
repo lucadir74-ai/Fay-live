@@ -1,10 +1,10 @@
 {
-    "versione":  2026111303,
-    "data":  "13 nov 2026 n.3",
-    "note":  "invio foto via email anche dal PC centrale",
+    "versione":  2026111401,
+    "data":  "14 nov 2026 n.1",
+    "note":  "barra di avviso di Chrome solo sulle postazioni",
     "file":  {
                  "server.mjs":  "2e8c891c360fe20bf40d1e6e2e7c86c65471f99fa1beaf2590d6843a2143702b",
-                 "rete.ps1":  "26384d132220a0538a3958a5847a4bf6110f35cc0e5705ea573095df56a5b7ad",
+                 "rete.ps1":  "fea3628726dda5803b3a4a88c2bc46df29ae64e8c3869c8823ef5334f1c45241",
                  "aggiorna.ps1":  "6c9dda2a78c8261e0839a4a589fb9c77ccb2e6c2f30121caaed52c0cfe70c78f",
                  "_avvio.bat":  "829428458378bb47280feb9093ced0057d2a04bf4f907deef70060c90befd2be",
                  "_motore.bat":  "997e116e62410ef350e8f1f72aba810cce6f5800c5bdc323d47b7d542f0cda10",

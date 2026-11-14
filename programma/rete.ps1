@@ -437,8 +437,11 @@ function Apri-Browser($url) {
   # e gli nega di sapere dov'e' il secondo schermo, quindi il monitor cliente non si apriva da solo
   # sul monitor esterno (sul centrale, che e' localhost, si'). Al Chrome di Fay Live (profilo suo)
   # si dice che il PC centrale e' affidabile: cosi' anche la postazione apre il monitor sullo schermo giusto.
-  $sicuro = "--unsafely-treat-insecure-origin-as-secure=http://$($IP_CENTRALE):$PORTA"
-  Start-Process $chrome -ArgumentList @("--user-data-dir=`"$PROFILO_CHROME`"", "--kiosk-printing", "--no-first-run", "--no-default-browser-check", $sicuro, $url)
+  # Solo sulla postazione: sul centrale la pagina e' localhost, gia' sicura, e l'opzione farebbe
+  # solo comparire la barra di avviso di Chrome ("segnalazione non supportata").
+  $argomenti = @("--user-data-dir=`"$PROFILO_CHROME`"", "--kiosk-printing", "--no-first-run", "--no-default-browser-check")
+  if ("$url" -like "http://$($IP_CENTRALE):*") { $argomenti += "--unsafely-treat-insecure-origin-as-secure=http://$($IP_CENTRALE):$PORTA" }
+  Start-Process $chrome -ArgumentList ($argomenti + @($url))
 }
 
 function Apri-Centrale {
