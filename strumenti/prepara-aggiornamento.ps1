@@ -17,7 +17,7 @@ $DEST = if ($Destinazione) { $Destinazione } else { Join-Path $REPO 'programma' 
 
 # i file che si aggiornano da soli (NON: Fay Live.bat, dati, Archivio, node, pc.html e report.html,
 # che il centrale riscarica gia' per conto suo)
-$elenco = @('server.mjs', 'rete.ps1', 'aggiorna.ps1', '_avvio.bat', '_motore.bat', 'Cloud.bat',
+$elenco = @('server.mjs', 'rete.ps1', 'rete-admin.ps1', 'aggiorna.ps1', '_avvio.bat', '_motore.bat', 'Cloud.bat',
   'Diagnosi cavo.bat', 'Prepara questo PC.bat', 'LEGGIMI.txt', 'faylive.ico', 'pagine/foto-cloud.html')
 $elenco += @(Get-ChildItem (Join-Path $Sorgente 'lib') -File | ForEach-Object { "lib/$($_.Name)" })
 
@@ -25,7 +25,7 @@ $elenco += @(Get-ChildItem (Join-Path $Sorgente 'lib') -File | ForEach-Object { 
 $node = Join-Path $Sorgente 'node\node.exe'
 if (-not (Test-Path $node)) { $node = (Get-Command node).Source }
 & $node --check (Join-Path $Sorgente 'server.mjs'); if ($LASTEXITCODE -ne 0) { throw "server.mjs ha un errore: non pubblico" }
-foreach ($ps in 'rete.ps1', 'aggiorna.ps1') {
+foreach ($ps in 'rete.ps1', 'rete-admin.ps1', 'aggiorna.ps1') {
   $err = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Sorgente $ps), [ref]$null, [ref]$err)
   if ($err -and $err.Count) { throw "$ps ha un errore: $($err[0].Message)" }
 }
