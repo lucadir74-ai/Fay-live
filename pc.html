@@ -2256,7 +2256,14 @@ function progUpdate(){
   const w=$("progWrap");
   if(prog.cancel || prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
   w.classList.add("show");
-  $("progLabel").textContent = `Anteprime ${prog.done}/${prog.total}`;
+  /* Ogni foto passa due volte (prima la miniatura, poi copia in archivio + anteprima), quindi
+     prog.total e' il doppio delle foto. Si mostrano le FOTO vere: 100 foto = "Foto 37/100",
+     non "Anteprime 37/200" che faceva credere di caricare il doppio delle foto. */
+  const foto = Math.max(1, Math.round(prog.total/2));
+  const prima = prog.done < foto;
+  $("progLabel").textContent = prima
+    ? `Importo ${foto} foto · lettura ${prog.done}/${foto}`
+    : `Importo ${foto} foto · salvataggio ${Math.min(foto, prog.done-foto)}/${foto}`;
   $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
 }
 $("progCancel").onclick = (ev)=>{
@@ -4055,7 +4062,10 @@ $("searchBox").oninput = e=>{
   if(!raw){ box.classList.remove("multi"); hint.hidden = true; return; }
   const q = parseCodes(raw);
   box.classList.toggle("multi", q.tokens.length > 1);
-  hint.hidden = false;
+  /* niente scritta accanto alla casella: allargava la barra in alto e spostava tutti i
+     tasti. I codici non trovati li dice comunque l'avviso in basso quando si preme invio. */
+  hint.hidden = true;
+  return;
   hint.title = q.missing.length ? "Non trovati: "+q.missing.join(", ") : "";
   if(!q.found.length){ hint.textContent = "nessun codice riconosciuto"; return; }
   const parti = [q.found.length===1 ? "1 codice" : q.found.length+" codici"];
@@ -7995,7 +8005,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "13 nov 2026";
+const VERSIONE = "16 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
