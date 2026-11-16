@@ -80,6 +80,7 @@ I FILE
 - Cloud.bat       = pagina del cloud sul centrale (scarica giornate, manda foto)
 - _motore.bat    = parte interna (avvia il server del centrale)
 - rete.ps1       = scelta ruolo e rete
+- rete-admin.ps1 = la parte che cambia la rete (da amministratore): se cambia, va ripremuto P
 - server.mjs     = il server del centrale
 - pagine\, lib\, node\ = pagine, librerie e Node.js: servono anche senza internet
 All'avvio, se c'e' internet, pc.html e report.html vengono riscaricati dal sito.

@@ -170,7 +170,8 @@ try {
   if ($cambiati.Count) { Ok "Fay Live aggiornato ($($nuova.data)): $($cambiati -join ', ')" }
   else { Ok "Fay Live e' gia' alla versione $($nuova.data)" }
   if ($nuova.note) { Info "Novita': $($nuova.note)" }
-  if ($cambiati -contains 'rete.ps1' -and (Test-Path (Join-Path $env:ProgramData 'FayLive\rete.ps1'))) {
+  # la preparazione del PC dipende solo da rete-admin.ps1: gli altri file si aggiornano senza ripreparare
+  if ($cambiati -contains 'rete-admin.ps1' -and (Test-Path (Join-Path $env:ProgramData 'FayLive'))) {
     Info "(E' cambiata la parte della rete: alla scelta 1/2 premi P per ripreparare il PC, una volta sola."
     Info " Senza, funziona lo stesso: Windows chiede il permesso quando cambi ruolo.)"
   }

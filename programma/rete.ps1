@@ -41,12 +41,14 @@ function Errore($t)     {
   Write-Host ""; Write-Host "  [X] $t" -ForegroundColor Red; Attendi-Tasto; exit 1
 }
 
-# Il PC e' stato preparato, per QUESTA cartella e con QUESTA versione dello script?
+# Il PC e' stato preparato, per QUESTA cartella e con QUESTA versione della parte da amministratore?
+# Si confronta solo rete-admin.ps1 (che cambia di rado): gli aggiornamenti di questo file, rete.ps1,
+# non annullano piu' la preparazione.
 function Preparato {
   try {
-    $copia = Join-Path $CARTELLA_ADMIN 'rete.ps1'
+    $copia = Join-Path $CARTELLA_ADMIN 'rete-admin.ps1'
     if (-not (Test-Path $copia)) { return $false }
-    if ((Get-FileHash $copia).Hash -ne (Get-FileHash (Join-Path $BASE 'rete.ps1')).Hash) { return $false }
+    if ((Get-FileHash $copia).Hash -ne (Get-FileHash (Join-Path $BASE 'rete-admin.ps1')).Hash) { return $false }
     $dove = Get-Content (Join-Path $CARTELLA_ADMIN 'cartella.txt') -ErrorAction Stop | Select-Object -First 1
     if ($dove -ne $BASE) { return $false }
     foreach ($n in $ATTIVITA.Values) { if (-not (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue)) { return $false } }
@@ -73,7 +75,7 @@ function Esegui-ComeAdmin($ruolo) {
     } catch { }   # attivita' non avviabile: si ripiega sulla richiesta di permesso
   }
   Info "Windows chiedera' il permesso: rispondi Si'."
-  Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Azione $ruolo -Silenzioso"
+  Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $BASE 'rete-admin.ps1')`" -Azione $ruolo -Silenzioso -Cartella `"$BASE`""
 }
 
 # Stato del cavo in parole: velocita' del collegamento e indirizzo della scheda
@@ -180,37 +182,6 @@ function Chiave-Scheda($scheda) {
   return "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($scheda.InterfaceGuid)"
 }
 
-function Diagnosi-Scheda($scheda) {
-  $righe = @("Scheda: $($scheda.Name) / $($scheda.InterfaceDescription) / indice $($scheda.ifIndex) / stato $($scheda.Status)")
-  try {
-    $ip = @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue) +
-          @(Get-NetIPAddress -InterfaceIndex $scheda.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)
-    $righe += "Indirizzi visti: " + (($ip | ForEach-Object { "$($_.IPAddress) ($($_.PolicyStore), $($_.AddressState))" }) -join '; ')
-  } catch { $righe += "Lettura indirizzi: ERRORE $($_.Exception.Message)" }
-  try {
-    $r = Get-ItemProperty -Path (Chiave-Scheda $scheda) -ErrorAction Stop
-    $righe += "Registro: DHCP=$($r.EnableDHCP) IP=$(@($r.IPAddress) -join ',')"
-  } catch { $righe += "Registro: non letto ($($_.Exception.Message))" }
-  return ($righe -join "`n      ")
-}
-
-function Collegamento-Desktop($nome, $destinazione, $cartella) {
-  $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
-  $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop "$nome.lnk"))
-  $lnk.TargetPath = $destinazione
-  $lnk.WorkingDirectory = $cartella
-  $lnk.IconLocation = "$env:SystemRoot\System32\shell32.dll,13"
-  $lnk.Save()
-}
-
-# Toglie un'icona di Fay Live dal desktop (serve quando un portatile cambia ruolo)
-function Togli-Collegamento($nome) {
-  foreach ($d in @([Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('Desktop'))) {
-    $f = Join-Path $d "$nome.lnk"
-    if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
-  }
-}
-
 # Risparmi di corrente DELLA SCHEDA (non di Windows): "Energy Efficient Ethernet", "Green Ethernet",
 # sospensione selettiva USB, riduzione di velocita'... Sugli adattatori USB-Ethernet sono il motivo
 # piu' comune per cui il collegamento cade e torna solo staccando e riattaccando il cavo.
@@ -229,126 +200,6 @@ function Proteggi-Corrente($scheda) {
   }
   # le nuove impostazioni valgono dopo un riavvio della scheda (qualche secondo senza rete)
   if ($cambiato) { try { Restart-NetAdapter -Name $scheda.Name -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 4 } catch { } }
-}
-
-# ---------------- PC CENTRALE ----------------
-function Configura-Centrale {
-  Info "Configuro questo portatile come PC CENTRALE..."
-  Write-Host ""
-  if (-not (Test-Path (Join-Path $BASE '_motore.bat'))) {
-    Errore "Non trovo _motore.bat qui accanto. Copia questi file DENTRO la cartella FayCentrale e rilancia."
-  }
-  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Errore "Node.js non e' installato su questo portatile: senza Node il PC centrale non parte. Installalo da nodejs.org (versione LTS), riavvia il PC e rilancia."
-  }
-  $schede = @(Schede-Cavo)
-  if ($schede.Count -eq 0) { Errore "Nessuna presa di rete via cavo. Inserisci l'adattatore USB-Ethernet e rilancia." }
-  $scheda = $null
-  if ($schede.Count -eq 1) { $scheda = $schede[0] }
-  else {
-    $attive = @($schede | Where-Object Status -eq 'Up')
-    if ($attive.Count -eq 1) { $scheda = $attive[0] }
-    else { Errore "Trovo piu' prese di rete ($($schede.Name -join ', ')). Lascia collegato SOLO il cavo verso le postazioni e rilancia." }
-  }
-
-  # Indirizzo fisso del PC centrale sulla presa via cavo
-  $rispostaWin = & netsh interface ipv4 set address "$($scheda.Name)" static $IP_CENTRALE $MASCHERA
-  & netsh interface ipv4 set dnsservers "$($scheda.Name)" static none | Out-Null
-  # Windows a volte impiega qualche secondo: riprovo il controllo fino a 15 secondi
-  $accettato = $false
-  for ($i = 0; $i -lt 15 -and -not $accettato; $i++) { Start-Sleep -Seconds 1; $accettato = Ha-IpCentrale $scheda }
-  if (-not $accettato) {
-    $testo = (($rispostaWin | Out-String).Trim())
-    if (-not $testo) { $testo = '(nessun messaggio)' }
-    Errore "Windows non ha accettato l'indirizzo sulla presa '$($scheda.Name)'. Risposta di Windows: $testo.`n      $(Diagnosi-Scheda $scheda)`n  Manda uno screenshot di questa finestra."
-  }
-  Ok "Presa di rete '$($scheda.Name)' impostata come PC centrale"
-
-  # Le altre prese via cavo (se ce ne sono) non devono avere lo stesso indirizzo
-  foreach ($s in $schede) {
-    if ($s.ifIndex -ne $scheda.ifIndex -and (Ha-IpCentrale $s)) {
-      & netsh interface ipv4 set address "$($s.Name)" dhcp | Out-Null
-    }
-  }
-  Proteggi-Corrente $scheda
-
-  # Firewall: apre Fay Live solo ai PC collegati direttamente, con rete pubblica o privata
-  Get-NetFirewallRule -DisplayName $NOME_REGOLA -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-  New-NetFirewallRule -DisplayName $NOME_REGOLA -Direction Inbound -Action Allow -Protocol TCP `
-    -LocalPort $PORTA -Profile Any -RemoteAddress LocalSubnet | Out-Null
-  try {
-    Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |
-      Where-Object { $_.Program -like '*\node.exe' } | Get-NetFirewallRule |
-      Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' -and $_.Enabled -eq 'True' } |
-      Disable-NetFirewallRule
-  } catch { }
-  Ok "Firewall pronto per le postazioni"
-
-  # Il PC centrale non deve mai addormentarsi durante il servizio
-  & powercfg /change standby-timeout-ac 0 | Out-Null
-  & powercfg /change standby-timeout-dc 0 | Out-Null
-  & powercfg /change hibernate-timeout-ac 0 | Out-Null
-  & powercfg /change hibernate-timeout-dc 0 | Out-Null
-  & powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
-  & powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
-  & powercfg /setactive SCHEME_CURRENT | Out-Null
-  Ok "Sospensione disattivata (anche chiudendo il coperchio)"
-
-  if (-not $UNICO) { Collegamento-Desktop 'Fay Live - PC centrale' (Join-Path $BASE 'Avvia Fay Live.bat') $BASE }
-  if (-not $UNICO) { Ok "Icona 'Fay Live - PC centrale' creata sul desktop" }
-  # se prima era una postazione, la sua icona non deve restare (due icone = confusione)
-  if (-not $UNICO) { Togli-Collegamento 'Fay Live' }
-
-  Write-Host ""
-  Ok "FATTO. Da ora avvia sempre Fay Live dall'icona sul desktop."
-  if (-not $Silenzioso) { Attendi-Tasto }
-}
-
-# ---------------- POSTAZIONE ----------------
-function Configura-Postazione {
-  Info "Configuro questo portatile come POSTAZIONE..."
-  Write-Host ""
-  $schede = @(Schede-Cavo)
-  if ($schede.Count -eq 0) { Errore "Nessuna presa di rete via cavo. Inserisci l'adattatore USB-Ethernet e rilancia." }
-  foreach ($s in $schede) {
-    & netsh interface ipv4 set address "$($s.Name)" dhcp | Out-Null
-    & netsh interface ipv4 set dnsservers "$($s.Name)" dhcp | Out-Null
-    Proteggi-Corrente $s
-  }
-  Ok "Presa di rete in automatico (l'indirizzo se lo prende da sola)"
-
-  if (-not $UNICO) { New-Item -ItemType Directory -Force -Path $CARTELLA_POSTAZIONE | Out-Null }
-  if (-not $UNICO -and ((Resolve-Path $BASE).Path.TrimEnd('\') -ne (Resolve-Path $CARTELLA_POSTAZIONE).Path.TrimEnd('\'))) {
-    Copy-Item (Join-Path $BASE 'rete.ps1') $CARTELLA_POSTAZIONE -Force
-    Copy-Item (Join-Path $BASE 'Apri Fay Live.bat') $CARTELLA_POSTAZIONE -Force
-  }
-  if (-not $UNICO) { Get-ChildItem $CARTELLA_POSTAZIONE | Unblock-File -ErrorAction SilentlyContinue }
-  if (-not $UNICO) { Collegamento-Desktop 'Fay Live' (Join-Path $CARTELLA_POSTAZIONE 'Apri Fay Live.bat') $CARTELLA_POSTAZIONE }
-  if (-not $UNICO) { Ok "Icona 'Fay Live' creata sul desktop" }
-
-  # Se prima era il PC centrale: via la sua icona, la porta aperta e le regole "da servizio",
-  # cosi' nessuno puo' avviare per sbaglio un secondo PC centrale.
-  $eraCentrale = $false
-  foreach ($d in @([Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('Desktop'))) {
-    if (Test-Path (Join-Path $d 'Fay Live - PC centrale.lnk')) { $eraCentrale = $true }
-  }
-  if (Get-NetFirewallRule -DisplayName $NOME_REGOLA -ErrorAction SilentlyContinue) { $eraCentrale = $true }
-  if ($eraCentrale) {
-    Togli-Collegamento 'Fay Live - PC centrale'
-    Get-NetFirewallRule -DisplayName $NOME_REGOLA -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    & powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 1 | Out-Null
-    & powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 1 | Out-Null
-    & powercfg /change standby-timeout-dc 15 | Out-Null
-    & powercfg /setactive SCHEME_CURRENT | Out-Null
-    Ok "Tolte le impostazioni da PC centrale (icona, porta, coperchio)"
-    Attenzione "Gli originali delle piscine importati quando era PC centrale restano su questo portatile (cartelle dati e Archivio di Fay Live): NON cancellarle."
-  }
-
-  & powercfg /change standby-timeout-ac 0 | Out-Null
-  Ok "Sospensione disattivata quando e' in carica"
-  Write-Host ""
-  Ok "FATTO. In servizio basta collegare il cavo e aprire l'icona 'Fay Live'."
-  if (-not $Silenzioso) { Attendi-Tasto }
 }
 
 # ---------------- AVVIO SUL PC CENTRALE ----------------
@@ -653,8 +504,10 @@ function Prepara-PC {
   # copia protetta dello script (solo gli amministratori possono cambiarla) + attivita' pianificate
   try {
     New-Item -ItemType Directory -Force -Path $CARTELLA_ADMIN | Out-Null
-    $copia = Join-Path $CARTELLA_ADMIN 'rete.ps1'
-    Copy-Item (Join-Path $BASE 'rete.ps1') $copia -Force
+    $copia = Join-Path $CARTELLA_ADMIN 'rete-admin.ps1'
+    Copy-Item (Join-Path $BASE 'rete-admin.ps1') $copia -Force
+    # la copia della versione di prima (tutto rete.ps1) non serve piu'
+    Remove-Item (Join-Path $CARTELLA_ADMIN 'rete.ps1') -Force -ErrorAction SilentlyContinue
     Set-Content -Path (Join-Path $CARTELLA_ADMIN 'cartella.txt') -Value $BASE -Encoding UTF8
     Remove-Item (Join-Path $CARTELLA_ADMIN 'ultimo-errore.txt') -Force -ErrorAction SilentlyContinue
     & icacls $CARTELLA_ADMIN /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
@@ -672,7 +525,7 @@ function Prepara-PC {
   Write-Host ""
   if (Preparato) { Ok "FATTO. Da ora basta aprire l'icona 'Fay Live' e premere 1 oppure 2." }
   else { Attenzione "Preparazione incompleta: Fay Live funziona lo stesso, chiedendo i permessi come prima." }
-  Attenzione "Se sposti o aggiorni la cartella di Fay Live, rifai la preparazione (basta premere P all'avvio)."
+  Attenzione "Se sposti la cartella di Fay Live, rifai la preparazione (basta premere P all'avvio)."
   Attendi-Tasto
 }
 
@@ -680,8 +533,9 @@ switch ($Azione) {
   'scelta'     { Scelta-Ruolo }
   'prepara'    { Prepara-PC }
   'diagnosi'   { Diagnosi-Cavo }
-  'centrale'   { Configura-Centrale }
-  'postazione' { Configura-Postazione }
+  # la parte da amministratore sta in rete-admin.ps1 (questi due restano per chi li lancia a mano)
+  'centrale'   { & (Join-Path $BASE 'rete-admin.ps1') -Azione centrale -Silenzioso:$Silenzioso -Nascosto:$Nascosto -Cartella $BASE }
+  'postazione' { & (Join-Path $BASE 'rete-admin.ps1') -Azione postazione -Silenzioso:$Silenzioso -Nascosto:$Nascosto -Cartella $BASE }
   'avvio'      { Controllo-Avvio }
   'apri'       { Apri-Postazione }
   'apricentrale' { Apri-Centrale }
