@@ -337,12 +337,49 @@ function Riduci-FinestraNera {
   } catch { }
 }
 
+# Chiude le finestre del Chrome di Fay Live (pagina, slideshow, monitor cliente): solo quelle,
+# il Chrome normale del PC ha un altro profilo e non si tocca. Prima chiede a Chrome di
+# chiudersi come quando si preme la X; se dopo 15 secondi e' ancora aperto, lo chiude per forza.
+function Chiudi-ChromeFay {
+  $profilo = $PROFILO_CHROME.TrimEnd('\')
+  $trova = {
+    @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($profilo, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.CommandLine -notmatch '--type=' })
+  }
+  $principali = & $trova
+  if (-not $principali.Count) { return }
+  foreach ($p in $principali) { try { & taskkill.exe /PID $p.ProcessId 2>$null | Out-Null } catch { } }
+  for ($i = 0; $i -lt 15; $i++) { Start-Sleep -Seconds 1; if (-not (& $trova).Count) { return } }
+  foreach ($p in (& $trova)) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { } }
+}
+
+# Resta in attesa (nascosto) finche' la finestra nera del PC centrale e' aperta. Quando si chiude
+# (X sulla finestra nera, oppure un tasto dopo "Il PC centrale si e' fermato") chiude anche Chrome.
+# Se il programma si ferma da solo la finestra nera resta aperta col messaggio, e Chrome con lei.
+function Attendi-FineCentrale {
+  $motore = $null
+  for ($i = 0; $i -lt 20 -and -not $motore; $i++) {
+    $motore = @(Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)[0]
+    if (-not $motore) { Start-Sleep -Seconds 1 }
+  }
+  if (-not $motore) { return }
+  $daAspettare = $null
+  try {
+    $padre = (Get-CimInstance Win32_Process -Filter "ProcessId=$motore" -ErrorAction Stop).ParentProcessId
+    $p = Get-Process -Id $padre -ErrorAction Stop
+    if ($p.ProcessName -eq 'cmd') { $daAspettare = $p }      # la finestra nera
+  } catch { }
+  try { if (-not $daAspettare) { $daAspettare = Get-Process -Id $motore -ErrorAction Stop } } catch { return }
+  try { $daAspettare.WaitForExit() } catch { return }
+  Chiudi-ChromeFay
+}
+
 function Apri-Centrale {
   # aspetta che il motore (finestra nera) sia pronto, poi apre la pagina
   $limite = (Get-Date).AddSeconds(60)
   while ((Get-Date) -lt $limite) {
     $c = New-Object System.Net.Sockets.TcpClient
-    try { $r = $c.BeginConnect('127.0.0.1', $PORTA, $null, $null); if ($r.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Riduci-FinestraNera; Apri-Browser "http://localhost:$PORTA/pc.html"; exit 0 } } catch { } finally { $c.Close() }
+    try { $r = $c.BeginConnect('127.0.0.1', $PORTA, $null, $null); if ($r.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Riduci-FinestraNera; Apri-Browser "http://localhost:$PORTA/pc.html"; Attendi-FineCentrale; exit 0 } } catch { } finally { $c.Close() }
     Start-Sleep -Seconds 1
   }
   exit 1

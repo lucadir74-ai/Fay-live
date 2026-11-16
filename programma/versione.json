@@ -1,10 +1,10 @@
 {
-    "versione":  2026111604,
-    "data":  "16 nov 2026 n.4",
-    "note":  "La postazione stampa sempre sulla stampante predefinita di Windows (Chrome non usa piu\u0027 l\u0027ultima stampante usata)",
+    "versione":  2026111605,
+    "data":  "16 nov 2026 n.5",
+    "note":  "Chiudendo la finestra nera del PC centrale si chiudono da sole anche le finestre di Fay Live in Chrome (pagina e slideshow)",
     "file":  {
                  "server.mjs":  "9060444a9c12ba027b02d079e0b37752084daba1d8f2a15b2efbe6fbf6b53e65",
-                 "rete.ps1":  "639efcf150808230a03880ee2a0bc7740b513f648be245e09f60652a90937507",
+                 "rete.ps1":  "6ab91ba7c5b4cb9c1eb53f8603559ac61e1e778f5aa58bfea3c4cacc5d903c50",
                  "rete-admin.ps1":  "96feef6ac2e04940af075095418f02b613aefd379b48082b56f47cbdba27b8c4",
                  "aggiorna.ps1":  "9ff09707be1735177b307801ee6e0b27392bc5ceb6e7604a462e521b66e11f31",
                  "_avvio.bat":  "829428458378bb47280feb9093ced0057d2a04bf4f907deef70060c90befd2be",
