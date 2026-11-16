@@ -281,9 +281,38 @@ function Controlla-Stampante {
   return (Chiedi-SN "Apro Fay Live lo stesso?")
 }
 
+# Chrome RICORDA l'ultima stampante usata e, con la stampa diretta, manda li' tutto anche se in
+# Windows la predefinita e' un'altra (es. sempre "DNP (copia 4)"). Prima di aprire Chrome si
+# cancella quel ricordo: cosi' stampa sempre sulla predefinita di Windows, cioe' quella che Fay
+# Live controlla all'avvio. Se Chrome e' gia' aperto su questo profilo non si tocca niente
+# (la modifica verrebbe sovrascritta): vale dalla prossima apertura.
+function Dimentica-UltimaStampante {
+  try {
+    $pref = Join-Path $PROFILO_CHROME 'Default\Preferences'
+    if (-not (Test-Path $pref)) { return }
+    $profilo = $PROFILO_CHROME.TrimEnd('\')
+    $aperto = @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($profilo, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    if ($aperto.Count) { return }
+    $node = Join-Path $BASE 'node\node.exe'
+    if (-not (Test-Path $node)) { return }
+    $js = @'
+const fs = require('fs'), f = process.argv[1];
+const p = JSON.parse(fs.readFileSync(f, 'utf8'));
+if (p.printing && p.printing.print_preview_sticky_settings) {
+  delete p.printing.print_preview_sticky_settings;
+  fs.writeFileSync(f + '.fay', JSON.stringify(p));
+  fs.renameSync(f + '.fay', f);
+}
+'@
+    & $node -e $js $pref 2>$null | Out-Null
+  } catch { }
+}
+
 function Apri-Browser($url) {
   $chrome = Trova-Chrome
   if (-not $chrome) { Attenzione "Chrome non trovato: apro il browser normale, con la finestra di stampa."; Start-Process $url; return }
+  Dimentica-UltimaStampante
   # Sulla postazione la pagina arriva dal centrale come http://169.254.50.1: per Chrome e' "non sicura"
   # e gli nega di sapere dov'e' il secondo schermo, quindi il monitor cliente non si apriva da solo
   # sul monitor esterno (sul centrale, che e' localhost, si'). Al Chrome di Fay Live (profilo suo)
