@@ -295,12 +295,25 @@ function Apri-Browser($url) {
   Start-Process $chrome -ArgumentList ($argomenti + @($url))
 }
 
+# La finestra nera del PC centrale va solo tenuta accesa: quando si apre Fay Live la si riduce
+# a icona nella barra in basso, cosi' non resta davanti a Chrome (chiuderla fermerebbe tutto).
+# Vale sia con la finestra classica di Windows sia con il "Terminale" di Windows 11.
+function Riduci-FinestraNera {
+  try {
+    if (-not ('FayLive.Finestre' -as [type])) {
+      Add-Type -Namespace FayLive -Name Finestre -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(System.IntPtr h, int n);'
+    }
+    Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Fay Live - PC centrale*' } |
+      ForEach-Object { [void][FayLive.Finestre]::ShowWindowAsync($_.MainWindowHandle, 6) }   # 6 = riduci a icona
+  } catch { }
+}
+
 function Apri-Centrale {
   # aspetta che il motore (finestra nera) sia pronto, poi apre la pagina
   $limite = (Get-Date).AddSeconds(60)
   while ((Get-Date) -lt $limite) {
     $c = New-Object System.Net.Sockets.TcpClient
-    try { $r = $c.BeginConnect('127.0.0.1', $PORTA, $null, $null); if ($r.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Apri-Browser "http://localhost:$PORTA/pc.html"; exit 0 } } catch { } finally { $c.Close() }
+    try { $r = $c.BeginConnect('127.0.0.1', $PORTA, $null, $null); if ($r.AsyncWaitHandle.WaitOne(1000) -and $c.Connected) { $c.Close(); Riduci-FinestraNera; Apri-Browser "http://localhost:$PORTA/pc.html"; exit 0 } } catch { } finally { $c.Close() }
     Start-Sleep -Seconds 1
   }
   exit 1

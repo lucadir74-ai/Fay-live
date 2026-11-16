@@ -722,21 +722,23 @@ function dataVersione(html) {          // legge  const VERSIONE = "26 ott 2026";
   return Date.UTC(Number(m[3]), MESI[m[2].toLowerCase()], Number(m[1]));
 }
 async function aggiornaPagine() {
-  for (const nome of ["pc.html", "report.html"]) {
+  /* le due pagine si chiedono INSIEME e si aspetta al massimo 6 secondi: prima una dopo l'altra
+     (fino a 8 secondi ciascuna) e con la linea lenta il PC centrale restava fermo a lungo */
+  await Promise.all(["pc.html", "report.html"].map(async nome => {
     try {
-      const r = await fetch(`${SITO}/${nome}?nc=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(`${SITO}/${nome}?nc=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
       const t = await r.text();
-      if (!(r.ok && t.includes("Fay Live"))) continue;
+      if (!(r.ok && t.includes("Fay Live"))) return;
       /* MAI TORNARE INDIETRO: se la pagina su questo PC porta una data di versione più nuova
          di quella del sito (correzione consegnata nella cartella ma non ancora pubblicata),
          si tiene questa. Prima il sito vinceva sempre e cancellava la correzione al primo avvio. */
       let qui = ""; try { qui = fs.readFileSync(path.join(PAGINE, nome), "utf8"); } catch (_) {}
-      if (dataVersione(qui) > dataVersione(t)) { console.log(`  · ${nome}: la copia su questo PC è più nuova di quella del sito, tengo questa`); continue; }
+      if (dataVersione(qui) > dataVersione(t)) { console.log(`  · ${nome}: la copia su questo PC è più nuova di quella del sito, tengo questa`); return; }
       fs.writeFileSync(path.join(PAGINE, nome), t); console.log(`  ✓ ${nome} aggiornata dal sito`);
     } catch (_) {
       console.log(`  · ${nome}: sito non raggiungibile, uso la copia salvata`);
     }
-  }
+  }));
 }
 
 /* ---------------- dal cloud al PC centrale ----------------
@@ -857,17 +859,20 @@ async function scaricaDalCloud(silenzioso) {
   const daCopiare = silenzioso ? [] : ["mascherine/nosede-maskH.png", "mascherine/nosede-maskV.png"];
   for (const sc of (silenzioso ? sediNuove : sedi)) daCopiare.push(`mascherine/${sc.id}-maskH.png`, `mascherine/${sc.id}-maskV.png`, `loghi/${sc.id}.png`, `impostazioni/${sc.id}.json`);
   {
-    for (const rel of daCopiare) {
-      if (qFileSedeSospeso.get(rel)) continue;      // cambiato QUI e non ancora salito: vale la copia di questo PC
+    // 6 file alla volta (prima uno per uno: con la linea lenta ci voleva quasi un minuto)
+    const uno = async rel => {
+      if (qFileSedeSospeso.get(rel)) return;      // cambiato QUI e non ancora salito: vale la copia di questo PC
       try {
         const r = await chiediCloud(`/storage/v1/object/public/anteprime/${rel}`);
-        if (!r.ok) continue;
+        if (!r.ok) return;
         const dati = Buffer.from(await r.arrayBuffer());
+        if (qFileSedeSospeso.get(rel)) return;    // cambiato qui proprio mentre arrivava: vale quello di qui
         const f = percorsoFile("anteprime", rel);
         fs.mkdirSync(path.dirname(f), { recursive: true });
         fs.writeFileSync(f + ".tmp", dati); fs.renameSync(f + ".tmp", f); file++;
       } catch (_) {}
-    }
+    };
+    for (let i = 0; i < daCopiare.length; i += 6) await Promise.all(daCopiare.slice(i, i + 6).map(uno));
   }
   if (!silenzioso) console.log(`  ✓ sedi dal cloud: ${sedi.length}` + (nuove ? ` (${nuove} nuove)` : "") + (unite ? ` · ${unite} unite a quelle del cloud` : "") + (tolte ? ` · ${tolte} tolte` : "") + ` · ${file} file di impostazioni`);
 }
@@ -1466,9 +1471,19 @@ function indirizzi() {
   return out;
 }
 
+/* Le pagine si aspettano (al massimo 6 secondi) perché pc.html si apre subito dopo.
+   Il cloud (sedi, mascherine, loghi) invece NON blocca più l'avvio: si scarica mentre il PC
+   centrale e' gia' acceso, come fa comunque ogni 2 minuti durante il servizio. Prima si
+   aspettava tutto e con la linea lenta la finestra nera restava ferma quasi un minuto. */
 if (process.env.FAY_TEST !== "1") await aggiornaPagine();
-if (process.env.FAY_TEST !== "1" || process.env.FAY_CLOUD_URL) { await scaricaDalCloud(); prepariSpecchio(); }
+function cloudInSottofondo() {
+  if (process.env.FAY_TEST === "1" && !process.env.FAY_CLOUD_URL) return;
+  scaricaDalCloud()
+    .catch(e => console.log("  · cloud: sedi non aggiornate (" + (e && e.message || e) + ")"))
+    .then(prepariSpecchio);
+}
 server.listen(PORTA, "0.0.0.0", () => {
+  cloudInSottofondo();
   console.log("");
   console.log("  FAY LIVE — PC CENTRALE acceso");
   console.log(`  Su questo PC:   http://localhost:${PORTA}/pc.html`);
