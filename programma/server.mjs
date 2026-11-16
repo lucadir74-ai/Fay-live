@@ -96,14 +96,55 @@ function tab(nome) {
 for (const r of db.prepare("SELECT tab, chiave, dati FROM righe").all()) tab(r.tab).set(r.chiave, JSON.parse(r.dati));
 const pk = nome => CHIAVI[nome] || ["id"];
 const chiaveDi = (nome, riga) => pk(nome).map(c => String(riga[c])).join("|");
+const chiaveId = nome => pk(nome).length === 1 && pk(nome)[0] === "id";
+/* INDICE DELLE FOTO PER RULLO (16 nov). Quasi tutte le domande delle postazioni riguardano i
+   rulli della giornata aperta, ma per rispondere si scorrevano TUTTE le foto di TUTTE le
+   giornate: con un mese di lavoro (144.000 foto) il PC centrale passava un quinto del tempo
+   solo a rispondere ai controlli periodici, e peggiorava ogni giorno. Qui si tiene, rullo per
+   rullo, l'elenco delle sue foto: una domanda su un rullo guarda solo quelle. L'indice segue
+   ogni salvataggio e cancellazione, e si rifà da capo quando si rilegge il database. */
+const fotoPerRullo = new Map();      // rullo_id -> insieme delle sue righe
+const rulloDellaFoto = new Map();    // riga -> rullo sotto cui è segnata adesso
+function indicizza(nome, riga) {
+  if (nome !== "foto") return;
+  const nuovo = riga.rullo_id == null ? "" : String(riga.rullo_id);
+  const vecchio = rulloDellaFoto.get(riga);
+  if (vecchio === nuovo) return;
+  if (vecchio !== undefined) disindicizza(nome, riga);
+  let s = fotoPerRullo.get(nuovo);
+  if (!s) fotoPerRullo.set(nuovo, s = new Set());
+  s.add(riga); rulloDellaFoto.set(riga, nuovo);
+}
+function disindicizza(nome, riga) {
+  if (nome !== "foto") return;
+  const v = rulloDellaFoto.get(riga);
+  if (v === undefined) return;
+  const s = fotoPerRullo.get(v);
+  if (s) { s.delete(riga); if (!s.size) fotoPerRullo.delete(v); }
+  rulloDellaFoto.delete(riga);
+}
+function rifaiIndice() {
+  fotoPerRullo.clear(); rulloDellaFoto.clear();
+  for (const r of tab("foto").values()) indicizza("foto", r);
+}
+rifaiIndice();
+// la prima riga con quelle colonne uguali al modello (per chiave, per rullo, o scorrendo tutto)
+function primaUguale(nome, colonne, modello) {
+  if (colonne.length === 1 && colonne[0] === "id" && chiaveId(nome)) return tab(nome).get(String(modello.id)) || null;
+  const dove = nome === "foto" && colonne.includes("rullo_id") ? (fotoPerRullo.get(String(modello.rullo_id)) || []) : tab(nome).values();
+  for (const r of dove) if (colonne.every(c => String(r[c]) === String(modello[c]))) return r;
+  return null;
+}
 function salva(nome, riga, daCloud) {
-  stIns.run(nome, chiaveDi(nome, riga), JSON.stringify(riga)); tab(nome).set(chiaveDi(nome, riga), riga);
-  if (!daCloud && SPECCHIATE.has(nome)) stSegna.run(nome, chiaveDi(nome, riga), "up");
+  const k = chiaveDi(nome, riga);
+  if (nome === "foto") { const prec = tab(nome).get(k); if (prec && prec !== riga) disindicizza(nome, prec); }
+  stIns.run(nome, k, JSON.stringify(riga)); tab(nome).set(k, riga); indicizza(nome, riga);
+  if (!daCloud && SPECCHIATE.has(nome)) stSegna.run(nome, k, "up");
 }
 function elimina(nome, riga, daCloud) {
   for (const [figlio, col] of (FIGLI[nome] || []))
     for (const f of [...tab(figlio).values()]) if (String(f[col]) === String(riga.id)) elimina(figlio, f, daCloud);
-  stDel.run(nome, chiaveDi(nome, riga)); tab(nome).delete(chiaveDi(nome, riga));
+  stDel.run(nome, chiaveDi(nome, riga)); tab(nome).delete(chiaveDi(nome, riga)); disindicizza(nome, riga);
   if (!daCloud && SPECCHIATE.has(nome)) stSegna.run(nome, chiaveDi(nome, riga), "del");
 }
 function inTransazione(fn) {
@@ -115,6 +156,7 @@ function inTransazione(fn) {
 function ricarica() {
   tabelle.clear();
   for (const r of db.prepare("SELECT tab, chiave, dati FROM righe").all()) tab(r.tab).set(r.chiave, JSON.parse(r.dati));
+  rifaiIndice();
 }
 
 /* Gli indirizzi delle foto scritti nelle righe diventano RELATIVI ("/storage/v1/…"):
@@ -151,8 +193,10 @@ function leggiSelect(s) {
 // riga collegata: molti-a-uno (foto.rullo_id -> rulli) oppure uno-a-molti (rulli -> foto[])
 function collegati(nomeTab, riga, rel) {
   const fk = FK[rel];
-  if (fk && riga[fk] !== undefined) return [...tab(rel).values()].find(r => String(r.id) === String(riga[fk])) || null;
+  if (fk && riga[fk] !== undefined) return (chiaveId(rel) ? tab(rel).get(String(riga[fk]))
+                                           : [...tab(rel).values()].find(r => String(r.id) === String(riga[fk]))) || null;
   const fkMio = FK[nomeTab];
+  if (rel === "foto" && fkMio === "rullo_id") return [...(fotoPerRullo.get(String(riga.id)) || [])];
   return [...tab(rel).values()].filter(r => fkMio && String(r[fkMio]) === String(riga.id));
 }
 function proietta(nomeTab, riga, voci) {
@@ -231,14 +275,36 @@ function provaFiltro(a, espr) {
   return neg ? !ok : ok;
 }
 const RISERVATI = new Set(["select", "order", "limit", "offset", "on_conflict", "columns"]);
+/* Da quali righe partire per un filtro "uguale a" o "uno di questi": per identificativo si va
+   diretti alla riga, per rullo si prendono solo le foto di quei rulli. Se il filtro è di un
+   altro tipo (o il valore è scritto in modo strano) si torna a scorrere tutto, come prima. */
+function candidate(nomeTab, col, espr) {
+  let valori;
+  if (espr.startsWith("eq.")) valori = [espr.slice(3)];
+  else if (espr.startsWith("in.")) valori = listaIn(espr.slice(3));
+  else return null;
+  const perId = col === "id" && chiaveId(nomeTab), perRullo = nomeTab === "foto" && col === "rullo_id";
+  if (!perId && !perRullo) return null;
+  // un numero scritto in forma non "pulita" (05, 5.0) varrebbe 5 nel confronto ma non nell'indice
+  if (valori.some(v => v !== "" && !isNaN(Number(v)) && String(Number(v)) !== v)) return null;
+  const out = [];
+  for (const v of new Set(valori)) {
+    if (perId) { const r = tab(nomeTab).get(v); if (r) out.push(r); }
+    else for (const r of (fotoPerRullo.get(v) || [])) out.push(r);
+  }
+  return out;
+}
 function righeFiltrate(nomeTab, q, voci) {
-  const filtri = [];
+  const filtri = []; let base = null;
   for (const [k, v] of q) {
     if (RISERVATI.has(k)) continue;
     if (k === "or" || k === "and") throw errore(400, "PGRST100", "filtro or/and non supportato");
     filtri.push([k, preparaFiltro(v)]);
+    const c = candidate(nomeTab, k, v);
+    if (c && (!base || c.length < base.length)) base = c;
   }
-  return [...tab(nomeTab).values()].filter(r =>
+  // i filtri si applicano comunque TUTTI: l'indice serve solo a partire da meno righe
+  return (base || [...tab(nomeTab).values()]).filter(r =>
     filtri.every(([k, f]) => f(valoreDi(nomeTab, r, k))) && (!voci || innerOk(nomeTab, r, voci)));
 }
 /* Un filtro si prepara UNA volta per richiesta, non a ogni riga. Prima l'elenco di "in.(...)"
@@ -273,7 +339,7 @@ function ordina(righe, ordine) {
 }
 
 /* ---------------- funzioni del database (rpc) ---------------- */
-function rullo(id) { return [...tab("rulli").values()].find(r => String(r.id) === String(id)) || null; }
+function rullo(id) { return tab("rulli").get(String(id)) || null; }
 const FUNZIONI = {
   prossimo_codice_da({ p_rullo_id, p_quanti, p_minimo }) {
     const r = rullo(p_rullo_id); if (!r) return null;
@@ -359,7 +425,7 @@ async function rest(req, res, url) {
         const nuova = {};
         for (const [k, v] of Object.entries(dato || {})) nuova[k] = relativizza(v);
         const esistente = (unisci || ignora) && bersaglio.every(c => nuova[c] !== undefined)
-          ? [...tab(nome).values()].find(r => bersaglio.every(c => String(r[c]) === String(nuova[c]))) : null;
+          ? primaUguale(nome, bersaglio, nuova) : null;
         if (esistente) {
           if (ignora) continue;
           Object.assign(esistente, nuova); salva(nome, esistente); out.push(esistente); continue;
@@ -373,7 +439,7 @@ async function rest(req, res, url) {
         if (tab(nome).has(chiaveDi(nome, riga)))
           throw errore(409, "23505", `duplicate key value violates unique constraint "${nome}_pkey"`);
         for (const u of (UNICI[nome] || []))
-          if (u.every(c => riga[c] != null) && [...tab(nome).values()].some(r => u.every(c => String(r[c]) === String(riga[c]))))
+          if (u.every(c => riga[c] != null) && primaUguale(nome, u, riga))
             throw errore(409, "23505", `duplicate key value violates unique constraint "${nome}_${u.join("_")}_key"`);
         salva(nome, riga); out.push(riga);
       }
@@ -510,7 +576,7 @@ async function storage(req, res, url) {
    gli originali sul PC non si cancellano mai da soli. */
 const ARCHIVIO = process.env.FAY_ARCHIVIO || path.join(BASE, "Archivio");
 const nomeCartella = s => String(s || "").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
-function percorsoLeggibile(percorso) {
+function percorsoLeggibile(percorso, rulliDelGiorno) {
   const parti = String(percorso).split("/");
   if (parti.length !== 2) return null;
   const [idGiornata, nomeFile] = parti;
@@ -524,7 +590,7 @@ function percorsoLeggibile(percorso) {
   const codice = nomeCartella(m[2]);
   let lettera = null;
   if (m[1]) {
-    const r = [...tab("rulli").values()].find(x => String(x.servizio_id) === idGiornata &&
+    const r = (rulliDelGiorno || [...tab("rulli").values()]).find(x => String(x.servizio_id) === idGiornata &&
                                                   String(x.id).replace(/-/g, "").startsWith(m[1]));
     if (r) lettera = r.lettera;
   }
@@ -533,11 +599,12 @@ function percorsoLeggibile(percorso) {
   if (!codice || !lettera) return null;
   return path.join(ARCHIVIO, nomeSede, nomeCartella(g.data_servizio), lettera, codice + "." + m[3].toLowerCase());
 }
-// crea (o rifà, se l'originale è stato reimportato) il nome leggibile; true = fatto adesso
-function collegaLeggibile(percorso, forza) {
+// crea (o rifà, se l'originale è stato reimportato) il nome leggibile.
+// true = fatto adesso · false = era già a posto · null = non si può (sede non ancora nota, errore)
+function collegaLeggibile(percorso, forza, rulliDelGiorno) {
   try {
-    const dest = percorsoLeggibile(percorso);
-    if (!dest) return false;
+    const dest = percorsoLeggibile(percorso, rulliDelGiorno);
+    if (!dest) return null;
     const src = percorsoFile("originali", percorso);
     const st = fs.statSync(src);
     if (!forza) {
@@ -554,20 +621,89 @@ function collegaLeggibile(percorso, forza) {
     return true;
   } catch (e) {
     console.log("  ⚠ archivio leggibile:", percorso, e.message);
-    return false;
+    return null;
   }
 }
-function riordinaArchivio() {
-  const base = path.join(FILE, "originali");
-  let giornate = [], nuove = 0;
-  try { giornate = fs.readdirSync(base, { withFileTypes: true }).filter(d => d.isDirectory()); } catch (_) { return; }
-  for (const d of giornate) {
-    let nomi = [];
-    try { nomi = fs.readdirSync(path.join(base, d.name)); } catch (_) { continue; }
-    for (const n of nomi) if (!n.includes(".tmp-") && collegaLeggibile(d.name + "/" + n)) nuove++;
+/* IL RIORDINO NON FERMA PIU' IL PC CENTRALE (16 nov). Prima ogni 10 minuti si ricontrollavano
+   tutti gli originali di tutte le giornate in un colpo solo, e finché non finiva il programma
+   non rispondeva a nessuno: con un mese di foto erano 8 secondi, e sulle postazioni compariva
+   "COLLEGAMENTO PERSO" a cavo perfettamente collegato. Ora:
+   · si lavora a piccoli passi (pochi millesimi di secondo), lasciando passare le richieste;
+   · una giornata già controllata per intero NON si ricontrolla finché nella sua cartella non
+     entra, esce o cambia un file. All'avvio si ricontrolla comunque tutto, una volta. */
+const archivioVisto = new Map();     // giornata -> data di modifica della cartella all'ultimo controllo completo
+let riordinoInCorso = false;
+async function riordinaArchivio() {
+  if (riordinoInCorso) return;
+  riordinoInCorso = true;
+  try {
+    const base = path.join(FILE, "originali");
+    let giornate = [], nuove = 0, fiato = Date.now();
+    try { giornate = fs.readdirSync(base, { withFileTypes: true }).filter(d => d.isDirectory()); } catch (_) { return; }
+    for (const d of giornate) {
+      const dir = path.join(base, d.name);
+      let modificata;
+      try { modificata = fs.statSync(dir).mtimeMs; } catch (_) { continue; }
+      if (archivioVisto.get(d.name) === modificata) continue;
+      let nomi = [];
+      try { nomi = await fs.promises.readdir(dir); } catch (_) { continue; }
+      const rulliDelGiorno = [...tab("rulli").values()].filter(x => String(x.servizio_id) === d.name);
+      let tutteAPosto = true;
+      for (const n of nomi) {
+        if (n.includes(".tmp-")) { tutteAPosto = false; continue; }       // caricamento in corso: si ripassa
+        const esito = collegaLeggibile(d.name + "/" + n, false, rulliDelGiorno);
+        if (esito === true) nuove++;
+        else if (esito === null) tutteAPosto = false;
+        if (Date.now() - fiato > 12) { await new Promise(r => setTimeout(r, 4)); fiato = Date.now(); }
+      }
+      if (tutteAPosto) archivioVisto.set(d.name, modificata);
+    }
+    if (nuove) console.log(`  ✓ Archivio leggibile: ${nuove} ${nuove === 1 ? "foto sistemata" : "foto sistemate"} in ${ARCHIVIO}`);
+  } catch (e) {
+    console.log("  ⚠ riordino dell'archivio:", e && e.message || e);
+  } finally {
+    riordinoInCorso = false;
   }
-  if (nuove) console.log(`  ✓ Archivio leggibile: ${nuove} ${nuove === 1 ? "foto sistemata" : "foto sistemate"} in ${ARCHIVIO}`);
 }
+
+/* SPAZIO SUL DISCO (16 nov). Gli originali non si cancellano mai da soli e nessuno avvisava
+   quando il disco stava per finire: a disco pieno gli import falliscono e il database non
+   riesce più a scrivere. Lo spazio libero si legge al massimo ogni 30 secondi, finisce in
+   /stato e, sotto la soglia, compare un avviso su tutte le pagine (PC centrale e postazioni). */
+const DISCO_AVVISO_GB = Number(process.env.FAY_DISCO_AVVISO_GB || 40);
+const DISCO_ROSSO_GB = Number(process.env.FAY_DISCO_ROSSO_GB || 15);
+const disco = { gb: null, letto: 0, detto: null };
+function discoLiberoGB() {
+  if (Date.now() - disco.letto < 30000) return disco.gb;
+  disco.letto = Date.now();
+  try { const s = fs.statfsSync(DATI); disco.gb = Math.floor(Number(s.bavail) * Number(s.bsize) / 1073741824); }
+  catch (_) { disco.gb = null; }
+  const livello = disco.gb === null ? null : disco.gb < DISCO_ROSSO_GB ? "rosso" : disco.gb < DISCO_AVVISO_GB ? "avviso" : "ok";
+  if (livello !== disco.detto) {
+    disco.detto = livello;
+    if (livello === "rosso") console.log(`  ⛔ DISCO QUASI PIENO: restano ${disco.gb} GB. Sposta le giornate vecchie su un altro disco prima di importare ancora.`);
+    else if (livello === "avviso") console.log(`  ⚠ Spazio sul disco: restano ${disco.gb} GB. E' ora di spostare le giornate vecchie su un altro disco.`);
+  }
+  return disco.gb;
+}
+const AVVISO_DISCO = `<script>(function(){
+  var b=null, AVVISO=${DISCO_AVVISO_GB}, ROSSO=${DISCO_ROSSO_GB};
+  async function giro(){
+    try{
+      var r=await fetch("/stato?nc="+Date.now(),{cache:"no-store"}); if(!r.ok) return;
+      var g=(await r.json()).discoLiberoGB;
+      if(typeof g!=="number" || g>=AVVISO){ if(b){ b.remove(); b=null; } return; }
+      if(!b){ b=document.createElement("div");
+        b.style.cssText="position:fixed;right:12px;bottom:48px;z-index:99999;max-width:420px;padding:9px 14px;border-radius:8px;font:700 13px system-ui,sans-serif;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.4)";
+        document.body.appendChild(b); }
+      b.style.background = g<ROSSO ? "#c62828" : "#c56a00";
+      b.textContent = g<ROSSO
+        ? "\\u26D4 Disco del PC centrale quasi pieno: restano "+g+" GB. Avvisa subito chi segue Fay Live prima di importare altre schede."
+        : "\\u26A0 Disco del PC centrale: restano "+g+" GB. Vanno spostate le giornate vecchie.";
+    }catch(_){}
+  }
+  addEventListener("load", function(){ giro(); setInterval(giro, 60000); });
+})();</script>`;
 
 /* ---------------- pagine ----------------
    Le pagine sono le stesse del sito: al volo si cambiano solo gli indirizzi delle
@@ -577,7 +713,7 @@ function adattaPagina(html) {
     .replace(/https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase\/supabase-js@2[^"']*/g, "/lib/supabase.js")
     .replace(/https:\/\/cdn\.jsdelivr\.net\/npm\/qrcode-generator@[^"']*/g, "/lib/qrcode.js")
     .replace(/const SB_URL\s*=\s*"[^"]*";/, "const SB_URL = location.origin;")
-    .replace(/<head>/i, "<head><script>window.FAY_CENTRALE = true;</script>");
+    .replace(/<head>/i, () => "<head><script>window.FAY_CENTRALE = true;</script>" + AVVISO_DISCO);
 }
 const MESI = { gen: 0, feb: 1, mar: 2, apr: 3, mag: 4, giu: 5, lug: 6, ago: 7, set: 8, ott: 9, nov: 10, dic: 11 };
 function dataVersione(html) {          // legge  const VERSIONE = "26 ott 2026";  → numero confrontabile (0 se non c'è)
@@ -1301,6 +1437,7 @@ const server = http.createServer(async (req, res) => {
     if (/^\/api\/invia(-apri|-pezzo|-chiudi)?$/.test(url.pathname) && req.method === "POST") return await apiDalCentrale(req, res, url);
     if (url.pathname === "/stato") return json(res, 200, { centrale: true, ora: ora(), foto: tab("foto").size,
       cloud: statoCloud.online, ultimoContatto: statoCloud.ultimoContatto, postazioni: postazioniVive(),
+      discoLiberoGB: discoLiberoGB(),
       daInviare: db.prepare("SELECT COUNT(*) AS n FROM da_inviare").get().n,
       fileDaInviare: db.prepare("SELECT COUNT(*) AS n FROM file_da_inviare").get().n, avvisi: statoCloud.avvisi });
     if (url.pathname === "/" ) { res.writeHead(302, { Location: "/pc.html" }); return res.end(); }
@@ -1338,6 +1475,7 @@ server.listen(PORTA, "0.0.0.0", () => {
   for (const ip of indirizzi()) console.log(`  Dalle postazioni: http://${ip}:${PORTA}/pc.html`);
   console.log(`  Dati e foto in: ${DATI}`);
   console.log(`  Originali leggibili (sede, giorno, rullo, codice): ${ARCHIVIO}`);
+  { const gb = discoLiberoGB(); if (gb !== null) console.log(`  Spazio libero sul disco: ${gb} GB`); }
   console.log("  Non chiudere questa finestra finché si lavora.");
   console.log("");
   setTimeout(riordinaArchivio, 3000);
