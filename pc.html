@@ -4112,6 +4112,14 @@ $("searchBox").addEventListener("keydown", e=>{
     if(!q.found.length && q.missing.length){ toast("Codice non trovato: "+q.missing.join(", ")); return; }
     // niente da aprire (casella vuota, o è il codice già aperto): invio chiude e ripulisce
     if(aperta) closeLightbox();
+    /* Dopo aver scritto più codici il cursore resta nella casella, e l'invio arrivava qui:
+       la vista insieme (e il monitor) restavano aperti e serviva il tasto Chiudi. Ora invio
+       fa come dalla griglia: chiude la vista insieme e rimanda il monitor allo slideshow. */
+    else if($("compare").classList.contains("open")){
+      closeCompare();
+      const M = state.monitor;
+      if(M.mode==="present" || M.mode==="mosaic") backToSlideshow();
+    }
     resetSearch();
     return;
   }
