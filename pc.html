@@ -623,7 +623,7 @@
       <button id="selExport">Esporta file</button>
       <button id="selSend">✈ Invia per email</button>
       <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
-      <button id="selConti" title="Foto che non sono state pagate: omaggi, scarti e stampe annullate. Scegli tu quali foto e quante">🚫 Senza incasso</button>
+      <button id="selConti" title="Foto che non sono state pagate: omaggi, scarti e stampe annullate. Scegli tu quali foto e quante">🚫 Non pagate</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -895,7 +895,7 @@
 </dialog>
 
 <dialog id="contiDlg" style="max-width:640px;width:92vw;margin:auto">
-  <h3 id="contiTitolo" style="margin-bottom:6px">Senza incasso</h3>
+  <h3 id="contiTitolo" style="margin-bottom:6px">Non pagate</h3>
   <p id="contiHint" class="hint" style="margin-bottom:12px"></p>
   <div id="contiModi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
     <button data-modo="omaggi">🎁 Omaggio</button>
@@ -4210,10 +4210,11 @@ $("selShow").onclick = ()=> presentSelection();
 /* Vendita chiusa (stampa o export fatti): si mostra il QR con i codici delle foto
    effettivamente comprate, così l'email del cliente arriva già abbinata alle SUE foto.
    Poi la selezione si azzera: la postazione è pronta per il cliente successivo. */
-function fineVendita(set){
+function fineVendita(set, senzaQr){
   const codici = (set||[]).map(p=>p.code);
   state.selection.clear(); updateSelBar(); paintVisible();
-  if(codici.length) mostraQrVendita(codici);
+  // dopo l'export il QR non serve: il cliente lo vede già quando si apre l'anteprima
+  if(codici.length && !senzaQr) mostraQrVendita(codici);
 }
 /* Omaggi, scarti e file venduti si segnano ADESSO, mentre il cliente è davanti, invece
    di ricordarseli a fine serata nel report. Il conteggio resta quello del rullo: qui si
@@ -4275,7 +4276,7 @@ function contiScegli(modo){
 }
 function contiDisegna(){
   const m = conti.modo ? CONTI_MODI[conti.modo] : null;
-  $("contiTitolo").textContent = m ? m.titolo : "Senza incasso — " + conti.set.length + " foto selezionate";
+  $("contiTitolo").textContent = m ? m.titolo : "Non pagate — " + conti.set.length + " foto selezionate";
   $("contiHint").textContent   = m ? m.hint : "Perché queste foto non sono state pagate?";
   const vedi = (id, si, tipo)=>{ $(id).style.display = si ? (tipo||"") : "none"; };
   vedi("contiModi", !m, "flex");
@@ -4348,7 +4349,7 @@ $("contiOk").onclick = async ()=>{
   else                      await segnaStat(ripetute,"scarti","segnate come scarto");
 };
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
-$("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
+$("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set, true); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
 $("lbSend").onclick = async ()=>{ const p=fotoAperta(); if(p) await inviaDiretto([p]); };
 
@@ -4435,7 +4436,7 @@ async function inviaDiretto(set){
     /* Prima qui c'era un alert: bloccava la postazione finché non premevi OK.
        La conferma resta ben visibile ma non ferma il lavoro. */
     toast(`✔ Inviate ${out.inviate||files.length} foto a ${email} — link valido 7 giorni`, 6000);
-    fineVendita(set);
+    fineVendita(set, true);   // l'email l'hai appena scritta tu: il QR non serve
   }catch(err){
     console.warn("filemail", err);
     logEvento("invio", {codici:set.map(p=>p.code).join(", "), quante:files.length,
@@ -4521,7 +4522,7 @@ $("lbQr").onclick  = ()=>{
 /* Da "Vedi insieme" si chiude la vendita senza dover tornare indietro: è lì che il
    cliente decide, e uscire dalla vista per stampare faceva perdere il filo. */
 $("cmpPrint").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await printPhotos(set); fineVendita(set); };
-$("cmpExport").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await exportPhotos(set); fineVendita(set); };
+$("cmpExport").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await exportPhotos(set); fineVendita(set, true); };
 $("cmpSend").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await inviaDiretto(set); };
 
 /* ---------- stampa ed esportazione ---------- */
