@@ -393,6 +393,10 @@
       <button id="btnDiagThumb" title="Dice perché le miniature non compaiono e prova a rigenerarle subito">Diagnosi miniature</button>
       <button id="btnClearCache" title="Svuota la cache locale del browser e ricarica dal cloud">Pulisci cache locale</button>
       <button id="btnResetRitocchi" title="Toglie luce, colore, pelle e ritocchi da TUTTE le foto della giornata: tornano come le hai importate">Ripristina tutte le foto</button>
+      <hr>
+      <button id="selVetrina" title="Manda le foto selezionate in visione a un cliente che non è in postazione">🔗 Crea vetrina (foto selezionate)</button>
+      <button id="selRigen" title="Rifà l'anteprima sul cloud delle foto selezionate, prendendo l'originale dall'archivio di questo PC">🔄 Rifà anteprime (foto selezionate)</button>
+      <hr>
       <button id="btnCodice" title="Codice che serve per aprire Fay Live su PC e tablet">Codice di accesso…</button>
       <hr>
       <button id="btnAutoOrig" title="Se attivo, OGNI foto importata sale sul cloud a piena risoluzione, anche quelle mai vendute: tanto traffico sull'hotspot. Vale per tutta la sede, non solo per questo PC">Caricamento automatico: —</button>
@@ -619,11 +623,7 @@
       <button id="selExport">Esporta file</button>
       <button id="selSend">✈ Invia per email</button>
       <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
-      <button id="selOmaggio" title="Stampe regalate al cliente">🎁 Omaggio</button>
-      <button id="selScarto" title="Stampe venute male e buttate">🗑 Scarto</button>
-      <button id="selMenoStampa" title="Toglie una stampa dal contatore: la stampa era stata annullata e non è uscita">➖ Stampa</button>
-      <button id="selVetrina" title="Manda queste foto in visione a un cliente che non è in postazione">🔗 Crea vetrina</button>
-      <button id="selRigen" title="Rifà l'anteprima sul cloud di queste foto, prendendo l'originale dall'archivio di questo PC">🔄 Rifà anteprime</button>
+      <button id="selConti" title="Foto che non sono state pagate: omaggi, scarti e stampe annullate. Scegli tu quali foto e quante">🚫 Senza incasso</button>
       <button id="selClear">Svuota</button>
     </div>
 
@@ -891,6 +891,26 @@
   <div style="display:flex;gap:10px;justify-content:flex-end">
     <button id="qrNo">Chiudi</button>
     <button id="qrYes" class="primary">Manda il QR sul monitor</button>
+  </div>
+</dialog>
+
+<dialog id="contiDlg" style="max-width:640px;width:92vw;margin:auto">
+  <h3 id="contiTitolo" style="margin-bottom:6px">Senza incasso</h3>
+  <p id="contiHint" class="hint" style="margin-bottom:12px"></p>
+  <div id="contiModi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+    <button data-modo="omaggi">🎁 Omaggio</button>
+    <button data-modo="scarti">🗑 Scarto</button>
+    <button data-modo="meno">➖ Togli stampa</button>
+  </div>
+  <div id="contiLista" style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto"></div>
+  <div id="contiRapidi" style="display:flex;gap:8px;margin-top:10px">
+    <button id="contiTutte1">1 a tutte</button>
+    <button id="contiZero">Azzera</button>
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+    <button id="contiIndietro">Indietro</button>
+    <button id="contiNo">Annulla</button>
+    <button id="contiOk" class="primary">Conferma</button>
   </div>
 </dialog>
 
@@ -4226,23 +4246,106 @@ async function annullaStat(perRullo, campo){
   toast("Annullato");
 }
 $("selFile").onclick    = async ()=>{ const set=selSet(); await segnaStat(set,"file_venduti","vendute come file"); fineVendita(set); };
-$("selOmaggio").onclick = async ()=>{ await segnaStat(selSet(),"omaggi","in omaggio"); };
-$("selScarto").onclick  = async ()=>{ await segnaStat(selSet(),"scarti","segnate come scarto"); };
-/* La finestra di stampa di Windows non dice se si e' premuto Stampa o Annulla, quindi la
-   stampa viene contata quando la finestra si chiude. Se non e' uscita, questo tasto toglie
-   una stampa dal contatore in qualsiasi momento: prima si poteva rimediare solo col tasto
-   "Non e' uscita" del messaggio, che dopo pochi secondi spariva. */
-$("selMenoStampa").onclick = ()=>{
-  const set=selSet();
+/* CONTEGGI: omaggi, scarti e stampe da togliere passano da una finestra dove si sceglie
+   foto per foto quante. Prima i tre tasti contavano subito UNA per ogni foto selezionata:
+   con 4 foto selezionate e un solo omaggio non c'era modo di dirlo.
+   Omaggi e scarti si sommano ancora con segnaStat (stesso conteggio per rullo, stesso
+   Annulla): la foto viene semplicemente ripetuta tante volte quante indicate. */
+const conti = { modo:null, set:[], n:new Map() };
+const CONTI_MODI = {
+  omaggi: { titolo:"🎁 Omaggio", hint:"Quante stampe di ogni foto hai regalato?", tasto:n=>`Segna ${n} ${n===1?"omaggio":"omaggi"}` },
+  scarti: { titolo:"🗑 Scarto",  hint:"Quante stampe di ogni foto sono venute male e le hai buttate?", tasto:n=>`Segna ${n} ${n===1?"scarto":"scarti"}` },
+  meno:   { titolo:"➖ Togli stampa", hint:"Quante stampe togliere dal contatore (la stampa era stata annullata e non è uscita)?", tasto:n=>`Togli ${n} ${n===1?"stampa":"stampe"}` }
+};
+function contiMax(p){ return conti.modo==="meno" ? (p.prints||0) : 20; }
+function contiTot(){ let t=0; conti.n.forEach(v=>t+=v); return t; }
+function contiApri(){
+  const set = selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  let tolte=0;
-  set.forEach(p=>{
-    if((p.prints||0)<=0) return;
-    p.prints = p.prints - 1; tolte++; toccaLocale(p);
-    if(sb && p.dbId) scriviFoto(p.dbId, {stampe:p.prints});
+  conti.set = set; conti.modo = null; conti.n = new Map();
+  contiDisegna();
+  $("contiDlg").showModal();
+}
+function contiScegli(modo){
+  conti.modo = modo;
+  const lista = modo==="meno" ? conti.set.filter(p=>(p.prints||0)>0) : conti.set;
+  if(modo==="meno" && !lista.length){ toast("Queste foto non risultano stampate"); conti.modo=null; return; }
+  conti.n = new Map(lista.map(p=>[p, lista.length===1 ? 1 : 0]));   // una sola foto: già pronta
+  contiDisegna();
+}
+function contiDisegna(){
+  const m = conti.modo ? CONTI_MODI[conti.modo] : null;
+  $("contiTitolo").textContent = m ? m.titolo : "Senza incasso — " + conti.set.length + " foto selezionate";
+  $("contiHint").textContent   = m ? m.hint : "Perché queste foto non sono state pagate?";
+  const vedi = (id, si, tipo)=>{ $(id).style.display = si ? (tipo||"") : "none"; };
+  vedi("contiModi", !m, "flex");
+  vedi("contiRapidi", m && conti.n.size>1, "flex");
+  vedi("contiIndietro", !!m);
+  vedi("contiOk", !!m);
+  const box = $("contiLista"); box.innerHTML = "";
+  if(!m) return;
+  conti.n.forEach((v,p)=>{
+    const riga = document.createElement("div");
+    riga.style.cssText = "display:flex;align-items:center;gap:12px;padding:6px;border:1px solid var(--line);border-radius:10px";
+    const img = document.createElement("img");
+    img.style.cssText = "width:72px;height:48px;object-fit:cover;border-radius:6px;background:#000";
+    const src = p.thumbMod || p.thumb; if(src) img.src = src;
+    const nome = document.createElement("div"); nome.style.cssText = "flex:1;min-width:0";
+    const cod = document.createElement("b"); cod.textContent = p.code;
+    nome.appendChild(cod);
+    if(conti.modo==="meno"){
+      const s = document.createElement("div"); s.className = "hint";
+      s.textContent = `stampata ${p.prints} ${p.prints===1?"volta":"volte"}`;
+      nome.appendChild(s);
+    }
+    const meno = document.createElement("button"); meno.textContent = "−";
+    const num  = document.createElement("span");  num.style.cssText = "min-width:28px;text-align:center;font-size:18px;font-weight:700";
+    const piu  = document.createElement("button"); piu.textContent = "+";
+    const agg = ()=>{ const x=conti.n.get(p); num.textContent = x; num.style.color = x ? "var(--accent)" : "var(--muted)";
+                      meno.disabled = x<=0; piu.disabled = x>=contiMax(p); contiTasto(); };
+    meno.onclick = ()=>{ conti.n.set(p, Math.max(0, conti.n.get(p)-1)); agg(); };
+    piu.onclick  = ()=>{ conti.n.set(p, Math.min(contiMax(p), conti.n.get(p)+1)); agg(); };
+    riga.append(img, nome, meno, num, piu); box.appendChild(riga);
+    agg();
   });
-  renderTabs(); paintVisible(); refreshLbStatus();
-  toast(tolte ? `Tolta una stampa a ${tolte} foto` : "Queste foto non risultano stampate");
+  contiTasto();
+}
+function contiTasto(){
+  if(!conti.modo) return;
+  const t = contiTot();
+  $("contiOk").textContent = t ? CONTI_MODI[conti.modo].tasto(t) : "Conferma";
+  $("contiOk").disabled = !t;
+}
+$("selConti").onclick = contiApri;
+$("contiModi").onclick = e=>{ const b=e.target.closest("button[data-modo]"); if(b) contiScegli(b.dataset.modo); };
+$("contiIndietro").onclick = ()=>{ conti.modo=null; conti.n=new Map(); contiDisegna(); };
+$("contiNo").onclick = ()=> $("contiDlg").close();
+$("contiTutte1").onclick = ()=>{ conti.n.forEach((v,p)=>conti.n.set(p, Math.min(1, contiMax(p)))); contiDisegna(); };
+$("contiZero").onclick   = ()=>{ conti.n.forEach((v,p)=>conti.n.set(p, 0)); contiDisegna(); };
+$("contiOk").onclick = async ()=>{
+  const scelte = [...conti.n].filter(([p,v])=>v>0);
+  if(!scelte.length) return;
+  if(conti.modo==="meno"){
+    /* La finestra di stampa di Windows non dice se si e' premuto Stampa o Annulla, quindi
+       la stampa viene contata quando la finestra si chiude: qui la si toglie. Avviso prima,
+       perché non c'è Annulla. */
+    const righe = scelte.map(([p,v])=>`• ${p.code}: tolgo ${v} ${v===1?"stampa":"stampe"} (ne ${p.prints-v===1?"resta":"restano"} ${p.prints-v})`);
+    if(!confirm("Stai togliendo stampe dal contatore:\n\n" + righe.join("\n") + "\n\nConfermi?")) return;
+    $("contiDlg").close();
+    scelte.forEach(([p,v])=>{
+      p.prints = Math.max(0, (p.prints||0) - v); toccaLocale(p);
+      if(sb && p.dbId) scriviFoto(p.dbId, {stampe:p.prints});
+    });
+    renderTabs(); paintVisible(); refreshLbStatus();
+    const tot = scelte.reduce((a,[p,v])=>a+v,0);
+    toast(`Tolte ${tot} ${tot===1?"stampa":"stampe"} (${scelte.map(([p])=>p.code).join(", ")})`);
+    return;
+  }
+  $("contiDlg").close();
+  const ripetute = [];
+  scelte.forEach(([p,v])=>{ for(let i=0;i<v;i++) ripetute.push(p); });
+  if(conti.modo==="omaggi") await segnaStat(ripetute,"omaggi","in omaggio");
+  else                      await segnaStat(ripetute,"scarti","segnate come scarto");
 };
 $("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set); };
@@ -8013,7 +8116,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "16 nov 2026";
+const VERSIONE = "18 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
@@ -10224,7 +10327,7 @@ function vetCodiceCasuale(){
 $("selVetrina").onclick = ()=>{
   if(!sb || !cloud.sede || !cloud.servizio){ toast("Serve la connessione e una giornata aperta"); return; }
   const set = selSet();
-  if(!set.length) return;
+  if(!set.length){ toast("Seleziona prima le foto da mettere nella vetrina"); return; }
   const senza = set.filter(p => !p.anteprimaUrl && !p.miniUrl).length;
   if(senza === set.length){ toast("Queste foto non hanno ancora l'anteprima sul cloud"); return; }
 
