@@ -259,6 +259,10 @@
   /* ---------- Barra selezione ---------- */
   #selBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--accent);border-radius:14px;padding:10px 16px;display:none;align-items:center;gap:12px;z-index:15;box-shadow:0 8px 30px rgba(0,0,0,.5)}
   #selBar.show{display:flex}
+  /* larga quanto serve (con left:50% il browser la stringeva a metà schermo e "Invia per
+     email" andava su tre righe); va a capo solo su schermi davvero stretti */
+  #selBar{width:max-content;max-width:calc(100% - 24px);flex-wrap:wrap;justify-content:center}
+  #selBar button{white-space:nowrap}
   #selCount{font-weight:700;color:var(--accent)}
 
   /* ---------- Vuoto / drop ---------- */
@@ -624,7 +628,7 @@
       <button id="selSend">✈ Invia per email</button>
       <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
       <button id="selConti" title="Foto che non sono state pagate: omaggi, scarti e stampe annullate. Scegli tu quali foto e quante">🚫 Non pagate</button>
-      <button id="selClear">Svuota</button>
+      <button id="selClear" title="Toglie la selezione da tutte le foto (le foto restano dove sono)">✕ Deseleziona</button>
     </div>
 
     <div class="toast" id="toast"></div>
