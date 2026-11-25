@@ -871,6 +871,7 @@
   <div id="statsWhen" style="color:var(--muted);font-size:12.5px;margin-bottom:12px"></div>
   <div id="statsBody"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <button id="statsPdf" title="Crea un PDF di questa sede e di questa giornata (funziona anche senza internet): finisce nella cartella Download, da inviare quando torna la linea">Salva PDF da inviare</button>
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
   </div>
@@ -7630,6 +7631,245 @@ $("statsCsv").onclick = ()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
 };
 
+/* =====================================================================
+   PDF DEL REPORT, SENZA LIBRERIE (25 nov 2026)
+   Perché a mano: Chrome di Fay Live parte con --kiosk-printing, quindi "Stampa" finisce
+   dritto sulla DNP senza chiedere niente — niente "Salva come PDF". E in piscina spesso
+   non c'è internet per scaricare una libreria. Qui si scrive il file PDF direttamente:
+   testo Helvetica, righe e riquadri, nient'altro. Finisce nei Download, da inviare
+   quando torna la linea.
+   La stessa identica parte sta in pc.html e in report.html: se cambia di qua, va
+   cambiata anche di là.
+   ===================================================================== */
+function creaPdf(){
+  const W = 595.28, H = 841.89;               // A4 verticale, in punti
+  const pagine = []; let cur = null;
+  const SPECIALI = {0x2014:0x97, 0x2013:0x96, 0x20AC:0x80, 0x2019:0x92, 0x2018:0x91,
+                    0x201C:0x93, 0x201D:0x94, 0x2022:0x95, 0x2026:0x85, 0x2212:0x2D, 0x00B7:0xB7};
+  const enc = s => {
+    let o = "";
+    for(const ch of String(s==null?"":s)){
+      let c = ch.codePointAt(0);
+      if(SPECIALI[c]) c = SPECIALI[c];
+      else if(c > 255 || (c < 32)) c = 0x3F;   // simboli che Helvetica non ha: "?"
+      const x = String.fromCharCode(c);
+      o += (x==="(" || x===")" || x==="\\") ? "\\"+x : x;
+    }
+    return o;
+  };
+  const n = v => (Math.round(v*100)/100).toString();
+  const api = {
+    W, H, pagine,
+    nuovaPagina(){ cur = []; pagine.push(cur); return api; },
+    /* y si conta dall'alto (come sullo schermo), è la riga di base del testo */
+    testo(x, y, s, size, bold, grigio){
+      const g = grigio==null ? 0 : grigio;
+      cur.push(`q ${g} g BT /${bold?"F2":"F1"} ${size} Tf ${n(x)} ${n(H-y)} Td (${enc(s)}) Tj ET Q`);
+    },
+    destra(xDestra, y, s, size, bold, grigio){
+      api.testo(xDestra - api.larghezza(s, size, bold), y, s, size, bold, grigio);
+    },
+    /* larghezza approssimata: esatta per le cifre (tutte uguali in Helvetica), stimata per il resto */
+    larghezza(s, size, bold){
+      let w = 0;
+      for(const ch of String(s)){
+        if(/[0-9]/.test(ch)) w += 556;
+        else if(ch===" ") w += 278;
+        else if(/[.,:;'!|il]/.test(ch)) w += 278;
+        else if(/[mwMW]/.test(ch)) w += 833;
+        else if(/[A-Z]/.test(ch)) w += bold ? 722 : 667;
+        else w += bold ? 584 : 556;
+      }
+      return w * size / 1000;
+    },
+    taglia(s, size, bold, max){
+      s = String(s||"");
+      if(api.larghezza(s, size, bold) <= max) return s;
+      while(s.length > 1 && api.larghezza(s+"…", size, bold) > max) s = s.slice(0,-1);
+      return s.trimEnd() + "…";
+    },
+    linea(x1, y1, x2, y2, spessore, grigio){
+      cur.push(`q ${grigio==null?0.6:grigio} G ${spessore||0.5} w ${n(x1)} ${n(H-y1)} m ${n(x2)} ${n(H-y2)} l S Q`);
+    },
+    riquadro(x, y, w, h, grigio){            // y = bordo alto
+      cur.push(`q ${grigio==null?0.93:grigio} g ${n(x)} ${n(H-y-h)} ${n(w)} ${n(h)} re f Q`);
+    },
+    byte(){
+      const ogg = [];
+      const add = s => { ogg.push(s); return ogg.length; };
+      add("<< /Type /Catalog /Pages 2 0 R >>");
+      add("");                                // 2 = elenco pagine, riempito dopo
+      add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+      add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+      const figli = [];
+      pagine.forEach(p=>{
+        const flusso = p.join("\n");
+        const c = add(`<< /Length ${flusso.length} >>\nstream\n${flusso}\nendstream`);
+        figli.push(add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] ` +
+                       `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${c} 0 R >>`));
+      });
+      ogg[1] = `<< /Type /Pages /Kids [${figli.map(k=>k+" 0 R").join(" ")}] /Count ${figli.length} >>`;
+      let out = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+      const pos = [];
+      ogg.forEach((o,i)=>{ pos.push(out.length); out += `${i+1} 0 obj\n${o}\nendobj\n`; });
+      const xref = out.length;
+      out += `xref\n0 ${ogg.length+1}\n0000000000 65535 f \n` +
+             pos.map(p=>String(p).padStart(10,"0")+" 00000 n \n").join("");
+      out += `trailer\n<< /Size ${ogg.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+      const b = new Uint8Array(out.length);
+      for(let i=0;i<out.length;i++) b[i] = out.charCodeAt(i) & 255;
+      return b;
+    }
+  };
+  return api;
+}
+
+/* Un PDF con una o più giornate, ognuna dalla sua pagina.
+   blocchi: [{ sede, giorno, righe:[{lettera, desc, foto, stampe, fuori, omaggi, scarti, file, vendute}],
+               dentro:[{giorno, fogli}] }]
+   "stampe" sono già quelle DELLA GIORNATA (ristampe di altri giorni tolte), come in tabella. */
+function pdfReport(titolo, blocchi, sotto){
+  const pdf = creaPdf();
+  const M = 40, DX = pdf.W - M, FONDO = pdf.H - 56;
+  const fatto = new Date().toLocaleString("it-IT", {day:"numeric", month:"long", year:"numeric", hour:"2-digit", minute:"2-digit"});
+  const COL = [
+    {t:"Rullo",    x:M,      l:true},
+    {t:"Descrizione", x:M+40, l:true},
+    {t:"Foto",     x:292},
+    {t:"Stampe",   x:336},
+    {t:"Altri gg", x:381},
+    {t:"Omaggi",   x:424},
+    {t:"Scarti",   x:464},
+    {t:"File",     x:498},
+    {t:"Vendute",  x:DX}
+  ];
+  let y = 0;
+  const pagina = ()=>{
+    pdf.nuovaPagina();
+    pdf.testo(M, 30, "Fay Live — " + titolo, 8, false, 0.45);
+    pdf.destra(DX, 30, "creato il " + fatto, 8, false, 0.45);
+    pdf.linea(M, 36, DX, 36, 0.4, 0.75);
+    y = 62;
+  };
+  const testaTabella = ()=>{
+    pdf.riquadro(M-4, y-12, DX-M+8, 18, 0.9);
+    COL.forEach(c=> c.l ? pdf.testo(c.x, y, c.t, 8.5, true) : pdf.destra(c.x, y, c.t, 8.5, true));
+    y += 18;
+  };
+  const riga = (r, grassetto)=>{
+    if(y > FONDO){ pagina(); testaTabella(); }
+    const v = [r.lettera, r.desc||"", r.foto, r.stampe, r.fuori ? r.fuori : "—", r.omaggi, r.scarti, r.file, r.vendute];
+    COL.forEach((c,i)=>{
+      const s = String(v[i]);
+      if(i===1) pdf.testo(c.x, y, pdf.taglia(s, 9, false, 150), 9, false, 0.3);
+      else if(c.l) pdf.testo(c.x, y, s, 9.5, true);
+      else pdf.destra(c.x, y, s, 9.5, grassetto || i===8, i===4 ? 0.45 : 0);
+    });
+    pdf.linea(M-4, y+5, DX+4, y+5, 0.3, 0.8);
+    y += 17;
+  };
+
+  blocchi.forEach(b=>{
+    pagina();
+    pdf.testo(M, y, b.sede || "—", 20, true); y += 18;
+    pdf.testo(M, y, b.giorno || "", 11, false, 0.35); y += 22;
+
+    const somma = c => b.righe.reduce((s,r)=> s + (Number(r[c])||0), 0);
+    const T = {foto:somma("foto"), stampe:somma("stampe"), fuori:somma("fuori"), omaggi:somma("omaggi"),
+               scarti:somma("scarti"), file:somma("file"), vendute:somma("vendute")};
+
+    // riquadro dei totali
+    pdf.riquadro(M-4, y, DX-M+8, 62, 0.94);
+    pdf.testo(M+8, y+18, "VENDUTE", 8.5, true, 0.4);
+    pdf.testo(M+8, y+48, String(T.vendute), 28, true);
+    const voci = [["foto",T.foto],["stampe",T.stampe],["file venduti",T.file],["omaggi",T.omaggi],["scarti",T.scarti],["altri giorni",T.fuori]];
+    voci.forEach((vv,i)=>{
+      const x = 170 + (i%3)*130, yy = y + 24 + Math.floor(i/3)*24;
+      pdf.testo(x, yy, String(vv[1]), 13, true);
+      pdf.testo(x + pdf.larghezza(String(vv[1]),13,true) + 5, yy, vv[0], 9, false, 0.4);
+    });
+    y += 86;
+
+    if(!b.righe.length){
+      pdf.testo(M, y, "Nessun rullo in questa giornata.", 10, false, 0.4); y += 20;
+    } else {
+      testaTabella();
+      b.righe.forEach(r=> riga(r));
+      y += 2;
+      riga({lettera:"TOT", desc:"", foto:T.foto, stampe:T.stampe, fuori:T.fuori, omaggi:T.omaggi,
+            scarti:T.scarti, file:T.file, vendute:T.vendute}, true);
+    }
+
+    if(b.dentro && b.dentro.length){
+      y += 12;
+      if(y > FONDO - 40) pagina();
+      pdf.testo(M, y, "Stampe di questa serata su foto di altre giornate", 10.5, true); y += 16;
+      b.dentro.forEach(d=>{
+        if(y > FONDO) pagina();
+        pdf.testo(M+8, y, d.giorno + ": " + d.fogli + " fogli", 9.5); y += 14;
+      });
+      pdf.testo(M+8, y, "Non sono nella tabella qui sopra: contano nel report di quelle giornate (colonna Altri gg).", 8.5, false, 0.45);
+      y += 14;
+    }
+
+    y += 14;
+    if(y > FONDO) pagina();
+    pdf.testo(M, y, "Vendute = stampe della giornata − omaggi − scarti + file venduti.", 8.5, false, 0.45); y += 12;
+    pdf.testo(M, y, "Altri gg = fogli di questa giornata stampati in un altro giorno: contano in quel giorno, non qui.", 8.5, false, 0.45); y += 12;
+    if(sotto){ pdf.testo(M, y, sotto, 8.5, false, 0.45); y += 12; }
+  });
+
+  // numero di pagina, aggiunto alla fine quando si sa quante sono
+  pdf.pagine.forEach((p,i)=>{
+    const s = `pagina ${i+1} di ${pdf.pagine.length}`;
+    p.push(`q 0.45 g BT /F1 8 Tf ${(pdf.W - M - pdf.larghezza(s,8)).toFixed(2)} 24 Td (${s}) Tj ET Q`);
+  });
+  return pdf.byte();
+}
+
+/* Pulsante "Salva PDF da inviare" del Report giornata: SOLO la sede e la giornata aperte
+   su questa postazione. Legge gli stessi numeri della tabella (omaggi/scarti/file appena
+   corretti a mano compresi) e funziona anche senza internet: va bene quello che sa il
+   PC centrale. */
+$("statsPdf").onclick = async ()=>{
+  if(!cloud.servizio){ toast("Apri prima una giornata"); return; }
+  const b = $("statsPdf"); b.disabled = true;
+  try{
+    const incrociate = await leggiStampeIncrociate();
+    state.stampeFuori = incrociate.fuori;
+    const dati = datiReport();
+    const righe = Object.keys(dati).sort().map(L=>{
+      const r = dati[L];
+      return {lettera:L, desc:state.letterDesc[L]||"", foto:r.foto, stampe:stampeGiornata(r), fuori:r.fuori||0,
+              omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0, vendute:venduteRullo(r)};
+    });
+    const sede = cloud.sede ? cloud.sede.nome : "Sede";
+    const giorno = cloud.servizio.data_servizio;
+    const dLunga = (()=>{ const d=new Date(giorno+"T12:00:00");
+      return isNaN(d) ? giorno : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long",year:"numeric"}); })();
+    const byte = pdfReport("Report giornata", [{sede, giorno:dLunga, righe, dentro:incrociate.dentro}],
+                           "Creato dalla postazione " + nomePostazione() + ".");
+    const nome = nomeFilePdf([sede, giorno]);
+    scaricaPdf(byte, nome);
+    toast("PDF salvato nella cartella Download: " + nome, 6000);
+  }catch(err){
+    console.warn("pdf report", err);
+    toast("Non sono riuscito a creare il PDF: " + (err && err.message || err), 6000);
+  }finally{ b.disabled = false; }
+};
+
+function nomeFilePdf(parti){
+  return "Report_" + parti.map(p=>String(p||"").normalize("NFD").replace(/[̀-ͯ]/g,"")
+                                   .replace(/[^\w-]+/g,"_").replace(/^_+|_+$/g,"")).filter(Boolean).join("_") + ".pdf";
+}
+function scaricaPdf(byte, nome){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([byte], {type:"application/pdf"}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
+}
+
 /* Secondo passaggio di sicurezza: dopo il riepilogo, una domanda secca prima di procedere.
    Nessuna parola da digitare: due conferme consapevoli bastano. */
 function seiSicuro(testo){ return confirm(testo); }
@@ -8117,7 +8357,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "18 nov 2026";
+const VERSIONE = "25 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.

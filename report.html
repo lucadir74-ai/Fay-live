@@ -34,6 +34,7 @@
     border-radius:9px; padding:9px 13px; font-size:15px;
   }
   button:active{background:var(--line)}
+  button:disabled{opacity:.5}
   main{padding:14px}
   .tot{
     background:var(--surface); border:1px solid var(--line); border-radius:13px;
@@ -56,6 +57,11 @@
   .voci{display:flex; flex-wrap:wrap; gap:7px}
   .voce{background:var(--surface2); border-radius:8px; padding:5px 9px; font-size:13px; white-space:nowrap}
   .voce s{color:var(--muted); text-decoration:none; font-size:11px}
+  /* vista "Tutte le sedi": ogni sede è un blocco a sé, i rulli si aprono toccando */
+  .sede{margin-bottom:22px}
+  .sede > h2{margin:0 0 8px; font-size:18px; color:var(--accent); display:flex; align-items:baseline; gap:8px}
+  .sede > h2 span{color:var(--muted); font-size:12px; font-weight:400}
+  .sede details > summary{color:var(--muted); font-size:13px; padding:4px 2px 10px; cursor:pointer}
   .avviso{color:var(--muted); text-align:center; padding:30px 16px; font-size:14px}
   .avviso.brutto{color:var(--danger)}
   footer{color:var(--muted); font-size:11px; text-align:center; padding:6px 16px 0}
@@ -72,6 +78,7 @@
   <div class="barra">
     <select id="selGiornata"><option>Carico…</option></select>
     <button id="btnRicarica" title="Ricarica">↻</button>
+    <button id="btnPdf" title="Salva un PDF di quello che si vede (una pagina per sede)">PDF</button>
   </div>
 </header>
 
@@ -92,8 +99,15 @@
    Non è una vera protezione (la chiave anon sta comunque dentro la pagina, come in
    tablet.html): serve solo a tenere fuori chi ci finisce per caso. La protezione seria
    sono le regole di scrittura su Supabase, che stanno lato database.
+
+   SEDE PER SEDE (25 nov 2026): con più sedi la prima voce è "Tutte le sedi", che mostra
+   una giornata (data) con un blocco separato per ogni sede — mai i numeri sommati fra
+   sedi diverse. Il pulsante PDF salva quello che si vede, una pagina per sede.
+   Aperta da una POSTAZIONE (pagina servita dal PC centrale a un altro PC) la vista
+   "Tutte le sedi" non c'è: lì si guarda una sede alla volta.
    ===================================================================== */
 const CODICE = "smeralda26";          // <-- cambialo quando vuoi
+const VERSIONE = "25 nov 2026";
 
 const SB_URL = "https://uqaddhbayyhudbmqixic.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxYWRkaGJheXlodWRibXFpeGljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODE5NDAsImV4cCI6MjEwMDc1Nzk0MH0.KNW8Wo6b3l87cZWEUncaFVgnHYS_RVWx0GwX8B1rY50";
@@ -101,12 +115,19 @@ const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const $ = id => document.getElementById(id);
 const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
 
+/* Postazione = pagina arrivata dal PC centrale (FAY_CENTRALE) ma aperta su un ALTRO PC.
+   Sul centrale stesso (localhost) e dal sito si è organizzatori. */
+const SU_POSTAZIONE = !!window.FAY_CENTRALE &&
+  !["localhost","127.0.0.1","[::1]"].includes(location.hostname);
+const TUTTE = "*";
+
 function avviso(testo, brutto){
   $("corpo").innerHTML = `<p class="avviso${brutto?" brutto":""}">${testo}</p>`;
 }
-function dataLunga(g){
+function dataLunga(g, conAnno){
   const d = new Date(g+"T12:00:00");
-  return isNaN(d) ? g : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+  return isNaN(d) ? g : d.toLocaleDateString("it-IT",
+    conAnno ? {weekday:"long",day:"numeric",month:"long",year:"numeric"} : {weekday:"long",day:"numeric",month:"long"});
 }
 function pulito(x){ return String(x==null?"":x).replace(/[<>&"]/g,""); }
 
@@ -130,35 +151,47 @@ if(!sb){
 function stampeGiornata(r){ return Math.max(0, (r.stampe||0) - (r.fuori||0)); }
 function venduteRullo(r){ return Math.max(0, stampeGiornata(r) - (r.omaggi||0) - (r.scarti||0)) + (r.file||0); }
 
-let sede = null, servizi = [];
+let sedi = [], sede = null, servizi = [];
+/* quello che è sullo schermo adesso, per il PDF: [{sede, giorno, righe}] */
+let mostrati = [];
 
 async function avvia(){
   try{
-    const {data:sedi, error:e1} = await sb.from("sedi").select("id,nome").order("nome");
+    const {data:s, error:e1} = await sb.from("sedi").select("id,nome").order("nome");
     if(e1) throw e1;
-    if(!sedi || !sedi.length){ avviso("Nessuna sede sul cloud.", true); return; }
+    sedi = s || [];
+    if(!sedi.length){ avviso("Nessuna sede sul cloud.", true); return; }
 
     /* Con una sola sede il menu non si vede nemmeno: comparirebbe una tendina con una
        voce sola. Da due in su si sceglie, e la scelta resta su questo telefono. */
     if(sedi.length > 1){
+      const conTutte = !SU_POSTAZIONE;
       const ultima = localStorage.getItem("reportSede");
-      $("selSede").innerHTML = sedi
-        .map(x=>`<option value="${x.id}">${pulito(x.nome)}</option>`).join("");
-      if(ultima && sedi.some(x=>String(x.id)===ultima)) $("selSede").value = ultima;
+      $("selSede").innerHTML =
+        (conTutte ? `<option value="${TUTTE}">Tutte le sedi (una per una)</option>` : "") +
+        sedi.map(x=>`<option value="${x.id}">${pulito(x.nome)}</option>`).join("");
+      const valide = sedi.map(x=>String(x.id)).concat(conTutte ? [TUTTE] : []);
+      $("selSede").value = (ultima && valide.includes(ultima)) ? ultima : (conTutte ? TUTTE : String(sedi[0].id));
       $("barraSede").hidden = false;
       $("selSede").onchange = ()=>{
         localStorage.setItem("reportSede", $("selSede").value);
-        apriSede(sedi.find(x=>String(x.id)===String($("selSede").value)));
+        scegliSede($("selSede").value);
       };
-      await apriSede(sedi.find(x=>String(x.id)===String($("selSede").value)));
+      await scegliSede($("selSede").value);
     } else {
       await apriSede(sedi[0]);
     }
-    $("btnRicarica").onclick = ()=>carica($("selGiornata").value);
+    $("btnRicarica").onclick = ()=>$("selGiornata").onchange && $("selGiornata").onchange();
+    $("btnPdf").onclick = salvaPdf;
   }catch(err){
     console.error(err);
     avviso("Errore nel collegamento: "+(err.message||err), true);
   }
+}
+
+async function scegliSede(v){
+  if(v === TUTTE) return apriTutte();
+  return apriSede(sedi.find(x=>String(x.id)===String(v)));
 }
 
 async function apriSede(s){
@@ -173,6 +206,8 @@ async function apriSede(s){
   servizi = sv || [];
   if(!servizi.length){
     $("selGiornata").innerHTML = "";
+    $("selGiornata").onchange = null;
+    mostrati = [];
     avviso("Nessuna giornata registrata per "+pulito(sede.nome)+".");
     $("piede").textContent = "";
     return;
@@ -183,82 +218,132 @@ async function apriSede(s){
   carica(servizi[0].id);
 }
 
-async function carica(sid){
-  const sv = servizi.find(s=>String(s.id)===String(sid));
-  if(!sv) return;
+/* --- TUTTE LE SEDI: si sceglie una DATA, e ogni sede che ha lavorato quel giorno ha il
+   suo blocco. Le date vengono da tutte le sedi insieme. -------------------------- */
+async function apriTutte(){
+  sede = null;
+  $("hSede").textContent = "tutte le sedi";
   avviso("Carico…");
-  $("hSub").textContent = "sola lettura · " + dataLunga(sv.data_servizio);
+  const {data:sv, error} = await sb.from("servizi")
+    .select("id,sede_id,data_servizio").order("data_servizio",{ascending:false}).limit(400);
+  if(error) throw error;
+  servizi = sv || [];
+  const date = [...new Set(servizi.map(x=>x.data_servizio))];
+  if(!date.length){
+    $("selGiornata").innerHTML = ""; $("selGiornata").onchange = null; mostrati = [];
+    avviso("Nessuna giornata registrata."); $("piede").textContent = ""; return;
+  }
+  $("selGiornata").innerHTML = date.map(d=>{
+    const n = servizi.filter(x=>x.data_servizio===d).length;
+    return `<option value="${d}">${dataLunga(d)} · ${n} ${n===1?"sede":"sedi"}</option>`;
+  }).join("");
+  $("selGiornata").onchange = ()=>caricaData($("selGiornata").value);
+  caricaData(date[0]);
+}
+
+async function caricaData(giorno){
+  const delGiorno = servizi.filter(x=>x.data_servizio===giorno);
+  avviso("Carico…");
+  $("hSub").textContent = "sola lettura · " + dataLunga(giorno);
   try{
-    const {data:rulli, error:e1} = await sb.from("rulli")
-      .select("id,lettera,descrizione,omaggi,scarti,file_venduti").eq("servizio_id", sv.id);
-    if(e1) throw e1;
-    if(!rulli || !rulli.length){ avviso("Nessun rullo in questa giornata."); $("piede").textContent=""; return; }
+    const nomeDi = id => { const s = sedi.find(x=>String(x.id)===String(id)); return s ? s.nome : "?"; };
+    const blocchi = await Promise.all(delGiorno.map(async sv=>({
+      sede: nomeDi(sv.sede_id), sv, righe: await datiGiornata(sv)
+    })));
+    blocchi.sort((a,b)=>a.sede.localeCompare(b.sede));
+    mostrati = blocchi.map(b=>({sede:b.sede, data:giorno, righe:b.righe}));
 
-    /* Le foto si contano a pagine: una giornata piena supera il limite di righe che il
-       cloud restituisce in una volta, e senza paginazione i numeri uscirebbero tagliati. */
-    const perRullo = {};
-    rulli.forEach(r=> perRullo[r.id] = {
-      lettera:r.lettera, desc:r.descrizione||"", foto:0, stampe:0, esportate:0,
-      omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file_venduti||0, fuori:0
-    });
-    const ids = rulli.map(r=>r.id);
-    let da = 0;
-    for(;;){
-      const {data:foto, error:e2} = await sb.from("foto")
-        .select("rullo_id,stampe,esportata").in("rullo_id", ids).range(da, da+999);
-      if(e2) throw e2;
-      (foto||[]).forEach(f=>{
-        const r = perRullo[f.rullo_id]; if(!r) return;
-        r.foto++; r.stampe += (f.stampe||0); if(f.esportata) r.esportate++;
-      });
-      if(!foto || foto.length < 1000) break;
-      da += 1000;
-      if(da > 20000) break;               // rete di sicurezza
-    }
-
-    /* Ristampe fatte in un ALTRO giorno su foto di questa giornata: vanno tolte, come nel
-       report del PC, altrimenti le vendute risultano gonfiate. */
-    const {data:stampe} = await sb.from("attivita")
-      .select("rullo_lettera,quante,dettaglio").eq("servizio_id", sv.id).eq("azione","~stampa");
-    (stampe||[]).forEach(a=>{
-      const m = /giorno=(\d{4}-\d{2}-\d{2})/.exec(a.dettaglio||"");
-      if(!m || m[1] === sv.data_servizio) return;
-      const r = Object.values(perRullo).find(x=>x.lettera === a.rullo_lettera);
-      if(r) r.fuori += (a.quante||0);
-    });
-
-    disegna(Object.values(perRullo).sort((a,b)=>a.lettera.localeCompare(b.lettera)), sv);
+    $("corpo").innerHTML = blocchi.map(b=>`
+      <section class="sede">
+        <h2>${pulito(b.sede)} <span>${b.righe.length} ${b.righe.length===1?"rullo":"rulli"}</span></h2>
+        ${b.righe.length ? riquadroTotali(b.righe) : '<p class="avviso">Nessun rullo in questa giornata.</p>'}
+        ${b.righe.length ? `<details><summary>Rullo per rullo</summary>${carteRulli(b.righe)}</details>` : ""}
+      </section>`).join("");
+    scriviPiede();
   }catch(err){
     console.error(err);
     avviso("Errore nel caricare la giornata: "+(err.message||err), true);
   }
 }
 
-function disegna(righe, sv){
-  const somma = c => righe.reduce((s,r)=>s+(c(r)||0), 0);
-  const tFoto    = somma(r=>r.foto);
-  const tStampe  = somma(r=>stampeGiornata(r));
-  const tEsport  = somma(r=>r.esportate);
-  const tFile    = somma(r=>r.file);
-  const tOmaggi  = somma(r=>r.omaggi);
-  const tScarti  = somma(r=>r.scarti);
-  const tVendute = somma(r=>venduteRullo(r));
+/* --- i numeri di una giornata (di una sede): una riga per rullo ---------------- */
+async function datiGiornata(sv){
+  const {data:rulli, error:e1} = await sb.from("rulli")
+    .select("id,lettera,descrizione,omaggi,scarti,file_venduti").eq("servizio_id", sv.id);
+  if(e1) throw e1;
+  if(!rulli || !rulli.length) return [];
 
-  const testa = `
+  /* Le foto si contano a pagine: una giornata piena supera il limite di righe che il
+     cloud restituisce in una volta, e senza paginazione i numeri uscirebbero tagliati. */
+  const perRullo = {};
+  rulli.forEach(r=> perRullo[r.id] = {
+    lettera:r.lettera, desc:r.descrizione||"", foto:0, stampe:0, esportate:0,
+    omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file_venduti||0, fuori:0
+  });
+  const ids = rulli.map(r=>r.id);
+  let da = 0;
+  for(;;){
+    const {data:foto, error:e2} = await sb.from("foto")
+      .select("rullo_id,stampe,esportata").in("rullo_id", ids).range(da, da+999);
+    if(e2) throw e2;
+    (foto||[]).forEach(f=>{
+      const r = perRullo[f.rullo_id]; if(!r) return;
+      r.foto++; r.stampe += (f.stampe||0); if(f.esportata) r.esportate++;
+    });
+    if(!foto || foto.length < 1000) break;
+    da += 1000;
+    if(da > 20000) break;               // rete di sicurezza
+  }
+
+  /* Ristampe fatte in un ALTRO giorno su foto di questa giornata: vanno tolte, come nel
+     report del PC, altrimenti le vendute risultano gonfiate. */
+  const {data:stampe} = await sb.from("attivita")
+    .select("rullo_lettera,quante,dettaglio").eq("servizio_id", sv.id).eq("azione","~stampa");
+  (stampe||[]).forEach(a=>{
+    const m = /giorno=(\d{4}-\d{2}-\d{2})/.exec(a.dettaglio||"");
+    if(!m || m[1] === sv.data_servizio) return;
+    const r = Object.values(perRullo).find(x=>x.lettera === a.rullo_lettera);
+    if(r) r.fuori += (a.quante||0);
+  });
+
+  return Object.values(perRullo).sort((a,b)=>a.lettera.localeCompare(b.lettera));
+}
+
+async function carica(sid){
+  const sv = servizi.find(s=>String(s.id)===String(sid));
+  if(!sv) return;
+  avviso("Carico…");
+  $("hSub").textContent = "sola lettura · " + dataLunga(sv.data_servizio);
+  try{
+    const righe = await datiGiornata(sv);
+    mostrati = [{sede: sede ? sede.nome : "", data: sv.data_servizio, righe}];
+    if(!righe.length){ avviso("Nessun rullo in questa giornata."); $("piede").textContent=""; return; }
+    $("corpo").innerHTML = riquadroTotali(righe) + carteRulli(righe);
+    scriviPiede();
+  }catch(err){
+    console.error(err);
+    avviso("Errore nel caricare la giornata: "+(err.message||err), true);
+  }
+}
+
+function riquadroTotali(righe){
+  const somma = c => righe.reduce((s,r)=>s+(c(r)||0), 0);
+  return `
     <div class="tot">
       <div class="etichetta">Vendute</div>
-      <div class="grande">${tVendute}</div>
+      <div class="grande">${somma(r=>venduteRullo(r))}</div>
       <div class="griglia">
-        <div><b>${tFoto}</b><span>foto</span></div>
-        <div><b>${tStampe}</b><span>stampe</span></div>
-        <div><b>${tFile}</b><span>file venduti</span></div>
-        <div><b>${tEsport}</b><span>esportate</span></div>
-        <div><b>${tOmaggi}</b><span>omaggi</span></div>
-        <div><b>${tScarti}</b><span>scarti</span></div>
+        <div><b>${somma(r=>r.foto)}</b><span>foto</span></div>
+        <div><b>${somma(r=>stampeGiornata(r))}</b><span>stampe</span></div>
+        <div><b>${somma(r=>r.file)}</b><span>file venduti</span></div>
+        <div><b>${somma(r=>r.esportate)}</b><span>esportate</span></div>
+        <div><b>${somma(r=>r.omaggi)}</b><span>omaggi</span></div>
+        <div><b>${somma(r=>r.scarti)}</b><span>scarti</span></div>
       </div>
     </div>`;
-
-  const carte = righe.map(r=>{
+}
+function carteRulli(righe){
+  return righe.map(r=>{
     const voci = [
       `<span class="voce">${r.foto} <s>foto</s></span>`,
       `<span class="voce">🖨 ${stampeGiornata(r)} <s>stampe</s></span>`,
@@ -277,11 +362,231 @@ function disegna(righe, sv){
       <div class="voci">${voci}</div>
     </div>`;
   }).join("");
-
-  $("corpo").innerHTML = testa + carte;
+}
+function scriviPiede(){
   $("piede").textContent = "aggiornato alle " +
     new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}) +
-    " · vendute = stampe − omaggi − scarti + file";
+    " · vendute = stampe − omaggi − scarti + file · versione " + VERSIONE;
+}
+
+function salvaPdf(){
+  if(!mostrati.length){ alert("Non c'è niente da salvare: scegli una giornata."); return; }
+  const blocchi = mostrati.map(m=>({
+    sede: m.sede, giorno: dataLunga(m.data, true), dentro: [],
+    righe: m.righe.map(r=>({lettera:r.lettera, desc:r.desc, foto:r.foto, stampe:stampeGiornata(r), fuori:r.fuori||0,
+                            omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0, vendute:venduteRullo(r)}))
+  }));
+  const tutte = blocchi.length > 1 || $("selSede").value === TUTTE;
+  const byte = pdfReport(tutte ? "Report per sede" : "Report giornata", blocchi);
+  scaricaPdf(byte, nomeFilePdf(tutte ? ["tutte_le_sedi", mostrati[0].data] : [mostrati[0].sede, mostrati[0].data]));
+}
+
+/* =====================================================================
+   PDF DEL REPORT, SENZA LIBRERIE (25 nov 2026)
+   Perché a mano: Chrome di Fay Live parte con --kiosk-printing, quindi "Stampa" finisce
+   dritto sulla DNP senza chiedere niente — niente "Salva come PDF". E in piscina spesso
+   non c'è internet per scaricare una libreria. Qui si scrive il file PDF direttamente:
+   testo Helvetica, righe e riquadri, nient'altro. Finisce nei Download, da inviare
+   quando torna la linea.
+   La stessa identica parte sta in pc.html e in report.html: se cambia di qua, va
+   cambiata anche di là.
+   ===================================================================== */
+function creaPdf(){
+  const W = 595.28, H = 841.89;               // A4 verticale, in punti
+  const pagine = []; let cur = null;
+  const SPECIALI = {0x2014:0x97, 0x2013:0x96, 0x20AC:0x80, 0x2019:0x92, 0x2018:0x91,
+                    0x201C:0x93, 0x201D:0x94, 0x2022:0x95, 0x2026:0x85, 0x2212:0x2D, 0x00B7:0xB7};
+  const enc = s => {
+    let o = "";
+    for(const ch of String(s==null?"":s)){
+      let c = ch.codePointAt(0);
+      if(SPECIALI[c]) c = SPECIALI[c];
+      else if(c > 255 || (c < 32)) c = 0x3F;   // simboli che Helvetica non ha: "?"
+      const x = String.fromCharCode(c);
+      o += (x==="(" || x===")" || x==="\\") ? "\\"+x : x;
+    }
+    return o;
+  };
+  const n = v => (Math.round(v*100)/100).toString();
+  const api = {
+    W, H, pagine,
+    nuovaPagina(){ cur = []; pagine.push(cur); return api; },
+    /* y si conta dall'alto (come sullo schermo), è la riga di base del testo */
+    testo(x, y, s, size, bold, grigio){
+      const g = grigio==null ? 0 : grigio;
+      cur.push(`q ${g} g BT /${bold?"F2":"F1"} ${size} Tf ${n(x)} ${n(H-y)} Td (${enc(s)}) Tj ET Q`);
+    },
+    destra(xDestra, y, s, size, bold, grigio){
+      api.testo(xDestra - api.larghezza(s, size, bold), y, s, size, bold, grigio);
+    },
+    /* larghezza approssimata: esatta per le cifre (tutte uguali in Helvetica), stimata per il resto */
+    larghezza(s, size, bold){
+      let w = 0;
+      for(const ch of String(s)){
+        if(/[0-9]/.test(ch)) w += 556;
+        else if(ch===" ") w += 278;
+        else if(/[.,:;'!|il]/.test(ch)) w += 278;
+        else if(/[mwMW]/.test(ch)) w += 833;
+        else if(/[A-Z]/.test(ch)) w += bold ? 722 : 667;
+        else w += bold ? 584 : 556;
+      }
+      return w * size / 1000;
+    },
+    taglia(s, size, bold, max){
+      s = String(s||"");
+      if(api.larghezza(s, size, bold) <= max) return s;
+      while(s.length > 1 && api.larghezza(s+"…", size, bold) > max) s = s.slice(0,-1);
+      return s.trimEnd() + "…";
+    },
+    linea(x1, y1, x2, y2, spessore, grigio){
+      cur.push(`q ${grigio==null?0.6:grigio} G ${spessore||0.5} w ${n(x1)} ${n(H-y1)} m ${n(x2)} ${n(H-y2)} l S Q`);
+    },
+    riquadro(x, y, w, h, grigio){            // y = bordo alto
+      cur.push(`q ${grigio==null?0.93:grigio} g ${n(x)} ${n(H-y-h)} ${n(w)} ${n(h)} re f Q`);
+    },
+    byte(){
+      const ogg = [];
+      const add = s => { ogg.push(s); return ogg.length; };
+      add("<< /Type /Catalog /Pages 2 0 R >>");
+      add("");                                // 2 = elenco pagine, riempito dopo
+      add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+      add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+      const figli = [];
+      pagine.forEach(p=>{
+        const flusso = p.join("\n");
+        const c = add(`<< /Length ${flusso.length} >>\nstream\n${flusso}\nendstream`);
+        figli.push(add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] ` +
+                       `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${c} 0 R >>`));
+      });
+      ogg[1] = `<< /Type /Pages /Kids [${figli.map(k=>k+" 0 R").join(" ")}] /Count ${figli.length} >>`;
+      let out = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+      const pos = [];
+      ogg.forEach((o,i)=>{ pos.push(out.length); out += `${i+1} 0 obj\n${o}\nendobj\n`; });
+      const xref = out.length;
+      out += `xref\n0 ${ogg.length+1}\n0000000000 65535 f \n` +
+             pos.map(p=>String(p).padStart(10,"0")+" 00000 n \n").join("");
+      out += `trailer\n<< /Size ${ogg.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+      const b = new Uint8Array(out.length);
+      for(let i=0;i<out.length;i++) b[i] = out.charCodeAt(i) & 255;
+      return b;
+    }
+  };
+  return api;
+}
+
+/* Un PDF con una o più giornate, ognuna dalla sua pagina.
+   blocchi: [{ sede, giorno, righe:[{lettera, desc, foto, stampe, fuori, omaggi, scarti, file, vendute}],
+               dentro:[{giorno, fogli}] }]
+   "stampe" sono già quelle DELLA GIORNATA (ristampe di altri giorni tolte), come in tabella. */
+function pdfReport(titolo, blocchi, sotto){
+  const pdf = creaPdf();
+  const M = 40, DX = pdf.W - M, FONDO = pdf.H - 56;
+  const fatto = new Date().toLocaleString("it-IT", {day:"numeric", month:"long", year:"numeric", hour:"2-digit", minute:"2-digit"});
+  const COL = [
+    {t:"Rullo",    x:M,      l:true},
+    {t:"Descrizione", x:M+40, l:true},
+    {t:"Foto",     x:292},
+    {t:"Stampe",   x:336},
+    {t:"Altri gg", x:381},
+    {t:"Omaggi",   x:424},
+    {t:"Scarti",   x:464},
+    {t:"File",     x:498},
+    {t:"Vendute",  x:DX}
+  ];
+  let y = 0;
+  const pagina = ()=>{
+    pdf.nuovaPagina();
+    pdf.testo(M, 30, "Fay Live — " + titolo, 8, false, 0.45);
+    pdf.destra(DX, 30, "creato il " + fatto, 8, false, 0.45);
+    pdf.linea(M, 36, DX, 36, 0.4, 0.75);
+    y = 62;
+  };
+  const testaTabella = ()=>{
+    pdf.riquadro(M-4, y-12, DX-M+8, 18, 0.9);
+    COL.forEach(c=> c.l ? pdf.testo(c.x, y, c.t, 8.5, true) : pdf.destra(c.x, y, c.t, 8.5, true));
+    y += 18;
+  };
+  const riga = (r, grassetto)=>{
+    if(y > FONDO){ pagina(); testaTabella(); }
+    const v = [r.lettera, r.desc||"", r.foto, r.stampe, r.fuori ? r.fuori : "—", r.omaggi, r.scarti, r.file, r.vendute];
+    COL.forEach((c,i)=>{
+      const s = String(v[i]);
+      if(i===1) pdf.testo(c.x, y, pdf.taglia(s, 9, false, 150), 9, false, 0.3);
+      else if(c.l) pdf.testo(c.x, y, s, 9.5, true);
+      else pdf.destra(c.x, y, s, 9.5, grassetto || i===8, i===4 ? 0.45 : 0);
+    });
+    pdf.linea(M-4, y+5, DX+4, y+5, 0.3, 0.8);
+    y += 17;
+  };
+
+  blocchi.forEach(b=>{
+    pagina();
+    pdf.testo(M, y, b.sede || "—", 20, true); y += 18;
+    pdf.testo(M, y, b.giorno || "", 11, false, 0.35); y += 22;
+
+    const somma = c => b.righe.reduce((s,r)=> s + (Number(r[c])||0), 0);
+    const T = {foto:somma("foto"), stampe:somma("stampe"), fuori:somma("fuori"), omaggi:somma("omaggi"),
+               scarti:somma("scarti"), file:somma("file"), vendute:somma("vendute")};
+
+    // riquadro dei totali
+    pdf.riquadro(M-4, y, DX-M+8, 62, 0.94);
+    pdf.testo(M+8, y+18, "VENDUTE", 8.5, true, 0.4);
+    pdf.testo(M+8, y+48, String(T.vendute), 28, true);
+    const voci = [["foto",T.foto],["stampe",T.stampe],["file venduti",T.file],["omaggi",T.omaggi],["scarti",T.scarti],["altri giorni",T.fuori]];
+    voci.forEach((vv,i)=>{
+      const x = 170 + (i%3)*130, yy = y + 24 + Math.floor(i/3)*24;
+      pdf.testo(x, yy, String(vv[1]), 13, true);
+      pdf.testo(x + pdf.larghezza(String(vv[1]),13,true) + 5, yy, vv[0], 9, false, 0.4);
+    });
+    y += 86;
+
+    if(!b.righe.length){
+      pdf.testo(M, y, "Nessun rullo in questa giornata.", 10, false, 0.4); y += 20;
+    } else {
+      testaTabella();
+      b.righe.forEach(r=> riga(r));
+      y += 2;
+      riga({lettera:"TOT", desc:"", foto:T.foto, stampe:T.stampe, fuori:T.fuori, omaggi:T.omaggi,
+            scarti:T.scarti, file:T.file, vendute:T.vendute}, true);
+    }
+
+    if(b.dentro && b.dentro.length){
+      y += 12;
+      if(y > FONDO - 40) pagina();
+      pdf.testo(M, y, "Stampe di questa serata su foto di altre giornate", 10.5, true); y += 16;
+      b.dentro.forEach(d=>{
+        if(y > FONDO) pagina();
+        pdf.testo(M+8, y, d.giorno + ": " + d.fogli + " fogli", 9.5); y += 14;
+      });
+      pdf.testo(M+8, y, "Non sono nella tabella qui sopra: contano nel report di quelle giornate (colonna Altri gg).", 8.5, false, 0.45);
+      y += 14;
+    }
+
+    y += 14;
+    if(y > FONDO) pagina();
+    pdf.testo(M, y, "Vendute = stampe della giornata − omaggi − scarti + file venduti.", 8.5, false, 0.45); y += 12;
+    pdf.testo(M, y, "Altri gg = fogli di questa giornata stampati in un altro giorno: contano in quel giorno, non qui.", 8.5, false, 0.45); y += 12;
+    if(sotto){ pdf.testo(M, y, sotto, 8.5, false, 0.45); y += 12; }
+  });
+
+  // numero di pagina, aggiunto alla fine quando si sa quante sono
+  pdf.pagine.forEach((p,i)=>{
+    const s = `pagina ${i+1} di ${pdf.pagine.length}`;
+    p.push(`q 0.45 g BT /F1 8 Tf ${(pdf.W - M - pdf.larghezza(s,8)).toFixed(2)} 24 Td (${s}) Tj ET Q`);
+  });
+  return pdf.byte();
+}
+
+function nomeFilePdf(parti){
+  return "Report_" + parti.map(p=>String(p||"").normalize("NFD").replace(/[̀-ͯ]/g,"")
+                                   .replace(/[^\w-]+/g,"_").replace(/^_+|_+$/g,"")).filter(Boolean).join("_") + ".pdf";
+}
+function scaricaPdf(byte, nome){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([byte], {type:"application/pdf"}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
 }
 
 avvia();
