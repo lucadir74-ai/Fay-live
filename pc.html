@@ -888,6 +888,16 @@
   </div>
 </dialog>
 
+<dialog id="exportDirDlg" style="max-width:480px">
+  <h3 style="margin-bottom:10px">Cartella export</h3>
+  <p id="exportDirText" style="margin-bottom:8px"></p>
+  <p class="hint" style="margin-bottom:16px">Sceglila di nuovo (anche la stessa): da lì in poi le foto esportate finiscono lì.</p>
+  <div style="display:flex;gap:10px;justify-content:flex-end">
+    <button id="exportDirNo">Annulla</button>
+    <button id="exportDirScegli" class="primary">Scegli la cartella</button>
+  </div>
+</dialog>
+
 <dialog id="spazioDlg" style="max-width:640px;width:92vw">
   <h3 style="margin-bottom:12px">Spazio sul cloud</h3>
   <div id="spazioBody"></div>
@@ -2878,9 +2888,38 @@ $("stExport").onclick = async ()=>{
     try{ await showOpenFilePicker({startIn: state.exportDir, multiple:true}); }catch(_){}
     return;
   }
-  const d = await ensureExportDir();
+  if(!window.showDirectoryPicker){ toast("Questo browser non sa usare una cartella: le foto vanno in Download"); return; }
+  const saved = await idb.get("exportDir").catch(()=>null);
+  if(!saved){                                   // mai collegata: si sceglie subito
+    const d = await ensureExportDir(true);
+    if(d) toast(`Export in "${d.name}" — clicca di nuovo per aprire la cartella`);
+    return;
+  }
+  /* Cartella ricordata ma "da riattivare". Prima, se Chrome negava il permesso (succede
+     dopo averlo chiuso qualche volta senza rispondere) o la cartella non c'era più, il
+     clic non faceva niente e non diceva niente. */
+  let perm = "denied", errore = "";
+  try{
+    perm = await saved.queryPermission({mode:"readwrite"});
+    if(perm!=="granted") perm = await saved.requestPermission({mode:"readwrite"});
+  }catch(err){ errore = (err && err.name) || "errore"; console.warn("riattiva export", err); }
+  if(perm==="granted"){
+    state.exportDir = saved; segnaExport(saved.name, true);
+    toast(`Export riattivato su "${saved.name}" — clicca di nuovo per aprire la cartella`);
+    return;
+  }
+  $("exportDirText").textContent = errore==="NotFoundError"
+    ? `La cartella "${saved.name}" non si trova più (spostata, rinominata o cancellata).`
+    : `Chrome non ha dato il permesso di scrivere nella cartella "${saved.name}".`;
+  $("exportDirDlg").showModal();
+};
+// il clic su questo tasto è il "gesto" che Chrome pretende per aprire la scelta della cartella
+$("exportDirScegli").onclick = async ()=>{
+  $("exportDirDlg").close();
+  const d = await ensureExportDir(true);
   if(d) toast(`Export in "${d.name}" — clicca di nuovo per aprire la cartella`);
 };
+$("exportDirNo").onclick = ()=> $("exportDirDlg").close();
 idb.get("exportDir").then(h=>{ if(h) segnaExport(h.name, false); }).catch(()=>{});
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
 idb.get("archiveDir").then(h=>{ if(h && !state.archive) segnaArchivio(h.name, false); }).catch(()=>{});
@@ -8469,7 +8508,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (3)";
+const VERSIONE = "26 nov 2026 (4)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
