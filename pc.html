@@ -648,7 +648,7 @@
     <span id="stArchPath" style="color:var(--muted);font-family:var(--mono);font-size:11px" hidden></span>
     <span>Anteprime cloud: <b id="stThumbCloud" style="cursor:pointer" title="Clicca per ricaricare le anteprime mancanti">—</b></span>
     <span id="stOrigWrap" hidden>Originali: <b id="stOrigCloud" title="Compare solo quando qualche foto non è stampabile in alta qualità">—</b></span>
-    <span>Export: <b id="stExport" style="cursor:pointer" title="Clicca per scegliere o riattivare la cartella di esportazione">Download</b></span>
+    <span>Export: <b id="stExport" style="cursor:pointer;text-decoration:underline dotted" title="Clicca per aprire la cartella di esportazione (o per collegarla / riattivarla). Per cambiarla: Altro → Cartella export…">Download</b></span>
     <span id="stArrivo" hidden style="color:var(--accent);font-weight:700"></span>
     <span id="stRipristino" hidden style="color:var(--accent);font-weight:700;cursor:pointer" title="Clicca per fermare il ripristino"></span>
     <b id="stThumbs" hidden></b>
@@ -2870,9 +2870,16 @@ $("btnExportDir").onclick = async ()=>{
 /* Un clic sulla voce Export riattiva la cartella ricordata (il permesso scade a ogni
    ricarica) senza dover passare dal menu: il gesto del clic è proprio quello che Chrome
    pretende per riconcedere l'accesso. */
+/* Con la cartella già attiva, il clic la APRE: il browser non può aprire Esplora file,
+   ma può aprire la finestra di Windows "Apri" posizionata dentro la cartella, dove si
+   vedono le foto esportate (e in alto il percorso). Quello che si sceglie lì viene ignorato. */
 $("stExport").onclick = async ()=>{
+  if(state.exportDir && window.showOpenFilePicker){
+    try{ await showOpenFilePicker({startIn: state.exportDir, multiple:true}); }catch(_){}
+    return;
+  }
   const d = await ensureExportDir();
-  if(d) toast(`Export in "${d.name}"`);
+  if(d) toast(`Export in "${d.name}" — clicca di nuovo per aprire la cartella`);
 };
 idb.get("exportDir").then(h=>{ if(h) segnaExport(h.name, false); }).catch(()=>{});
 // all'avvio mostra la cartella ricordata (si riattiva al primo import)
@@ -8462,7 +8469,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (2)";
+const VERSIONE = "26 nov 2026 (3)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
