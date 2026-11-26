@@ -888,6 +888,12 @@
   </div>
 </dialog>
 
+<!-- DIAGNOSI EXPORT (temporanea) -->
+<div id="diagExport" hidden style="position:fixed;right:12px;bottom:60px;z-index:99998;width:560px;max-height:40vh;overflow:auto;background:#0b0e14;border:2px solid var(--accent);border-radius:10px;padding:10px;font:12px/1.45 var(--mono);color:#E8ECF4">
+  <div style="display:flex;justify-content:space-between;margin-bottom:6px"><b>Diagnosi Export</b><button onclick="this.closest('#diagExport').hidden=true">Chiudi</button></div>
+  <pre id="diagExportTesto" style="white-space:pre-wrap;margin:0"></pre>
+</div>
+
 <dialog id="exportDirDlg" style="max-width:480px">
   <h3 style="margin-bottom:10px">Cartella export</h3>
   <p id="exportDirText" style="margin-bottom:8px"></p>
@@ -2883,15 +2889,36 @@ $("btnExportDir").onclick = async ()=>{
 /* Con la cartella già attiva, il clic la APRE: il browser non può aprire Esplora file,
    ma può aprire la finestra di Windows "Apri" posizionata dentro la cartella, dove si
    vedono le foto esportate (e in alto il percorso). Quello che si sceglie lì viene ignorato. */
+/* DIAGNOSI EXPORT (temporanea): ogni passo del clic finisce in un riquadro a schermo e nella
+   memoria locale di Chrome (chiave faylive_diag_export), così si vede dove si ferma. */
+function diagExport(msg){
+  const att = navigator.userActivation ? (navigator.userActivation.isActive ? " [gesto ok]" : " [gesto scaduto]") : "";
+  const riga = new Date().toLocaleTimeString("it-IT") + " " + msg + att;
+  console.log("[export]", riga);
+  try{ const k="faylive_diag_export"; const v=(localStorage.getItem(k)||"").split("\n").filter(Boolean).slice(-60); v.push(riga); localStorage.setItem(k, v.join("\n")); }catch(_){}
+  const b = $("diagExport"); if(b){ b.hidden = false; $("diagExportTesto").textContent += riga + "\n"; }
+}
+document.addEventListener("click", e=>{
+  if(!e.target.closest || !e.target.closest("#statusBar")) return;
+  const sotto = document.elementFromPoint(e.clientX, e.clientY);
+  diagExport(`clic sulla barra in basso: su "${e.target.id||e.target.tagName}", in quel punto c'è "${sotto ? (sotto.id||sotto.tagName) : "niente"}"`);
+}, true);
 $("stExport").onclick = async ()=>{
+  diagExport(`1. clic su Export ricevuto. Cartella attiva: ${state.exportDir ? state.exportDir.name : "nessuna"}; ` +
+             `showDirectoryPicker: ${!!window.showDirectoryPicker}; showOpenFilePicker: ${!!window.showOpenFilePicker}`);
+  try{
   if(state.exportDir && window.showOpenFilePicker){
-    try{ await showOpenFilePicker({startIn: state.exportDir, multiple:true}); }catch(_){}
+    diagExport("2. apro la finestra Apri dentro la cartella");
+    try{ await showOpenFilePicker({startIn: state.exportDir, multiple:true}); diagExport("3. finestra Apri chiusa"); }
+    catch(err){ diagExport(`3. finestra Apri: ${err && err.name}: ${err && err.message}`); }
     return;
   }
   if(!window.showDirectoryPicker){ toast("Questo browser non sa usare una cartella: le foto vanno in Download"); return; }
-  const saved = await idb.get("exportDir").catch(()=>null);
+  const saved = await idb.get("exportDir").catch(err=>{ diagExport(`2. errore lettura cartella ricordata: ${err && err.message}`); return null; });
+  diagExport(`2. cartella ricordata: ${saved ? '"' + saved.name + '" (' + (saved.kind||"?") + ")" : "nessuna"}`);
   if(!saved){                                   // mai collegata: si sceglie subito
     const d = await ensureExportDir(true);
+    diagExport(`3. scelta cartella: ${d ? d.name : "nessuna scelta (annullato o errore)"}`);
     if(d) toast(`Export in "${d.name}" — clicca di nuovo per aprire la cartella`);
     return;
   }
@@ -2901,8 +2928,13 @@ $("stExport").onclick = async ()=>{
   let perm = "denied", errore = "";
   try{
     perm = await saved.queryPermission({mode:"readwrite"});
-    if(perm!=="granted") perm = await saved.requestPermission({mode:"readwrite"});
-  }catch(err){ errore = (err && err.name) || "errore"; console.warn("riattiva export", err); }
+    diagExport(`3. permesso attuale: ${perm}`);
+    if(perm!=="granted"){
+      diagExport("4. chiedo il permesso a Chrome…");
+      perm = await saved.requestPermission({mode:"readwrite"});
+      diagExport(`5. risposta di Chrome: ${perm}`);
+    }
+  }catch(err){ errore = (err && err.name) || "errore"; diagExport(`errore sul permesso: ${errore}: ${err && err.message}`); }
   if(perm==="granted"){
     state.exportDir = saved; segnaExport(saved.name, true);
     toast(`Export riattivato su "${saved.name}" — clicca di nuovo per aprire la cartella`);
@@ -2911,12 +2943,16 @@ $("stExport").onclick = async ()=>{
   $("exportDirText").textContent = errore==="NotFoundError"
     ? `La cartella "${saved.name}" non si trova più (spostata, rinominata o cancellata).`
     : `Chrome non ha dato il permesso di scrivere nella cartella "${saved.name}".`;
+  diagExport("6. mostro la finestra Cartella export");
   $("exportDirDlg").showModal();
+  }catch(err){ diagExport(`ERRORE IMPREVISTO: ${err && err.name}: ${err && err.message}`); }
 };
 // il clic su questo tasto è il "gesto" che Chrome pretende per aprire la scelta della cartella
 $("exportDirScegli").onclick = async ()=>{
   $("exportDirDlg").close();
+  diagExport("7. premuto Scegli la cartella");
   const d = await ensureExportDir(true);
+  diagExport(`8. scelta cartella: ${d ? d.name : "nessuna scelta (annullato o errore)"}`);
   if(d) toast(`Export in "${d.name}" — clicca di nuovo per aprire la cartella`);
 };
 $("exportDirNo").onclick = ()=> $("exportDirDlg").close();
@@ -4933,15 +4969,16 @@ async function ensureExportDir(forza){
         if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
         if(perm==="granted"){ state.exportDir=saved; segnaExport(saved.name, true); return saved; }
       }
-    }catch(_){}
+    }catch(err){ diagExport(`riattivazione cartella ricordata: ${err && err.name}: ${err && err.message}`); }
   }
   toast(forza ? "Scegli la nuova cartella di esportazione" : "Scegli la cartella dove salvare le foto esportate (una volta sola)");
   try{
+    diagExport("apro la scelta della cartella di Windows");
     state.exportDir = await showDirectoryPicker({mode:"readwrite"});
     segnaExport(state.exportDir.name, true);
     idb.set("exportDir", state.exportDir).catch(()=>{});
     return state.exportDir;
-  }catch(_){ return null; }
+  }catch(err){ diagExport(`scelta cartella: ${err && err.name}: ${err && err.message}`); return null; }
 }
 /* La voce Export della barra di stato dice sempre dove finiscono i file, e soprattutto
    avvisa quando la cartella è ricordata ma il permesso è scaduto (succede a ogni
@@ -8526,7 +8563,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (5)";
+const VERSIONE = "26 nov 2026 (6 diagnosi)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
