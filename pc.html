@@ -4279,15 +4279,19 @@ const CONTI_MODI = {
   scarti: { titolo:"🗑 Scarto",  hint:"Quante stampe di ogni foto sono venute male e le hai buttate?", tasto:n=>`Segna ${n} ${n===1?"scarto":"scarti"}` },
   meno:   { titolo:"➖ Togli stampa", hint:"Quante stampe togliere dal contatore (la stampa era stata annullata e non è uscita)?", tasto:n=>`Togli ${n} ${n===1?"stampa":"stampe"}` }
 };
-function contiMax(p){ return conti.modo==="meno" ? (p.prints||0) : 20; }
+/* Omaggi, scarti e stampe tolte non possono superare le stampe della foto: prima si potevano
+   segnare omaggi su foto mai stampate e il report mostrava nulle senza stampe. */
+function contiMax(p){ return p.prints||0; }
 function contiTot(){ let t=0; conti.n.forEach(v=>t+=v); return t; }
 /* Omaggio e Scarto si aprono dalla barra di selezione; Togli stampa (raro: stampa annullata)
    sta nel menù Altro della foto aperta e vale solo per quella. */
 function contiApri(modo, set){
   set = set || selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  const lista = modo==="meno" ? set.filter(p=>(p.prints||0)>0) : set;
+  const lista = set.filter(p=>(p.prints||0)>0);     // solo le foto stampate
   if(!lista.length){ toast(set.length===1 ? "Questa foto non risulta stampata" : "Queste foto non risultano stampate"); return; }
+  const escluse = set.length - lista.length;
+  if(escluse) toast(`${escluse} ${escluse===1?"foto non stampata è esclusa":"foto non stampate sono escluse"}`, 4000);
   conti.set = lista; conti.modo = modo;
   conti.n = new Map(lista.map(p=>[p, lista.length===1 ? 1 : 0]));   // una sola foto: già pronta
   contiDisegna();
@@ -4308,7 +4312,7 @@ function contiDisegna(){
     const nome = document.createElement("div"); nome.style.cssText = "flex:1;min-width:0";
     const cod = document.createElement("b"); cod.textContent = p.code;
     nome.appendChild(cod);
-    if(conti.modo==="meno"){
+    {
       const s = document.createElement("div"); s.className = "hint";
       s.textContent = `stampata ${p.prints} ${p.prints===1?"volta":"volte"}`;
       nome.appendChild(s);
@@ -7535,7 +7539,7 @@ async function apriStats(){
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
-    h += `<tr>
+    h += `<tr data-riga="${k}">
       <td style="padding:6px 10px;border-top:1px solid var(--line);font-weight:700">${k}</td>
       <td ${td}>${r.foto}</td><td ${td}>${stampeGiornata(r)}</td>
       <td ${td} style="text-align:right;padding:6px 10px;border-top:1px solid var(--line);color:var(--muted)">${r.fuori? r.fuori : "—"}</td>
@@ -7554,7 +7558,8 @@ async function apriStats(){
       <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
     <p style="color:var(--muted);font-size:12.5px;margin-top:8px">
       Omaggi, scarti e file si segnano durante il servizio e qui si possono correggere.
-      <b>Vendute</b> = stampe − omaggi − scarti + file.</p>`;
+      <b>Vendute</b> = stampe − omaggi − scarti + file.</p>
+    <p id="statsAvviso" style="color:var(--danger);font-size:12.5px;margin-top:6px" hidden></p>`;
 
   /* Il rovescio della medaglia: quello che è uscito dalla stampante IN QUESTA serata ma
      appartiene alle foto di altre giornate. Sta qui perché è lavoro di questa serata. */
@@ -7580,6 +7585,7 @@ async function apriStats(){
       aggiornaVendute();
     };
   });
+  segnaRigheTroppe(righe);
   $("statsDlg").showModal();
   /* La finestra mette da sola il cursore nella prima casella (Omaggi): un numero digitato
      per sbaglio diventava una correzione. Nessun cursore finché non clicchi una casella. */
@@ -7656,6 +7662,22 @@ function aggiornaVendute(){
   set("stTotStampe", Object.keys(righe).reduce((a,k)=>a+stampeGiornata(righe[k]),0));
   set("stTotOm", tO); set("stTotSc", tSc); set("stTotNulle", tO+tSc);
   set("stTotFile", tF); set("stTotVen", tV);
+  segnaRigheTroppe(righe);
+}
+/* Omaggi + scarti più delle stampe: numeri sbagliati (segnati per prova, o corretti male).
+   La riga diventa rossa e sotto la tabella si dice quale rullo controllare. */
+function segnaRigheTroppe(righe){
+  const troppe = [];
+  Object.keys(righe).forEach(k=>{
+    const r = righe[k], nulle = (r.omaggi||0)+(r.scarti||0), st = stampeGiornata(r);
+    const tr = $("statsBody").querySelector(`tr[data-riga="${k}"]`);
+    const male = nulle > st;
+    if(tr) tr.style.background = male ? "rgba(229,72,77,.18)" : "";
+    if(male) troppe.push(`rullo ${k} (${nulle} tra omaggi e scarti, ma ${st} ${st===1?"stampa":"stampe"})`);
+  });
+  const av = $("statsAvviso"); if(!av) return;
+  av.hidden = !troppe.length;
+  av.textContent = troppe.length ? "⚠ Omaggi e scarti superano le stampe: " + troppe.join("; ") + ". Controlla i numeri." : "";
 }
 $("btnStats").onclick = ()=>{ $("toolsMenu").hidden=true; toast("Preparo il report…"); apriStats(); };
 $("statsClose").onclick = ()=> $("statsDlg").close();
