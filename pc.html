@@ -27,6 +27,9 @@
   header{position:relative;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
   #toolsMenu{position:absolute;top:52px;right:16px;z-index:30;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:230px;max-height:calc(100vh - 70px);overflow-y:auto;overscroll-behavior:contain;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
   #toolsMenu button{flex:0 0 auto}
+  /* Omaggio e Scarto: fondo giallino della stessa tinta del bordo, per trovarli al volo */
+  #selOmaggi,#selScarti{background:rgba(245,185,66,.22);border-color:rgba(245,185,66,.6)}
+  #selOmaggi:hover,#selScarti:hover{background:rgba(245,185,66,.32)}
   #toolsMenu[hidden]{display:none}
   #toolsMenu button{text-align:left;width:100%}
   #toolsMenu hr{border:none;border-top:1px solid var(--line);margin:2px 0}
@@ -4112,8 +4115,15 @@ function resetSearch(){
   $("searchBox").focus();   // il cursore resta pronto per il codice successivo
 }
 $("searchBox").addEventListener("keydown", e=>{
+  // "/" porta qui il cursore: se c'è già, seleziona il testo invece di scriverlo
+  if(e.key==="/"){ e.preventDefault(); e.stopPropagation(); e.target.select(); return; }
+  // esc svuota la casella e poi fa il suo solito lavoro (chiude la foto, ecc.)
+  if(e.key==="Escape"){ if(e.target.value) resetSearch(); return; }
   if(e.key==="Enter"){
+    // casella vuota: invio fa quello che fa dalla griglia (lo gestisce la tastiera generale)
+    if(!e.target.value.trim()) return;
     e.preventDefault();
+    e.stopPropagation();
     const q = parseCodes(e.target.value);
     const aperta = $("lightbox").classList.contains("open");
     // la casella ripete il codice della foto già aperta (ce lo scrivono le frecce):
@@ -4158,14 +4168,14 @@ $("searchBox").addEventListener("keydown", e=>{
      finivano scritti dentro come testo: "-" scriveva un trattino invece di mandare la
      foto sul monitor. Qui i comandi della foto aperta valgono lo stesso. */
   if($("lightbox").classList.contains("open") && (e.key==="-" || e.key==="+")){
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     if(e.key==="-") $("lbShow").click();
     else { const M=state.monitor; if(M.mode==="present" || M.mode==="mosaic"){ backToSlideshow(); toast("Tolta dal monitor — slideshow ripreso"); } }
     return;
   }
   // col cursore ancora nella casella, le frecce scorrono comunque le foto aperte
   if($("lightbox").classList.contains("open") && (e.key==="ArrowRight" || e.key==="ArrowLeft")){
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     $(e.key==="ArrowRight" ? "lbNext" : "lbPrev").click();
     const p = fotoAperta();
     if(p) $("searchBox").value = p.code;   // la casella segue la foto, senza rilanciare la ricerca
@@ -6514,9 +6524,15 @@ function backToSlideshow(){ const M=state.monitor; if(M.win && !M.win.closed) st
 
 /* ---------- tastiera ---------- */
 addEventListener("keydown", e=>{
-  const tag=document.activeElement.tagName;
+  /* "tagName" e non "tag": con "tag" questa variabile copriva l'oggetto del taglio, e
+     più sotto "tag.on" era sempre falso (invio durante il taglio chiudeva la foto). */
+  const tagName=document.activeElement.tagName;
   const inRegolazioni = document.activeElement.closest && document.activeElement.closest("#lbAdjBar");
-  if(tag==="INPUT"||tag==="SELECT"){
+  /* Il cursore sta fisso nella ricerca codici: a casella VUOTA i tasti della griglia
+     (frecce, spazio, invio, esc, - e +) comandano come se il cursore non ci fosse. */
+  const ricercaVuota = document.activeElement.id==="searchBox" && !document.activeElement.value.trim();
+  const tastoGriglia = ["Enter","Escape"," ","-","+","ArrowRight","ArrowLeft","ArrowUp","ArrowDown"].includes(e.key);
+  if((tagName==="INPUT"||tagName==="SELECT") && !(ricercaVuota && tastoGriglia)){
     if(e.key==="Escape"){ document.activeElement.blur(); return; }
     /* I cursori e la casella bianco e nero tengono il fuoco dopo il clic: senza questo
        Invio non chiudeva piu' la foto e bisognava cliccare fuori. */
@@ -6525,7 +6541,7 @@ addEventListener("keydown", e=>{
   }
   // il tasto appena cliccato resta col fuoco: invio/spazio lo ri-cliccherebbero
   // invece di chiudere la vista → gli si toglie il fuoco e comanda la tastiera
-  if((e.key==="Enter" || e.key===" ") && tag==="BUTTON"){ e.preventDefault(); document.activeElement.blur(); }
+  if((e.key==="Enter" || e.key===" ") && tagName==="BUTTON"){ e.preventDefault(); document.activeElement.blur(); }
   const M=state.monitor;
   const lbOpen=$("lightbox").classList.contains("open");
   const cmpOpen=$("compare").classList.contains("open");
@@ -6592,6 +6608,26 @@ addEventListener("keydown", e=>{
     const p=list[state.focusIdx]; if(p) presentSet([p]);
   }
 });
+
+/* CURSORE FISSO SULLA RICERCA CODICI: in home il cursore torna sempre nella casella in alto
+   a destra (dopo un clic, dopo aver chiuso una finestra, all'avvio), così il codice si
+   scrive subito. Non lo ruba mai a un'altra casella, a una finestra aperta (Report,
+   Impostazioni…), al taglio o al ritocco. */
+function cursoreSuRicerca(){
+  if(document.querySelector("dialog:modal")) return;
+  if(tag.on || rit.on) return;
+  const a = document.activeElement;
+  if(a && a!==document.body && a.matches("input,select,textarea,[contenteditable]")) return;
+  $("searchBox").focus({preventScroll:true});
+}
+document.addEventListener("click", ()=> setTimeout(cursoreSuRicerca, 0));
+document.querySelectorAll("dialog").forEach(d=> d.addEventListener("close", ()=> setTimeout(cursoreSuRicerca, 0)));
+addEventListener("focus", ()=> setTimeout(cursoreSuRicerca, 0));      // si torna su questa finestra
+// scelto un elenco (es. la sede in alto) il cursore torna alla ricerca: le frecce non cambiano più la sede per sbaglio
+document.addEventListener("change", e=>{
+  if(e.target.tagName==="SELECT" && !e.target.closest("dialog,#lbAdjBar")){ e.target.blur(); setTimeout(cursoreSuRicerca, 0); }
+});
+setTimeout(cursoreSuRicerca, 0);
 /* =====================================================================
    AVVIO — scelta sede, servizio del giorno, sincronizzazione
    ===================================================================== */
@@ -7495,7 +7531,7 @@ async function apriStats(){
       <th ${th}>Foto</th><th ${th}>Stampe</th>
       <th ${th} title="Fogli di questo rullo usciti in un altro giorno: contano nel report di quel giorno">Altri giorni</th>
       <th ${th}>Omaggi</th>
-      <th ${th}>Scarti</th><th ${th}>Nulle</th><th ${th}>File</th><th ${th}>Vendute</th>
+      <th ${th}>Scarti</th><th ${th} title="Omaggi + scarti: stampe uscite ma non vendute">Nulle</th><th ${th}>File</th><th ${th}>Vendute</th>
     </tr>`;
   L.forEach(k=>{
     const r = righe[k];
@@ -7517,12 +7553,8 @@ async function apriStats(){
       <td ${td} id="stTotNulle">${tot.omaggi+tot.scarti}</td>
       <td ${td} id="stTotFile">${tot.file}</td><td ${td} id="stTotVen">${vendute}</td></tr></table>
     <p style="color:var(--muted);font-size:12.5px;margin-top:8px">
-      Omaggi, scarti e file si segnano dai tasti durante la serata (dalla barra di selezione
-      sul PC, dai tasti del tablet) e si possono correggere a mano qui. <b>Nulle</b> = omaggi
-      + scarti, cioè le stampe uscite ma non vendute. Omaggi e scarti si tolgono solo dalle
-      <b>stampe</b>; i <b>file</b> venduti senza stampa si sommano dopo:
-      vendute = stampe − omaggi − scarti + file.
-      Restano salvati sulla giornata e li vedono tutte le postazioni.</p>`;
+      Omaggi, scarti e file si segnano durante il servizio e qui si possono correggere.
+      <b>Vendute</b> = stampe − omaggi − scarti + file.</p>`;
 
   /* Il rovescio della medaglia: quello che è uscito dalla stampante IN QUESTA serata ma
      appartiene alle foto di altre giornate. Sta qui perché è lavoro di questa serata. */
@@ -7549,6 +7581,9 @@ async function apriStats(){
     };
   });
   $("statsDlg").showModal();
+  /* La finestra mette da sola il cursore nella prima casella (Omaggi): un numero digitato
+     per sbaglio diventava una correzione. Nessun cursore finché non clicchi una casella. */
+  document.activeElement.blur();
 }
 
 /* SPAZIO SUL CLOUD: prima stava in fondo al Report giornata; ora è una voce a sé del
@@ -8405,7 +8440,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026";
+const VERSIONE = "26 nov 2026 (2)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
