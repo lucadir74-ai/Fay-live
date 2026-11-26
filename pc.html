@@ -382,6 +382,7 @@
     <div id="toolsMenu" hidden>
       <button id="btnStats">Report giornata</button>
       <button id="btnReport">Report attività</button>
+      <button id="btnSpazio" title="Quanto spazio occupano le foto sul cloud e quanto ne resta">Spazio sul cloud…</button>
       <button id="btnInvii" title="Giorno per giorno: a chi sono state inviate le foto, quali codici e se l'invio è riuscito">Registro invii</button>
       <button id="btnRegistro" title="Cronologia tecnica: richieste degli originali, caricamenti, invii, con orari ed errori">Registro tecnico</button>
       <button id="btnEsportate" title="Quante foto sono state esportate, rullo per rullo">Foto esportate…</button>
@@ -485,6 +486,7 @@
           <button id="lbRitocco">Ritocco (pennello)</button>
           <button id="lbTaglia">✂ Taglia <kbd>t</kbd></button>
           <button id="lbRipristina">Ripristina originale</button>
+          <button id="lbTogliStampa" title="Toglie dal contatore una stampa che era stata annullata e non è uscita">➖ Togli stampa</button>
         </div>
       </div>
       <div id="lbAdjBar">
@@ -627,7 +629,8 @@
       <button id="selExport">Esporta file</button>
       <button id="selSend">✈ Invia per email</button>
       <button id="selFile" title="Vendute solo come file digitale, senza stampa">📄 Solo file</button>
-      <button id="selConti" title="Foto che non sono state pagate: omaggi, scarti e stampe annullate. Scegli tu quali foto e quante">🚫 Non pagate</button>
+      <button id="selOmaggi" title="Stampe regalate: scegli quante per ogni foto selezionata">🎁 Omaggio</button>
+      <button id="selScarti" title="Stampe venute male e buttate: scegli quante per ogni foto selezionata">🗑 Scarto</button>
       <button id="selClear" title="Toglie la selezione da tutte le foto (le foto restano dove sono)">✕ Deseleziona</button>
     </div>
 
@@ -876,8 +879,17 @@
   <div id="statsBody"></div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
     <button id="statsPdf" title="Crea un PDF di questa sede e di questa giornata (funziona anche senza internet): finisce nella cartella Download, da inviare quando torna la linea">Salva PDF da inviare</button>
+    <button id="statsWa" title="Manda il PDF del report con WhatsApp. Se il PC non riesce a passare il file a WhatsApp, apre WhatsApp con il riepilogo scritto">Invia con WhatsApp</button>
     <button id="statsCsv">Salva come CSV</button>
     <button id="statsClose" class="primary">Chiudi</button>
+  </div>
+</dialog>
+
+<dialog id="spazioDlg" style="max-width:640px;width:92vw">
+  <h3 style="margin-bottom:12px">Spazio sul cloud</h3>
+  <div id="spazioBody"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <button id="spazioClose" class="primary">Chiudi</button>
   </div>
 </dialog>
 
@@ -900,20 +912,14 @@
 </dialog>
 
 <dialog id="contiDlg" style="max-width:640px;width:92vw;margin:auto">
-  <h3 id="contiTitolo" style="margin-bottom:6px">Non pagate</h3>
+  <h3 id="contiTitolo" style="margin-bottom:6px"></h3>
   <p id="contiHint" class="hint" style="margin-bottom:12px"></p>
-  <div id="contiModi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-    <button data-modo="omaggi">🎁 Omaggio</button>
-    <button data-modo="scarti">🗑 Scarto</button>
-    <button data-modo="meno">➖ Togli stampa</button>
-  </div>
   <div id="contiLista" style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto"></div>
   <div id="contiRapidi" style="display:flex;gap:8px;margin-top:10px">
     <button id="contiTutte1">1 a tutte</button>
     <button id="contiZero">Azzera</button>
   </div>
   <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
-    <button id="contiIndietro">Indietro</button>
     <button id="contiNo">Annulla</button>
     <button id="contiOk" class="primary">Conferma</button>
   </div>
@@ -4265,31 +4271,24 @@ const CONTI_MODI = {
 };
 function contiMax(p){ return conti.modo==="meno" ? (p.prints||0) : 20; }
 function contiTot(){ let t=0; conti.n.forEach(v=>t+=v); return t; }
-function contiApri(){
-  const set = selSet();
+/* Omaggio e Scarto si aprono dalla barra di selezione; Togli stampa (raro: stampa annullata)
+   sta nel menù Altro della foto aperta e vale solo per quella. */
+function contiApri(modo, set){
+  set = set || selSet();
   if(!set.length){ toast("Nessuna foto selezionata"); return; }
-  conti.set = set; conti.modo = null; conti.n = new Map();
+  const lista = modo==="meno" ? set.filter(p=>(p.prints||0)>0) : set;
+  if(!lista.length){ toast(set.length===1 ? "Questa foto non risulta stampata" : "Queste foto non risultano stampate"); return; }
+  conti.set = lista; conti.modo = modo;
+  conti.n = new Map(lista.map(p=>[p, lista.length===1 ? 1 : 0]));   // una sola foto: già pronta
   contiDisegna();
   $("contiDlg").showModal();
 }
-function contiScegli(modo){
-  conti.modo = modo;
-  const lista = modo==="meno" ? conti.set.filter(p=>(p.prints||0)>0) : conti.set;
-  if(modo==="meno" && !lista.length){ toast("Queste foto non risultano stampate"); conti.modo=null; return; }
-  conti.n = new Map(lista.map(p=>[p, lista.length===1 ? 1 : 0]));   // una sola foto: già pronta
-  contiDisegna();
-}
 function contiDisegna(){
-  const m = conti.modo ? CONTI_MODI[conti.modo] : null;
-  $("contiTitolo").textContent = m ? m.titolo : "Non pagate — " + conti.set.length + " foto selezionate";
-  $("contiHint").textContent   = m ? m.hint : "Perché queste foto non sono state pagate?";
-  const vedi = (id, si, tipo)=>{ $(id).style.display = si ? (tipo||"") : "none"; };
-  vedi("contiModi", !m, "flex");
-  vedi("contiRapidi", m && conti.n.size>1, "flex");
-  vedi("contiIndietro", !!m);
-  vedi("contiOk", !!m);
+  const m = CONTI_MODI[conti.modo];
+  $("contiTitolo").textContent = m.titolo + (conti.set.length>1 ? " — " + conti.set.length + " foto" : "");
+  $("contiHint").textContent   = m.hint;
+  $("contiRapidi").style.display = conti.n.size>1 ? "flex" : "none";
   const box = $("contiLista"); box.innerHTML = "";
-  if(!m) return;
   conti.n.forEach((v,p)=>{
     const riga = document.createElement("div");
     riga.style.cssText = "display:flex;align-items:center;gap:12px;padding:6px;border:1px solid var(--line);border-radius:10px";
@@ -4322,9 +4321,9 @@ function contiTasto(){
   $("contiOk").textContent = t ? CONTI_MODI[conti.modo].tasto(t) : "Conferma";
   $("contiOk").disabled = !t;
 }
-$("selConti").onclick = contiApri;
-$("contiModi").onclick = e=>{ const b=e.target.closest("button[data-modo]"); if(b) contiScegli(b.dataset.modo); };
-$("contiIndietro").onclick = ()=>{ conti.modo=null; conti.n=new Map(); contiDisegna(); };
+$("selOmaggi").onclick = ()=> contiApri("omaggi");
+$("selScarti").onclick = ()=> contiApri("scarti");
+$("lbTogliStampa").onclick = ()=>{ const p=fotoAperta(); if(p) contiApri("meno", [p]); };
 $("contiNo").onclick = ()=> $("contiDlg").close();
 $("contiTutte1").onclick = ()=>{ conti.n.forEach((v,p)=>conti.n.set(p, Math.min(1, contiMax(p)))); contiDisegna(); };
 $("contiZero").onclick   = ()=>{ conti.n.forEach((v,p)=>conti.n.set(p, 0)); contiDisegna(); };
@@ -7537,7 +7536,26 @@ async function apriStats(){
       </div>`;
   }
 
-  // --- spazio sul cloud: STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
+  $("statsBody").innerHTML = h;
+
+  // i due campi si salvano da soli e ricalcolano le vendute
+  $("statsBody").querySelectorAll("input[data-l]").forEach(el=>{
+    el.onchange = async ()=>{
+      const L2 = el.dataset.l, c = el.dataset.c;
+      const v = Math.max(0, parseInt(el.value,10) || 0);
+      el.value = v;
+      await salvaStat(L2, c, v);
+      aggiornaVendute();
+    };
+  });
+  $("statsDlg").showModal();
+}
+
+/* SPAZIO SUL CLOUD: prima stava in fondo al Report giornata; ora è una voce a sé del
+   menù Altro, perché non riguarda le vendute della serata. */
+function apriSpazio(){
+  let h = "";
+  // --- STIMA calcolata sulle foto, non il dato ufficiale di Supabase ---
   const stimaGiorno = state.photos.length * (PESO_ORIG + PESO_ANTE + PESO_MINI);
   const gg = (typeof GIORNI_ORIGINALI!=="undefined") ? GIORNI_ORIGINALI : 15;
   const ggA = (typeof GIORNI_ANTEPRIME!=="undefined") ? GIORNI_ANTEPRIME : 90;
@@ -7545,7 +7563,7 @@ async function apriStats(){
                    + state.photos.length * (PESO_ANTE+PESO_MINI) * ggA;
   const perc = Math.min(100, Math.round(proiezione*100/LIMITE_PRO));
   const colore = perc>90 ? "var(--danger)" : perc>70 ? "var(--accent)" : "var(--ok)";
-  h += `<h4 style="margin:18px 0 8px">Spazio sul cloud</h4>
+  h += `<h4 style="margin:0 0 8px">Stima</h4>
     <div style="font-size:13px;line-height:1.9">
       <div>Questa giornata occupa circa <b>${mb(stimaGiorno)}</b></div>
       <div>A questo ritmo, con ${gg} giorni di originali e ${ggA} di anteprime: <b style="color:${colore}">${mb(proiezione)}</b> su 100 GB del piano Pro (${perc}%)</div>
@@ -7565,7 +7583,7 @@ async function apriStats(){
       Non ancora misurato.</div>
     <button id="btnMisuraSpazio" style="margin-top:8px">Misura lo spazio occupato</button>`;
 
-  $("statsBody").innerHTML = h;
+  $("spazioBody").innerHTML = h;
   if(state.spazioCloud) scriviSpazioReale();
   $("btnMisuraSpazio").onclick = async (ev)=>{
     if(!sb){ $("spazioReale").textContent = "Cloud non raggiungibile."; return; }
@@ -7583,19 +7601,10 @@ async function apriStats(){
                       String(err && err.message || err)+'</span>';
     }finally{ b.disabled = false; b.textContent = "Ricalcola"; }
   };
-
-  // i due campi si salvano da soli e ricalcolano le vendute
-  $("statsBody").querySelectorAll("input[data-l]").forEach(el=>{
-    el.onchange = async ()=>{
-      const L2 = el.dataset.l, c = el.dataset.c;
-      const v = Math.max(0, parseInt(el.value,10) || 0);
-      el.value = v;
-      await salvaStat(L2, c, v);
-      aggiornaVendute();
-    };
-  });
-  $("statsDlg").showModal();
+  $("spazioDlg").showModal();
 }
+$("btnSpazio").onclick = ()=>{ $("toolsMenu").hidden=true; apriSpazio(); };
+$("spazioClose").onclick = ()=> $("spazioDlg").close();
 
 function aggiornaVendute(){
   const righe = datiReport();
@@ -7835,30 +7844,65 @@ function pdfReport(titolo, blocchi, sotto){
    su questa postazione. Legge gli stessi numeri della tabella (omaggi/scarti/file appena
    corretti a mano compresi) e funziona anche senza internet: va bene quello che sa il
    PC centrale. */
+async function pdfGiornata(){
+  const incrociate = await leggiStampeIncrociate();
+  state.stampeFuori = incrociate.fuori;
+  const dati = datiReport();
+  const righe = Object.keys(dati).sort().map(L=>{
+    const r = dati[L];
+    return {lettera:L, desc:state.letterDesc[L]||"", foto:r.foto, stampe:stampeGiornata(r), fuori:r.fuori||0,
+            omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0, vendute:venduteRullo(r)};
+  });
+  const sede = cloud.sede ? cloud.sede.nome : "Sede";
+  const giorno = cloud.servizio.data_servizio;
+  const dLunga = (()=>{ const d=new Date(giorno+"T12:00:00");
+    return isNaN(d) ? giorno : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long",year:"numeric"}); })();
+  const byte = pdfReport("Report giornata", [{sede, giorno:dLunga, righe, dentro:incrociate.dentro}],
+                         "Creato dalla postazione " + nomePostazione() + ".");
+  return {byte, nome:nomeFilePdf([sede, giorno]), sede, dLunga, righe};
+}
 $("statsPdf").onclick = async ()=>{
   if(!cloud.servizio){ toast("Apri prima una giornata"); return; }
   const b = $("statsPdf"); b.disabled = true;
   try{
-    const incrociate = await leggiStampeIncrociate();
-    state.stampeFuori = incrociate.fuori;
-    const dati = datiReport();
-    const righe = Object.keys(dati).sort().map(L=>{
-      const r = dati[L];
-      return {lettera:L, desc:state.letterDesc[L]||"", foto:r.foto, stampe:stampeGiornata(r), fuori:r.fuori||0,
-              omaggi:r.omaggi||0, scarti:r.scarti||0, file:r.file||0, vendute:venduteRullo(r)};
-    });
-    const sede = cloud.sede ? cloud.sede.nome : "Sede";
-    const giorno = cloud.servizio.data_servizio;
-    const dLunga = (()=>{ const d=new Date(giorno+"T12:00:00");
-      return isNaN(d) ? giorno : d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long",year:"numeric"}); })();
-    const byte = pdfReport("Report giornata", [{sede, giorno:dLunga, righe, dentro:incrociate.dentro}],
-                           "Creato dalla postazione " + nomePostazione() + ".");
-    const nome = nomeFilePdf([sede, giorno]);
+    const {byte, nome} = await pdfGiornata();
     scaricaPdf(byte, nome);
     toast("PDF salvato nella cartella Download: " + nome, 6000);
   }catch(err){
     console.warn("pdf report", err);
     toast("Non sono riuscito a creare il PDF: " + (err && err.message || err), 6000);
+  }finally{ b.disabled = false; }
+};
+
+/* INVIA CON WHATSAPP. Un link di WhatsApp non può portarsi dietro un file: per il PDF
+   serve la "condivisione" di Windows, che lo passa a WhatsApp (se l'app è installata
+   compare nell'elenco). Se il PC non sa condividere file, si apre WhatsApp con il
+   riepilogo scritto: i numeri sono gli stessi del PDF. */
+$("statsWa").onclick = async ()=>{
+  if(!cloud.servizio){ toast("Apri prima una giornata"); return; }
+  const b = $("statsWa"); b.disabled = true;
+  try{
+    const {byte, nome, sede, dLunga, righe} = await pdfGiornata();
+    const tot = righe.reduce((t,r)=>{ ["stampe","omaggi","scarti","file","vendute"].forEach(c=>t[c]+=r[c]); return t; },
+                             {stampe:0, omaggi:0, scarti:0, file:0, vendute:0});
+    const testo = `Report giornata — ${sede}, ${dLunga}\n` +
+      righe.map(r=>`Rullo ${r.lettera}: ${r.vendute} vendute (stampe ${r.stampe}, omaggi ${r.omaggi}, scarti ${r.scarti}, file ${r.file})`).join("\n") +
+      `\nTOTALE: ${tot.vendute} vendute (stampe ${tot.stampe}, omaggi ${tot.omaggi}, scarti ${tot.scarti}, file ${tot.file})`;
+    const file = new File([byte], nome, {type:"application/pdf"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{
+        await navigator.share({files:[file], title:"Report giornata", text:testo});
+        return;
+      }catch(err){
+        if(err && err.name==="AbortError") return;      // finestra chiusa dall'utente: va bene così
+        console.warn("condivisione pdf", err);
+      }
+    }
+    window.open("https://wa.me/?text=" + encodeURIComponent(testo), "_blank");
+    toast("Si apre WhatsApp con il riepilogo scritto. Il PDF, se serve, si salva con «Salva PDF da inviare»", 7000);
+  }catch(err){
+    console.warn("whatsapp report", err);
+    toast("Non sono riuscito a preparare l'invio: " + (err && err.message || err), 6000);
   }finally{ b.disabled = false; }
 };
 
@@ -8361,7 +8405,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "25 nov 2026";
+const VERSIONE = "26 nov 2026";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
