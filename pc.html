@@ -6663,14 +6663,32 @@ addEventListener("keydown", e=>{
    a destra (dopo un clic, dopo aver chiuso una finestra, all'avvio), così il codice si
    scrive subito. Non lo ruba mai a un'altra casella, a una finestra aperta (Report,
    Impostazioni…), al taglio o al ritocco. */
+/* Mentre Chrome chiede un permesso o apre la scelta di una cartella/file, il cursore NON
+   va spostato: un cambio di fuoco in quel momento può chiudere la richiesta di Chrome
+   (la voce Export "da riattivare" sembrava non fare niente). */
+let richiestaChromeAperta = 0;
+function conRichiestaChrome(fn){
+  return async function(...a){
+    richiestaChromeAperta++;
+    try{ return await fn.apply(this ?? window, a); }   // le funzioni di window vogliono window come "this"
+    finally{ richiestaChromeAperta--; setTimeout(cursoreSuRicerca, 300); }
+  };
+}
+if(window.showDirectoryPicker) window.showDirectoryPicker = conRichiestaChrome(window.showDirectoryPicker);
+if(window.showOpenFilePicker)  window.showOpenFilePicker  = conRichiestaChrome(window.showOpenFilePicker);
+if(window.FileSystemHandle && FileSystemHandle.prototype.requestPermission)
+  FileSystemHandle.prototype.requestPermission = conRichiestaChrome(FileSystemHandle.prototype.requestPermission);
+
 function cursoreSuRicerca(){
+  if(richiestaChromeAperta) return;
   if(document.querySelector("dialog:modal")) return;
   if(tag.on || rit.on) return;
   const a = document.activeElement;
   if(a && a!==document.body && a.matches("input,select,textarea,[contenteditable]")) return;
   $("searchBox").focus({preventScroll:true});
 }
-document.addEventListener("click", ()=> setTimeout(cursoreSuRicerca, 0));
+// i clic sulla barra in basso (Export, Archivio, Anteprime…) aprono finestre di Chrome: lì il cursore non si tocca
+document.addEventListener("click", e=>{ if(!e.target.closest("#statusBar")) setTimeout(cursoreSuRicerca, 0); });
 document.querySelectorAll("dialog").forEach(d=> d.addEventListener("close", ()=> setTimeout(cursoreSuRicerca, 0)));
 addEventListener("focus", ()=> setTimeout(cursoreSuRicerca, 0));      // si torna su questa finestra
 // scelto un elenco (es. la sede in alto) il cursore torna alla ricerca: le frecce non cambiano più la sede per sbaglio
@@ -8508,7 +8526,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (4)";
+const VERSIONE = "26 nov 2026 (5)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
