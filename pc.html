@@ -2889,6 +2889,14 @@ $("btnExportDir").onclick = async ()=>{
 /* Con la cartella già attiva, il clic la APRE: il browser non può aprire Esplora file,
    ma può aprire la finestra di Windows "Apri" posizionata dentro la cartella, dove si
    vedono le foto esportate (e in alto il percorso). Quello che si sceglie lì viene ignorato. */
+/* Una cartella ricordata può restare "appesa": alla domanda sul permesso Chrome non risponde
+   mai (visto il 26/11/2026 con la cartella "export": il clic non faceva niente). Dopo un
+   attimo si smette di aspettare e si propone di sceglierla di nuovo. */
+function permessoEntro(promessa, ms){
+  return Promise.race([promessa, new Promise((_, no)=> setTimeout(()=>{
+    const e = new Error("Chrome non risponde sulla cartella ricordata"); e.name = "TimeoutError"; no(e);
+  }, ms))]);
+}
 /* DIAGNOSI EXPORT (temporanea): ogni passo del clic finisce in un riquadro a schermo e nella
    memoria locale di Chrome (chiave faylive_diag_export), così si vede dove si ferma. */
 function diagExport(msg){
@@ -2927,7 +2935,7 @@ $("stExport").onclick = async ()=>{
      clic non faceva niente e non diceva niente. */
   let perm = "denied", errore = "";
   try{
-    perm = await saved.queryPermission({mode:"readwrite"});
+    perm = await permessoEntro(saved.queryPermission({mode:"readwrite"}), 1500);
     diagExport(`3. permesso attuale: ${perm}`);
     if(perm!=="granted"){
       diagExport("4. chiedo il permesso a Chrome…");
@@ -2942,6 +2950,8 @@ $("stExport").onclick = async ()=>{
   }
   $("exportDirText").textContent = errore==="NotFoundError"
     ? `La cartella "${saved.name}" non si trova più (spostata, rinominata o cancellata).`
+    : errore==="TimeoutError"
+    ? `Chrome non riesce più a usare la cartella "${saved.name}" che aveva ricordato.`
     : `Chrome non ha dato il permesso di scrivere nella cartella "${saved.name}".`;
   diagExport("6. mostro la finestra Cartella export");
   $("exportDirDlg").showModal();
@@ -4965,7 +4975,7 @@ async function ensureExportDir(forza){
     try{
       const saved = await idb.get("exportDir");
       if(saved){
-        let perm=await saved.queryPermission({mode:"readwrite"});
+        let perm=await permessoEntro(saved.queryPermission({mode:"readwrite"}), 1500);   // può restare appesa
         if(perm!=="granted") perm=await saved.requestPermission({mode:"readwrite"});
         if(perm==="granted"){ state.exportDir=saved; segnaExport(saved.name, true); return saved; }
       }
@@ -8563,7 +8573,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (6 diagnosi)";
+const VERSIONE = "26 nov 2026 (7 diagnosi)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
