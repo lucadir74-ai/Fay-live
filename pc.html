@@ -43,7 +43,16 @@
   #searchHint[hidden]{display:none}
   .spacer{flex:1}
   #statusBar{display:flex;gap:18px;align-items:center;padding:6px 16px;background:var(--surface);border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
-  #letterTabs{display:flex;gap:8px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
+  /* Barra dei rulli: niente barra di scorrimento (scomoda), si scorre con le frecce ai lati,
+     con la rotellina del mouse o trascinando sul touch. */
+  #letterBar{display:flex;align-items:stretch;background:var(--surface);border-bottom:1px solid var(--line)}
+  #letterBar[hidden]{display:none}
+  #letterTabs{flex:1;min-width:0;display:flex;gap:8px;padding:8px 16px;overflow-x:auto;scrollbar-width:none;scroll-behavior:smooth}
+  #letterTabs::-webkit-scrollbar{display:none}
+  .ltArrow{flex:0 0 auto;width:34px;padding:0;border:0;border-radius:0;background:var(--surface2);color:var(--ink);font-size:22px;font-weight:700;line-height:1;cursor:pointer}
+  .ltArrow:hover:not(:disabled){background:var(--accent);color:var(--accent-ink)}
+  .ltArrow:disabled{opacity:.25;cursor:default}
+  .ltArrow[hidden]{display:none}
   .ltab{flex:0 0 auto}
   #progWrap{display:none;align-items:center;gap:12px;padding:7px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
   #progWrap.show{display:flex}
@@ -424,7 +433,11 @@
     <button id="btnMonClose" title="Chiude il monitor cliente" hidden>✕</button>
   </header>
 
-  <nav id="letterTabs" hidden></nav>
+  <div id="letterBar" hidden>
+    <button id="ltPrev" class="ltArrow" title="Rulli precedenti" hidden>‹</button>
+    <nav id="letterTabs"></nav>
+    <button id="ltNext" class="ltArrow" title="Rulli successivi" hidden>›</button>
+  </div>
 
   <div id="progWrap">
     <span id="progLabel">0/0</span>
@@ -4058,7 +4071,7 @@ function vdGiornata(){
 function renderTabs(){
   const nav=$("letterTabs");
   const letters=[...new Set(state.photos.map(p=>p.letter))].sort();
-  nav.hidden = letters.length===0;
+  $("letterBar").hidden = letters.length===0;
   const cd=$("btnClearDay"); if(cd) cd.textContent = state.activeLetter ? "Svuota rullo "+state.activeLetter : "Svuota giornata";
   const stats=L=>{
     const ph = L? state.photos.filter(p=>p.letter===L) : state.photos;
@@ -4100,7 +4113,19 @@ function renderTabs(){
       <span class="stat fl" title="${g.fl} vendute come solo file digitale (colonna File del report)">▤ ${g.fl}</span>
       <span class="stat vd" title="stampe − omaggi − scarti + file, stessa formula del report">✓ ${vdGiornata()} vendute</span>
     </div>` : "";
+  /* renderTabs gira spesso (ogni stampa aggiorna i contatori): la posizione si conserva.
+     Quando cambia il numero dei rulli (nuovo import, giornata aperta) si va in fondo,
+     sugli ultimi rulli, che sono quelli su cui si lavora. */
+  const primaPos = nav.scrollLeft, primaN = nav._nRulli;
   nav.innerHTML = riepilogo + letters.map(L=>tab(L,L)).join("");
+  nav._nRulli = letters.length;
+  nav.style.scrollBehavior = "auto";
+  const vaiInFondo = primaN !== letters.length;
+  nav.scrollLeft = vaiInFondo ? nav.scrollWidth : primaPos;
+  nav.style.scrollBehavior = "";
+  // le schede possono allargarsi un attimo dopo (caratteri caricati): si ripete al frame dopo
+  if(vaiInFondo) requestAnimationFrame(()=>{ nav.style.scrollBehavior="auto"; nav.scrollLeft = nav.scrollWidth; nav.style.scrollBehavior=""; aggiornaFrecceRulli(); });
+  aggiornaFrecceRulli();
   nav.querySelectorAll(".ltab").forEach(b=>{
     b.onclick=()=>{
       state.activeLetter = b.dataset.l || state.activeLetter;
@@ -4114,6 +4139,29 @@ function renderTabs(){
   const M=state.monitor;   // rullo trasmesso sparito (giornata svuotata): si torna a tutti
   if(M.letter && !state.photos.some(p=>p.letter===M.letter)) M.letter=null;
   setMonState(M.mode);
+}
+/* Frecce della barra rulli: compaiono solo se i rulli non ci stanno tutti, e si spengono
+   quando si è già all'inizio o in fondo. */
+function aggiornaFrecceRulli(){
+  const nav=$("letterTabs"), prev=$("ltPrev"), next=$("ltNext");
+  const trabocca = nav.scrollWidth > nav.clientWidth + 2;
+  prev.hidden = next.hidden = !trabocca;
+  if(!trabocca) return;
+  prev.disabled = nav.scrollLeft <= 2;
+  next.disabled = nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 2;
+}
+{
+  const nav=$("letterTabs");
+  const passo = ()=> Math.max(120, Math.round(nav.clientWidth*0.7));
+  $("ltPrev").onclick = ()=> nav.scrollBy({left:-passo()});
+  $("ltNext").onclick = ()=> nav.scrollBy({left: passo()});
+  nav.addEventListener("scroll", aggiornaFrecceRulli, {passive:true});
+  // rotellina del mouse sopra i rulli: scorre in orizzontale
+  nav.addEventListener("wheel", e=>{
+    if(nav.scrollWidth <= nav.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault(); nav.scrollLeft += e.deltaY;
+  }, {passive:false});
+  addEventListener("resize", aggiornaFrecceRulli);
 }
 function editRulloDesc(L){
   $("ddLetter").textContent=L;
