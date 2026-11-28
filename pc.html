@@ -2225,7 +2225,8 @@ async function importaFiles(files){
       for(const f of files){
         const p = perFirma.get(firmaDi(f));
         if(!p){ restano.push(f); continue; }
-        const haOriginale = !!(p.arch || p.file || p.origUploaded || p.origReadyCloud);
+        // p.file da solo non basta se quella foto non è finita in archivio (_origKo)
+        const haOriginale = !!(p.arch || (p.file && !p._origKo) || p.origUploaded || p.origReadyCloud);
         if(haOriginale){ saltate++; continue; }
         p.file = f; p.remote = false;          // riaggancio: stesso codice, niente doppioni
         daRiagganciare.push(p);
@@ -3075,6 +3076,21 @@ async function processBatchInterno(batch){
 
   // FASE 2 — copia in archivio + anteprime di qualità (in sottofondo)
   const evDir = await getImportDir(batch[0].letter);
+  /* Se l'archivio c'è, OGNI foto deve finirci. Prima una lettura fallita ogni tanto, o una
+     scrittura in archivio andata male, facevano saltare la foto in silenzio: in griglia
+     restava la miniatura piccola, nell'archivio non c'era niente, e a fine import la barra
+     diceva comunque "puoi togliere la scheda". Ora quelle foto si contano e si dicono. */
+  const archivioAtteso = !!state.archive && !suCentrale();
+  const senzaOriginale = [];
+  // la scheda a volte non risponde al primo colpo: si riprova prima di arrendersi
+  const conRiprova = async (fn)=>{
+    let ultimo;
+    for(let i=0;i<3;i++){
+      try{ return await fn(); }
+      catch(err){ ultimo = err; await new Promise(r=>setTimeout(r, 300*(i+1))); }
+    }
+    throw ultimo;
+  };
   /* SE LA SCHEDA VIENE SFILATA A METÀ l'import DEVE fermarsi. Prima andava avanti fino in
      fondo: la lettura del file falliva, l'errore finiva solo nella console, la copia in
      archivio veniva saltata in silenzio e l'anteprima si faceva lo stesso da quello che
@@ -3084,20 +3100,31 @@ async function processBatchInterno(batch){
   for(const p of batch){
     if(prog.cancel) return { annullato:true };
     let buf=null;
-    try{ buf = await p.file.arrayBuffer(); letturaKo = 0; }
+    try{ buf = await conRiprova(()=>p.file.arrayBuffer()); letturaKo = 0; }
     catch(err){
       console.warn("lettura", p.code, err);
-      if(++letturaKo >= 3) return { schedaPersa:true, fino:p.code };
+      p._origKo = true; senzaOriginale.push(p.code);
+      if(++letturaKo >= 3) return { schedaPersa:true, fino:p.code, senzaOriginale };
+      prog.done++;                 // la foto è passata, anche se male: la barra non si blocca
       continue;                    // niente anteprima da un file che non si legge
     }
     if(evDir && buf){
       try{
         const ext = (p.file.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
-        const fh = await evDir.getFileHandle(p.code+ext, {create:true});
-        const w = await fh.createWritable();
-        await w.write(buf); await w.close();
-        p.arch = fh;
-      }catch(err){ console.warn("copia archivio", p.code, err); }
+        await conRiprova(async ()=>{
+          const fh = await evDir.getFileHandle(p.code+ext, {create:true});
+          const w = await fh.createWritable();
+          await w.write(buf); await w.close();
+          p.arch = fh;
+        });
+        p._origKo = false;
+      }catch(err){
+        console.warn("copia archivio", p.code, err);
+        p._origKo = true; senzaOriginale.push(p.code);
+      }
+    }else if(archivioAtteso && buf){
+      // l'archivio c'è ma la cartella del rullo non si è aperta: nessuna copia
+      p._origKo = true; senzaOriginale.push(p.code);
     }
     if(suCentrale() && buf && sb && cloud.servizio && !p.origUploaded){
       try{
@@ -3136,7 +3163,7 @@ async function processBatchInterno(batch){
   // gli originali salgono da soli sul cloud (dalla più recente): le altre postazioni stampano
   // anche se questo PC viene chiuso o perde l'accesso all'archivio
   if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
-  return { fails, origMancanti };
+  return { fails, origMancanti, senzaOriginale };
 }
 
 /* La scheda SD non si può "sentire" dal browser. Però la cartella da cui abbiamo importato
@@ -3166,17 +3193,21 @@ function fineImport(batch, esito){
   const w = $("progWrap"), lab = $("progLabel"), fill = $("progFill"), btn = $("progCancel");
   const quante = batch.length;
   const da = batch[0].code, a = batch[batch.length-1].code;
+  const senza = esito.senzaOriginale || [];
+  const elenco = senza.slice(0,6).join(", ") + (senza.length>6 ? "…" : "");
   const msg = esito.schedaPersa
     ? `⛔ Import rullo ${L} INTERROTTO a ${esito.fino}: la scheda non è più leggibile — rimettila e reimporta con la stessa sigla ${L} per riprendere`
     : esito.errore
     ? `⚠ Import rullo ${L} finito con errori — controlla la griglia`
+    : senza.length
+    ? `⚠ Import rullo ${L}: ${senza.length} foto NON salvate nell'archivio (${elenco}) — NON togliere la scheda, reimporta con la stessa sigla ${L}`
     : (esito.origMancanti||0)
     ? `⚠ Import rullo ${L}: ${esito.origMancanti} originali NON salvati sul PC centrale — NON togliere la scheda, reimporta con la stessa sigla ${L}`
     : `✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a}) · puoi togliere la scheda`
       + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : "");
   prog.total = 0; prog.done = 0;
   fill.style.width = "100%";
-  const guaio = esito.errore || esito.schedaPersa || (esito.origMancanti||0);
+  const guaio = esito.errore || esito.schedaPersa || senza.length || (esito.origMancanti||0);
   fill.style.background = guaio ? "var(--danger)" : "var(--ok)";
   lab.textContent = msg;
   lab.style.color = guaio ? "var(--danger)" : "var(--ok)";
