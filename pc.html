@@ -61,6 +61,17 @@
   #progLabel{font-size:12.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
   #progCancel{padding:5px 12px;font-size:12.5px;border-color:var(--line);color:var(--muted)}
   #progCancel:hover{border-color:var(--danger);color:var(--danger)}
+  /* Import con originali NON salvati: la barra diventa una fascia rossa a tutta larghezza,
+     testo bianco grande, che non sparisce da sola. Un clic riapre la spiegazione. */
+  #progWrap.ko{background:var(--danger);border-bottom-color:var(--danger);padding:11px 16px;cursor:pointer}
+  #progWrap.ko #progLabel{color:#fff;font-weight:700;font-size:14.5px;white-space:normal;font-family:inherit}
+  #progWrap.ko #progTrack{display:none}
+  #origKoDlg{max-width:580px;border:3px solid var(--danger);margin:auto}   /* in mezzo allo schermo, non nell'angolo */
+  #origKoDlg h3{color:var(--danger);font-size:19px;margin-bottom:12px}
+  #origKoBody p{margin-bottom:10px;font-size:14.5px;line-height:1.5}
+  #origKoBody .codici{font-family:var(--mono);font-weight:700;color:var(--accent)}
+  #origKoBody .motivo{font-size:12.5px;color:var(--muted)}
+  #origKoRetry{background:var(--danger);border-color:var(--danger);color:#fff;font-weight:700}
   #lbLoading{position:absolute;top:62px;left:14px;display:none;align-items:center;gap:8px;background:rgba(11,14,20,.85);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--muted);z-index:2}
   #lbLoading.show{display:flex}
   #lbLoading::before{content:"";width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite}
@@ -672,6 +683,16 @@
     <span id="stMode">—</span>
   </div>
 </div>
+
+<!-- Originali NON salvati a fine import: si chiude solo a mano (vedi fineImport) -->
+<dialog id="origKoDlg">
+  <h3 id="origKoTitle">⛔ Originali NON salvati</h3>
+  <div id="origKoBody"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+    <button id="origKoOk">Ho capito</button>
+    <button id="origKoRetry">Riprova adesso</button>
+  </div>
+</dialog>
 
 <dialog id="archDlg">
   <h3 style="margin-bottom:10px">Versione online: senza PC centrale</h3>
@@ -2123,7 +2144,16 @@ async function destinazioneImport(scelta){
 }
 async function importaFiles(files){
   files = [...files];   // copia: la ripresa import può scartarne alcuni
-  // se è ancora a schermo l'avviso verde dell'import precedente, sparisce qui
+  /* Se l'import precedente ha lasciato foto SENZA ORIGINALE (fascia rossa), prima di
+     toglierla lo si ricorda: se la scheda nuova è la stessa va bene (stessa sigla = si
+     recuperano), se è un'altra quelle foto restano senza originale. */
+  const inSospeso = (fineImport._attivo && fineImport._inSospeso) ? fineImport._inSospeso() : 0;
+  if(inSospeso && !confirm(`⛔ ATTENZIONE: l'import precedente ha ${inSospeso} foto SENZA ORIGINALE\n`
+      + `(${fineImport._elenco ? fineImport._elenco() : ""}).\n\n`
+      + `Se stai rimettendo LA STESSA scheda: premi OK e usa la stessa sigla, si recuperano.\n`
+      + `Se è un'ALTRA scheda: quelle foto resteranno senza originale (non si potranno stampare in alta qualità).\n\n`
+      + `Continuare con l'import?`)) return;
+  // se è ancora a schermo l'avviso dell'import precedente, sparisce qui
   if(fineImport._attivo && fineImport._chiudi) fineImport._chiudi();
   if(!files.length){ toast("Nessuna immagine nella cartella"); return; }
   if(importInCorso){ toast("C'è già un import in corso"); return; }
@@ -2329,19 +2359,27 @@ async function importaFiles(files){
   }finally{ importInCorso = false; }
 }
 
-const prog = { total:0, done:0, cancel:false };
+const prog = { total:0, done:0, cancel:false, ko:0 };   // ko = originali non salvati in questo import
 function progUpdate(){
   const w=$("progWrap");
-  if(prog.cancel || prog.done>=prog.total){ w.classList.remove("show"); prog.total=0; prog.done=0; return; }
+  if(prog.cancel || prog.done>=prog.total){
+    // l'avviso di fine import (verde o rosso) lo toglie solo fineImport, non la barra che si svuota
+    if(!fineImport._attivo) w.classList.remove("show");
+    prog.total=0; prog.done=0; return;
+  }
   w.classList.add("show");
   /* Ogni foto passa due volte (prima la miniatura, poi copia in archivio + anteprima), quindi
      prog.total e' il doppio delle foto. Si mostrano le FOTO vere: 100 foto = "Foto 37/100",
      non "Anteprime 37/200" che faceva credere di caricare il doppio delle foto. */
   const foto = Math.max(1, Math.round(prog.total/2));
   const prima = prog.done < foto;
-  $("progLabel").textContent = prima
+  /* Un originale che non si salva si dice SUBITO, mentre l'import va avanti: prima lo si
+     scopriva solo alla fine (e solo se si guardava la barra in quel momento). */
+  const ko = prog.ko ? ` · ⚠ ${prog.ko} NON salvate` : "";
+  $("progLabel").textContent = (prima
     ? `Importo ${foto} foto · lettura ${prog.done}/${foto}`
-    : `Importo ${foto} foto · salvataggio ${Math.min(foto, prog.done-foto)}/${foto}`;
+    : `Importo ${foto} foto · salvataggio ${Math.min(foto, prog.done-foto)}/${foto}`) + ko;
+  $("progLabel").style.color = prog.ko ? "var(--danger)" : "";
   $("progFill").style.width = (prog.done/prog.total*100).toFixed(1)+"%";
 }
 $("progCancel").onclick = (ev)=>{
@@ -3063,20 +3101,21 @@ async function decodeScaled(blob, maxSide, portrait=false){
    strada sollevava un errore (cartella d'archivio persa, file illeggibile) la funzione
    usciva prima e non compariva niente — la barra spariva e basta, che è esattamente il
    dubbio da togliere. Ora l'avviso sta in un involucro con finally: esce comunque. */
-async function processBatch(batch){
+async function processBatch(batch, opz){
   let esito = null;
   try{
     esito = await processBatchInterno(batch);
   }catch(err){
     console.error("import", err);
-    esito = { errore: err };
+    esito = { errore: err, motivo: spiegaErrore(err) };
   }finally{
-    fineImport(batch, esito);
+    fineImport(batch, esito, opz);
   }
 }
 async function processBatchInterno(batch){
   const TH=260, PV=1280, MINI=420;
   prog.cancel=false;
+  if(!prog.total) prog.ko = 0;          // conteggio dei non salvati: riparte con un import nuovo
   prog.total += batch.length*2; progUpdate();
   let fails=0;
 
@@ -3093,7 +3132,14 @@ async function processBatchInterno(batch){
       miniKo = 0;
     }catch(err){
       fails++; console.warn("miniatura", p.code, err);
-      if(++miniKo >= 3) return { schedaPersa:true, fino:p.code };   // scheda sfilata
+      /* Tre miniature fallite di fila di solito vogliono dire scheda sfilata. Ma un file
+         rovinato o vuoto fa fallire la miniatura anche con la scheda dentro: se il file si
+         legge, la scheda c'è, e l'import va avanti (l'originale si copia lo stesso, com'è).
+         Prima tre file rovinati di fila fermavano l'import, e reimportando si rifermava. */
+      let siLegge = false;
+      try{ await p.file.slice(0, 64).arrayBuffer(); siLegge = true; }catch(_){}
+      if(siLegge) miniKo = 0;
+      else if(++miniKo >= 3) return { schedaPersa:true, fino:p.code, motivo:"la scheda non si legge più" };   // scheda sfilata
     }
     prog.done++;
     if((prog.done & 7)===0){
@@ -3114,14 +3160,18 @@ async function processBatchInterno(batch){
      restava la miniatura piccola, nell'archivio non c'era niente, e a fine import la barra
      diceva comunque "puoi togliere la scheda". Ora quelle foto si contano e si dicono. */
   // anche se l'archivio non si è aperto; ma non dove l'archivio non può esistere (browser senza cartelle)
-  const archivioAtteso = !suCentrale() && !state.senzaArchivio && !!window.showDirectoryPicker;
+  const centrale = suCentrale();
+  const archivioAtteso = !centrale && !state.senzaArchivio && !!window.showDirectoryPicker;
   const senzaOriginale = [];
-  // la scheda a volte non risponde al primo colpo: si riprova prima di arrendersi
-  const conRiprova = async (fn)=>{
+  let motivo = "";                  // l'ultimo errore vero: finisce scritto nell'avviso di fine import
+  if(archivioAtteso && !evDir) motivo = "la cartella archivio di questo PC non si apre";
+  if(centrale && (!sb || !cloud.servizio)) motivo = "nessuna giornata aperta sul PC centrale";
+  // la scheda (o il PC centrale) a volte non risponde al primo colpo: si riprova prima di arrendersi
+  const conRiprova = async (fn, volte=3)=>{
     let ultimo;
-    for(let i=0;i<3;i++){
+    for(let i=0;i<volte;i++){
       try{ return await fn(); }
-      catch(err){ ultimo = err; await new Promise(r=>setTimeout(r, 300*(i+1))); }
+      catch(err){ ultimo = err; if(i < volte-1) await new Promise(r=>setTimeout(r, 300*(i+1))); }
     }
     throw ultimo;
   };
@@ -3130,45 +3180,67 @@ async function processBatchInterno(batch){
      archivio veniva saltata in silenzio e l'anteprima si faceva lo stesso da quello che
      Chrome aveva ancora in memoria. Risultato: griglia piena di foto senza originale, e
      nessun avviso. Tre letture fallite di fila = la scheda non c'è più, ci si ferma. */
-  let letturaKo = 0, origMancanti = 0;
+  let letturaKo = 0, origMancanti = 0, salvaKo = 0;
   for(const p of batch){
     if(prog.cancel) return { annullato:true };
     let buf=null;
     try{ buf = await conRiprova(()=>p.file.arrayBuffer()); letturaKo = 0; }
     catch(err){
       console.warn("lettura", p.code, err);
-      p._origKo = true; senzaOriginale.push(p.code);
-      if(++letturaKo >= 3) return { schedaPersa:true, fino:p.code, senzaOriginale };
+      motivo = "la scheda non si legge (" + spiegaErrore(err) + ")";
+      p._origKo = true; senzaOriginale.push(p.code); prog.ko++;
+      if(++letturaKo >= 3) return { schedaPersa:true, fino:p.code, senzaOriginale, motivo };
       prog.done++;                 // la foto è passata, anche se male: la barra non si blocca
       continue;                    // niente anteprima da un file che non si legge
     }
-    if(evDir && buf){
+    /* SALVATAGGIO DELL'ORIGINALE (28 nov). Una foto conta come salvata solo quando
+       l'originale è davvero dove deve stare:
+         · nei locali: il file nell'archivio di questo PC, riletto dopo la scrittura e con la
+           stessa dimensione di quello della scheda (una copia a metà non vale);
+         · in piscina: il PC centrale ha risposto OK (scrive prima un file provvisorio e poi lo
+           rinomina: con l'OK il file c'è ed è intero).
+       Dopo tre foto di fila non salvate si prova una volta sola per foto: se il disco o il
+       PC centrale non ci sono, non si perdono due secondi a foto per niente. */
+    const tentativi = salvaKo >= 3 ? 1 : 3;
+    let salvato = null;            // true = salvato · false = NON salvato · null = qui non si salva
+    if(evDir){
       try{
         const ext = (p.file.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
         await conRiprova(async ()=>{
           const fh = await evDir.getFileHandle(p.code+ext, {create:true});
           const w = await fh.createWritable();
-          await w.write(buf); await w.close();
+          try{ await w.write(buf); await w.close(); }
+          catch(e){ try{ await w.abort(); }catch(_){} throw e; }
+          const scritto = await fh.getFile();
+          if(scritto.size !== buf.byteLength)
+            throw new Error(`copia incompleta: ${scritto.size} byte su ${buf.byteLength}`);
           p.arch = fh;
-        });
-        p._origKo = false;
+        }, tentativi);
+        if(!centrale) salvato = true;
       }catch(err){
         console.warn("copia archivio", p.code, err);
-        p._origKo = true; senzaOriginale.push(p.code);
+        if(!centrale){ salvato = false; motivo = "copia nell'archivio non riuscita (" + spiegaErrore(err) + ")"; }
       }
-    }else if(archivioAtteso && buf){
-      // l'archivio c'è ma la cartella del rullo non si è aperta: nessuna copia
-      p._origKo = true; senzaOriginale.push(p.code);
+    }else if(archivioAtteso){
+      salvato = false;             // l'archivio c'è ma la cartella del rullo non si è aperta: nessuna copia
     }
-    if(suCentrale() && buf && sb && cloud.servizio && !p.origUploaded){
-      try{
+    if(centrale){
+      if(p.origUploaded) salvato = true;
+      else if(!sb || !cloud.servizio) salvato = false;
+      else try{
         const blob = new Blob([buf], {type:p.file.type||"image/jpeg"});
-        const up = await sb.storage.from("originali").upload((p.origKey = origPath(p)), blob, {contentType:blob.type, upsert:true});
-        if(up.error) throw up.error;
+        await conRiprova(()=>originaleSulCentrale(p, blob), tentativi);
         p.origUploaded = true;
         if(p.dbId) scriviFoto(p.dbId, {originale_url:p.origKey});
-      }catch(err){ origMancanti++; console.warn("originale sul PC centrale", p.code, err); }
+        salvato = true;
+      }catch(err){
+        salvato = false; origMancanti++;
+        motivo = "il PC centrale non ha ricevuto l'originale (" + spiegaErrore(err) + ")";
+        console.warn("originale sul PC centrale", p.code, err);
+      }
     }
+    if(salvato === false){ p._origKo = true; senzaOriginale.push(p.code); prog.ko++; salvaKo++; }
+    else if(salvato === true){ p._origKo = false; salvaKo = 0; }
     try{
       const srcBlob = buf? new Blob([buf], {type:p.file.type||"image/jpeg"}) : p.file;
       // il verso l'ho già misurato in FASE 1 (p.w/p.h): così la verticale non esce sovradimensionata
@@ -3197,7 +3269,48 @@ async function processBatchInterno(batch){
   // gli originali salgono da soli sul cloud (dalla più recente): le altre postazioni stampano
   // anche se questo PC viene chiuso o perde l'accesso all'archivio
   if(autoOrigOn()) for(const p of batch) queueOriginalUpload(p, false);
-  return { fails, origMancanti, senzaOriginale };
+  return { fails, origMancanti, senzaOriginale, motivo };
+}
+
+/* ORIGINALE SUL PC CENTRALE (28 nov). Si manda con una richiesta diretta al programma del PC
+   centrale (lo stesso indirizzo che usa la libreria del cloud) per avere due cose:
+   · un tempo massimo VERO: scaduto, la richiesta si chiude davvero. Prima, se il PC centrale
+     non rispondeva, l'import restava fermo su "salvataggio …" senza dire niente;
+   · solo un OK del PC centrale vale come originale salvato. */
+async function originaleSulCentrale(p, blob){
+  const key = (p.origKey = origPath(p));
+  const ms = Math.max(30000, Math.round(blob.size/1048576*10000));    // 30 s, o 10 s ogni MB se il file è grande
+  const r = await fetch(SB_URL + "/storage/v1/object/originali/" + key.split("/").map(encodeURIComponent).join("/"), {
+    method:"PUT", body:blob, cache:"no-store", signal:AbortSignal.timeout(ms),
+    headers:{ "Content-Type": blob.type || "image/jpeg", "x-upsert":"true", "apikey":SB_KEY, "Authorization":"Bearer "+SB_KEY }
+  });
+  if(!r.ok){
+    let det = ""; try{ det = (await r.json()).message || ""; }catch(_){}
+    throw new Error("il PC centrale ha risposto " + r.status + (det ? " (" + det + ")" : ""));
+  }
+}
+// l'errore in parole che si capiscono, per l'avviso a schermo
+function spiegaErrore(err){
+  const n = err && err.name, m = String((err && err.message) || err || "");
+  if(n === "TimeoutError") return "nessuna risposta entro il tempo massimo";
+  if(n === "NotReadableError" || n === "NotFoundError") return "file non più leggibile";
+  if(n === "QuotaExceededError" || /quota|space|spazio/i.test(m)) return "disco pieno";
+  if(n === "NotAllowedError" || n === "SecurityError") return "permesso sulla cartella perso";
+  if(/failed to fetch|networkerror|load failed/i.test(m)) return "collegamento assente";
+  return m.slice(0, 140);
+}
+
+/* Quali foto di un import NON hanno l'originale dove deve stare: sul PC centrale (piscine)
+   o nell'archivio di questo PC (locali). Si guarda lo stato vero di ogni foto e non i conti
+   fatti durante l'import: così vale anche per un import fermato a metà, e si aggiorna da solo
+   quando un originale arriva dopo (il PC centrale ritenta in sottofondo).
+   Vale anche "senza archivio": se all'import la cartella ricordata si è riattivata da sola,
+   gli originali ci sono e non si deve dire il contrario. Solo con un browser che non
+   gestisce le cartelle qui non si pretende niente (lì un archivio non può esistere). */
+function originaleAlSicuro(p){ return suCentrale() ? !!(p.origUploaded || p.origReadyCloud) : !!p.arch; }
+function fotoSenzaOriginale(batch){
+  if(!suCentrale() && !window.showDirectoryPicker) return [];
+  return batch.filter(p => !originaleAlSicuro(p));
 }
 
 /* La scheda SD non si può "sentire" dal browser. Però la cartella da cui abbiamo importato
@@ -3205,79 +3318,217 @@ async function processBatchInterno(batch){
    fallisce. È questo il segnale che usiamo per azzerare l'avviso di fine import. */
 async function cartellaAncoraLeggibile(dir){
   if(!dir) return true;
-  try{
-    if(dir.queryPermission){
-      const st = await dir.queryPermission({mode:"read"});
-      if(st !== "granted") return false;
-    }
-    for await (const _ of dir.values()) break;   // basta toccarla: se non c'è più, lancia
-    return true;
-  }catch(_){ return false; }
+  const prova = (async ()=>{
+    try{
+      if(dir.queryPermission){
+        const st = await dir.queryPermission({mode:"read"});
+        if(st !== "granted") return false;
+      }
+      for await (const _ of dir.values()) break;   // basta toccarla: se non c'è più, lancia
+      return true;
+    }catch(_){ return false; }
+  })();
+  /* Chrome a volte resta appeso sui permessi di una cartella (vedi permessoEntro): dopo 3
+     secondi senza risposta non si decide niente — la scheda si considera ancora dentro e si
+     riprova al giro dopo. Così il controllo ogni 2 secondi della fascia rossa non si blocca. */
+  return Promise.race([prova, new Promise(r=>setTimeout(()=>r(true), 3000))]);
 }
 
 /* FINE IMPORT — l'avviso resta dove l'operatore stava già guardando, cioè nella barra di
    caricamento: diventa verde e dice quanto ha importato. NESSUN tasto da premere per
    andare avanti: si toglie da solo quando si sfila la scheda (o al primo clic sulla barra,
    o quando parte l'import successivo). Il toast in basso da solo non bastava: passa in
-   6 secondi e chi stava guardando la barra non lo vedeva. */
-function fineImport(batch, esito){
+   6 secondi e chi stava guardando la barra non lo vedeva.
+   (28 nov) SE ANCHE UN SOLO ORIGINALE NON È SALVATO l'avviso cambia natura:
+     · finestra rossa in mezzo allo schermo con le foto mancanti e il tasto "Riprova adesso";
+     · la barra diventa una fascia rossa che NON sparisce da sola: né dopo 10 minuti, né
+       togliendo la scheda. Prima, a scheda tolta, l'avviso rosso spariva in 2 secondi e al
+       suo posto compariva "pronto per il prossimo rullo", anche con foto senza originale;
+     · ogni 2 secondi si ricontrolla: quando gli originali ci sono tutti diventa verde.
+   La fascia rossa si toglie solo con l'import successivo (che prima chiede conferma). */
+function fineImport(batch, esito, opz){
   esito = esito || {};
-  if(esito.annullato || prog.cancel) return;      // "Import interrotto" l'ha già detto il tasto Annulla
   const L = batch[0].letter;
+  const intero = (opz && opz.tutto) || batch;      // con "Riprova adesso" si guarda tutto il rullo importato
+  if(esito.annullato || prog.cancel){
+    // "Import interrotto" l'ha detto il tasto Annulla: qui si aggiunge cosa è rimasto a metà
+    const n = fotoSenzaOriginale(intero).length;
+    if(n) toast(`⏹ Import interrotto: ${n} foto del rullo ${L} ${n===1 ? "è" : "sono"} senza originale — reimporta con la stessa sigla ${L} per completarle`, 12000);
+    return;
+  }
   const w = $("progWrap"), lab = $("progLabel"), fill = $("progFill"), btn = $("progCancel");
+  const centrale = suCentrale();
   const quante = batch.length;
   const da = batch[0].code, a = batch[batch.length-1].code;
-  const senza = esito.senzaOriginale || [];
-  const elenco = senza.slice(0,6).join(", ") + (senza.length>6 ? "…" : "");
-  const msg = esito.schedaPersa
-    ? `⛔ Import rullo ${L} INTERROTTO a ${esito.fino}: la scheda non è più leggibile — rimettila e reimporta con la stessa sigla ${L} per riprendere`
-    : esito.errore
-    ? `⚠ Import rullo ${L} finito con errori — controlla la griglia`
-    : senza.length
-    ? `⚠ Import rullo ${L}: ${senza.length} foto NON salvate nell'archivio (${elenco}) — NON togliere la scheda, reimporta con la stessa sigla ${L}`
-    : (esito.origMancanti||0)
-    ? `⚠ Import rullo ${L}: ${esito.origMancanti} originali NON salvati sul PC centrale — NON togliere la scheda, reimporta con la stessa sigla ${L}`
-    : `✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a}) · puoi togliere la scheda`
-      + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : "");
-  prog.total = 0; prog.done = 0;
+  const dove = centrale ? "sul PC centrale" : "nell'archivio di questo PC";
+  const doveBreve = centrale ? "sul PC centrale" : "nell'archivio";
+  // senza archivio per scelta dell'operatore (e nessuna cartella attiva): gli originali restano sulla scheda
+  const senzaArch = ()=> !centrale && state.senzaArchivio && !state.archive;
+  // browser che non gestisce le cartelle: lì non si può salvare niente e non si fa allarme (scelta del 28 nov)
+  const salvaQui = centrale || !!window.showDirectoryPicker;
+  const elencoDi = lista => lista.slice(0,8).map(p=>p.code).join(", ") + (lista.length>8 ? ` e altre ${lista.length-8}` : "");
+  const q = t => String(t==null?"":t).replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+  let mancanti = fotoSenzaOriginale(intero);
+  let schedaTolta = false;
+  const src = state.importSrc;
+
+  prog.total = 0; prog.done = 0; prog.ko = 0;
   fill.style.width = "100%";
-  const guaio = esito.errore || esito.schedaPersa || senza.length || (esito.origMancanti||0);
-  fill.style.background = guaio ? "var(--danger)" : "var(--ok)";
-  lab.textContent = msg;
-  lab.style.color = guaio ? "var(--danger)" : "var(--ok)";
-  btn.style.display = "none";        // niente "Ho capito": non c'è nulla da confermare
+  btn.style.display = "none";        // niente "Ho capito" nella barra: se serve, c'è la finestra
   w.classList.add("show");
   fineImport._attivo = true;
+  clearTimeout(fineImport._h);       fineImport._h = 0;
+  clearInterval(fineImport._veglia); fineImport._veglia = 0;
 
   const chiudi = ()=>{
-    fineImport._attivo = false;
+    fineImport._attivo = false; fineImport._riprova = null; fineImport._inSospeso = null;
     clearTimeout(fineImport._h);      fineImport._h = 0;
     clearInterval(fineImport._veglia); fineImport._veglia = 0;
     w.onclick = null;
-    w.classList.remove("show");
+    w.classList.remove("show", "ko");
     fill.style.background = ""; fill.style.width = "0%";
     lab.style.color = ""; btn.style.display = ""; btn.textContent = "Annulla";
+    try{ $("origKoDlg").close(); }catch(_){}
   };
   fineImport._chiudi = chiudi;
-  w.onclick = chiudi;                 // valvola: un clic qualunque sulla barra la toglie
 
-  clearTimeout(fineImport._h);
-  fineImport._h = setTimeout(chiudi, 10*60*1000);   // rete di sicurezza, non si usa quasi mai
+  // ---- tutto a posto: barra verde, che si toglie da sola quando si sfila la scheda ----
+  const verde = (testo, colore)=>{
+    fineImport._riprova = null; fineImport._inSospeso = null;
+    w.classList.remove("ko");
+    fill.style.background = "var(--ok)";
+    lab.style.color = colore || "var(--ok)";
+    lab.textContent = testo;
+    w.onclick = chiudi;                 // valvola: un clic qualunque sulla barra la toglie
+    clearTimeout(fineImport._h);
+    fineImport._h = setTimeout(chiudi, 10*60*1000);   // rete di sicurezza, non si usa quasi mai
+    clearInterval(fineImport._veglia); fineImport._veglia = 0;
+    // sorveglianza della scheda: due secondi di intervallo, si spegne appena scatta
+    if(src && !schedaTolta){
+      fineImport._veglia = setInterval(async ()=>{
+        if(!fineImport._attivo) return;
+        if(await cartellaAncoraLeggibile(src)) return;
+        state.importSrc = null;
+        chiudi();
+        toast("Scheda tolta — pronto per il prossimo rullo", 3500);
+      }, 2000);
+    }
+  };
 
-  // sorveglianza della scheda: due secondi di intervallo, si spegne appena scatta
-  clearInterval(fineImport._veglia);
-  const src = state.importSrc;
-  if(src){
-    fineImport._veglia = setInterval(async ()=>{
-      if(!fineImport._attivo) return;
-      if(await cartellaAncoraLeggibile(src)) return;
-      state.importSrc = null;
-      chiudi();
-      toast("Scheda tolta — pronto per il prossimo rullo", 3500);
-    }, 2000);
+  if(!mancanti.length){
+    if(esito.errore)
+      verde(`⚠ Import rullo ${L}: originali salvati, ma qualcosa non è andato — controlla le miniature in griglia`, "var(--accent)");
+    else if(opz && opz.tutto)
+      verde(`✔ Rullo ${L}: recuperati ${quante} originali — ora tutte le ${intero.length} foto sono salvate ${doveBreve} · puoi togliere la scheda`);
+    else
+      verde(`✔ Import rullo ${L} completato — ${quante} foto (${da} → ${a})`
+        + (salvaQui ? `, originali salvati ${doveBreve}` : "") + ` · puoi togliere la scheda`
+        + ((esito.fails||0) ? ` · ${esito.fails} senza miniatura` : ""));
+    toast(lab.textContent, 6000);
+    return;
   }
-  toast(msg, 6000);
+
+  // ---- originali NON salvati: fascia rossa fissa + finestra che va chiusa a mano ----
+  const testoRosso = ()=> senzaArch()
+    ? `⚠ Rullo ${L} importato SENZA ARCHIVIO: gli originali NON sono salvati su questo PC — se togli la scheda restano solo le anteprime (clic qui)`
+    : schedaTolta
+    ? `⛔ Scheda tolta, ma ${mancanti.length} foto del rullo ${L} ${mancanti.length===1 ? "è" : "sono"} SENZA ORIGINALE (${elencoDi(mancanti)}) — rimetti la scheda e premi qui (clic)`
+    : esito.schedaPersa
+    ? `⛔ Import rullo ${L} INTERROTTO a ${esito.fino}: la scheda non si legge più — ${mancanti.length} foto SENZA ORIGINALE (clic qui)`
+    : `⛔ Rullo ${L}: ${mancanti.length} foto NON ${mancanti.length===1 ? "salvata" : "salvate"} ${dove} (${elencoDi(mancanti)}) — NON togliere la scheda (clic qui)`;
+  w.classList.add("ko");
+  fill.style.background = "var(--danger)";
+  lab.style.color = "";                 // testo bianco su fondo rosso (classe ko)
+  lab.textContent = testoRosso();
+
+  const dettagli = ()=>{
+    const d = $("origKoDlg"); if(!d) return;
+    const n = mancanti.length;
+    let titolo, corpo, tasto;
+    if(senzaArch()){
+      titolo = "⚠ Originali NON salvati su questo PC";
+      corpo = `<p>Le <b>${n} foto del rullo ${q(L)}</b> sono entrate, ma stai lavorando <b>senza archivio</b>: `
+            + `gli originali <b>non vengono salvati su questo PC</b>`
+            + (autoOrigOn() ? ` (stanno salendo sul cloud: finché non sono arrivati, l'unica copia è sulla scheda).</p>` : `: l'unica copia è sulla scheda.</p>`)
+            + `<p>Se togli la scheda restano solo le anteprime: <b>niente stampa né invio in alta qualità</b>.</p>`
+            + `<p>Per salvarli adesso <b>lascia la scheda dentro</b> e premi <b>Scegli l'archivio…</b> `
+            + `(Disco locale C: — la cartella FayLive la crea l'app).</p>`;
+      tasto = "Scegli l'archivio…";
+    }else{
+      titolo = esito.schedaPersa
+        ? "⛔ Import INTERROTTO: la scheda non si legge più"
+        : `⛔ ${schedaTolta ? "Scheda tolta" : "ATTENZIONE"}: ${n} ${n===1 ? "originale NON salvato" : "originali NON salvati"}`;
+      corpo = `<p><b>${n} foto del rullo ${q(L)}</b> ${n===1 ? "non è stata salvata" : "non sono state salvate"} ${dove}:<br>`
+            + `<span class="codici">${q(elencoDi(mancanti))}</span></p>`
+            + `<p>In griglia si vedono, ma senza originale <b>non si possono stampare né inviare in alta qualità</b>.</p>`
+            + ((esito.schedaPersa || schedaTolta)
+              ? `<p><b>Rimetti la scheda</b> nel lettore e premi <b>Riprova adesso</b>. Se non basta, premi <b>Importa cartella</b> `
+                + `e usa la stessa sigla <b>${q(L)}</b>: le foto già salvate vengono saltate, si recuperano solo quelle mancanti.</p>`
+              : `<p><b>NON togliere la scheda</b> e premi <b>Riprova adesso</b>: si rifanno solo queste ${n} foto. `
+                + `In alternativa: <b>Importa cartella</b> di nuovo con la stessa sigla <b>${q(L)}</b>.</p>`)
+            + (esito.motivo ? `<p class="motivo">Motivo: ${q(esito.motivo)}</p>` : "");
+      tasto = "Riprova adesso";
+    }
+    $("origKoTitle").textContent = titolo;
+    $("origKoBody").innerHTML = corpo;
+    $("origKoRetry").textContent = tasto;
+    try{ if(!d.open) d.showModal(); }catch(_){ try{ d.show(); }catch(__){} }
+  };
+  w.onclick = ()=>{ if(!$("origKoDlg").open) dettagli(); };    // un clic sulla fascia rossa riapre la spiegazione
+
+  // per la conferma all'import successivo: quante foto sono ancora senza originale
+  fineImport._inSospeso = ()=> senzaArch() ? 0 : mancanti.length;
+  fineImport._elenco = ()=> `rullo ${L}: ${elencoDi(mancanti)}`;
+
+  fineImport._riprova = async ()=>{
+    if(importInCorso || prog.total > 0){ toast("C'è un import in corso: aspetta che finisca, poi riprova", 5000); return; }
+    if(senzaArch()){
+      const dir = await pickArchivio(`Gli originali del rullo ${L} verranno copiati qui dalla scheda.`);
+      if(!dir) return;                             // scelta annullata: la finestra resta aperta
+      dopoArchivioPronto();
+    }
+    const daRifare = intero.filter(p => p.file && !originaleAlSicuro(p));
+    if(!daRifare.length){ toast(`Da qui non si può rifare: premi Importa cartella e usa la stessa sigla ${L}`, 7000); return; }
+    if(src && !(await cartellaAncoraLeggibile(src))){
+      toast("La scheda non si legge: rimettila nel lettore, poi premi di nuovo Riprova adesso", 7000);
+      return;
+    }
+    chiudi();
+    daRifare.forEach(p=>{ p._origKo = false; });
+    if(src) state.importSrc = src;               // a fine giro si sorveglia la stessa scheda
+    toast(`Riprovo a salvare ${daRifare.length} originali del rullo ${L}…`, 4000);
+    processBatch(daRifare, { tutto: intero });
+  };
+
+  // ogni 2 secondi: originali arrivati dopo → verde; scheda tolta → si dice, ma NON si chiude
+  fineImport._veglia = setInterval(async ()=>{
+    if(!fineImport._attivo || fineImport._inControllo) return;
+    fineImport._inControllo = true;
+    try{
+      mancanti = fotoSenzaOriginale(intero);
+      if(!mancanti.length){
+        try{ $("origKoDlg").close(); }catch(_){}
+        verde(`✔ Rullo ${L}: ora tutti gli originali sono salvati ${doveBreve}` + (schedaTolta ? "" : " · puoi togliere la scheda"));
+        toast(`✔ Rullo ${L}: originali recuperati`, 5000);
+        return;
+      }
+      if(src && !schedaTolta && !(await cartellaAncoraLeggibile(src))){
+        schedaTolta = true; state.importSrc = null;
+        toast(`⛔ Hai tolto la scheda, ma ${mancanti.length} foto del rullo ${L} ${mancanti.length===1 ? "è" : "sono"} ancora senza originale`, 9000);
+      }
+      if(fineImport._attivo && w.classList.contains("ko")) lab.textContent = testoRosso();
+    }finally{ fineImport._inControllo = false; }
+  }, 2000);
+
+  dettagli();
+  try{
+    logEvento("originali non salvati", {rullo:L, esito:"errore",
+      codici: mancanti.slice(0,60).map(p=>p.code).join(" "), quante: mancanti.length,
+      dettaglio: senzaArch() ? "import senza archivio" : (esito.motivo || (esito.schedaPersa ? "scheda non leggibile" : ""))});
+  }catch(_){}
 }
+$("origKoOk").onclick = ()=> $("origKoDlg").close();
+$("origKoRetry").onclick = ()=>{ const r = fineImport._riprova; if(typeof r === "function") r(); };
 
 /* coda parallela di sincronizzazione anteprime sul cloud (non blocca l'import) */
 const thumbQueue = [];
@@ -8656,7 +8907,7 @@ $("btnSyncNow").onclick = ()=>{ toast("Controllo il cloud…"); pullNuoveFoto(tr
    file o su una pagina vecchia?": succede che il file su GitHub sia aggiornato ma il browser
    o Vercel servano ancora quello di prima, e si finisce a discutere di un difetto gia' tolto.
    Va cambiata a ogni consegna. */
-const VERSIONE = "26 nov 2026 (8)";
+const VERSIONE = "28 nov 2026 (1)";
 try{ $("stVersione").textContent = VERSIONE; }catch(_){}
 
 /* SPIA DEL COLLEGAMENTO VIA CAVO (11 nov). Solo quando la pagina arriva dal PC centrale.
