@@ -3113,7 +3113,8 @@ async function processBatchInterno(batch){
      scrittura in archivio andata male, facevano saltare la foto in silenzio: in griglia
      restava la miniatura piccola, nell'archivio non c'era niente, e a fine import la barra
      diceva comunque "puoi togliere la scheda". Ora quelle foto si contano e si dicono. */
-  const archivioAtteso = !suCentrale() && !state.senzaArchivio;   // anche se l'archivio non si è aperto
+  // anche se l'archivio non si è aperto; ma non dove l'archivio non può esistere (browser senza cartelle)
+  const archivioAtteso = !suCentrale() && !state.senzaArchivio && !!window.showDirectoryPicker;
   const senzaOriginale = [];
   // la scheda a volte non risponde al primo colpo: si riprova prima di arrendersi
   const conRiprova = async (fn)=>{
