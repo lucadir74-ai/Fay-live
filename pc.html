@@ -4441,7 +4441,7 @@ $("contiOk").onclick = async ()=>{
   if(conti.modo==="omaggi") await segnaStat(ripetute,"omaggi","in omaggio");
   else                      await segnaStat(ripetute,"scarti","segnate come scarto");
 };
-$("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set); };
+$("selPrint").onclick = async ()=>{ const set=selSet(); await printPhotos(set); fineVendita(set, true); };   // dopo la stampa niente finestra del QR
 $("selExport").onclick = async ()=>{ const set=selSet(); await exportPhotos(set); fineVendita(set, true); };
 $("selSend").onclick = async ()=>{ const set=selSet(); await inviaDiretto(set); };
 $("lbSend").onclick = async ()=>{ const p=fotoAperta(); if(p) await inviaDiretto([p]); };
@@ -4614,7 +4614,7 @@ $("lbQr").onclick  = ()=>{
 };
 /* Da "Vedi insieme" si chiude la vendita senza dover tornare indietro: è lì che il
    cliente decide, e uscire dalla vista per stampare faceva perdere il filo. */
-$("cmpPrint").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await printPhotos(set); fineVendita(set); };
+$("cmpPrint").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await printPhotos(set); fineVendita(set, true); };   // dopo la stampa niente finestra del QR
 $("cmpExport").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await exportPhotos(set); fineVendita(set, true); };
 $("cmpSend").onclick = async ()=>{ const set=selSet(); if(!set.length) return; closeCompare(); await inviaDiretto(set); };
 
