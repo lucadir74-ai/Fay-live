@@ -2234,13 +2234,33 @@ async function importaFiles(files){
       if(p.letter === L && String(p.srvId||"") === srvOra && p.sig) perFirma.set(p.sig, p);
     });
     if(perFirma.size){
+      /* "Completa" si decide guardando L'ORIGINALE NELL'ARCHIVIO, cioè il file vero nella
+         cartella giornata/rullo, con la stessa dimensione del file sulla scheda. Prima
+         bastava che la foto avesse in memoria il file della scheda, un collegamento
+         all'archivio o l'originale sul cloud: così foto assenti dall'archivio risultavano
+         "già presenti" e per recuperarle bisognava inventarsi un rullo nuovo.
+         Sul PC centrale l'archivio è il cloud: lì vale l'originale caricato. */
+      const centrale = suCentrale();
+      const dirRullo = (!centrale && state.archive) ? await getImportDir(L) : null;
+      const inArchivio = async (p, f)=>{
+        if(!dirRullo) return false;
+        const ext = (f.name.match(/\.\w+$/)||[".jpg"])[0].toLowerCase();
+        try{
+          const fh = await dirRullo.getFileHandle(p.code+ext);
+          const af = await fh.getFile();
+          if(af.size !== f.size) return false;   // copia troncata o file diverso: si rifà
+          p.arch = fh;
+          return true;
+        }catch(_){ return false; }              // non c'è
+      };
       const restano = [];
       for(const f of files){
         const p = perFirma.get(firmaDi(f));
         if(!p){ restano.push(f); continue; }
-        // p.file da solo non basta se quella foto non è finita in archivio (_origKo)
-        const haOriginale = !!(p.arch || (p.file && !p._origKo) || p.origUploaded || p.origReadyCloud);
+        const haOriginale = centrale ? !!(p.origUploaded || p.origReadyCloud)
+                                     : await inArchivio(p, f);
         if(haOriginale){ saltate++; continue; }
+        p.arch = null; p._origKo = false;      // il vecchio collegamento non vale: si ricopia
         p.file = f; p.remote = false;          // riaggancio: stesso codice, niente doppioni
         daRiagganciare.push(p);
       }
@@ -2248,7 +2268,7 @@ async function importaFiles(files){
       if(daRiagganciare.length)
         toast(`Riprendo: ${daRiagganciare.length} foto erano senza originale, le recupero`, 5000);
       else if(saltate && !files.length){
-        toast(`Le ${saltate} foto del rullo ${L} sono già complete: non c'è niente da riprendere`, 6000);
+        toast(`Le ${saltate} foto del rullo ${L} hanno già l'originale in archivio: non c'è niente da riprendere`, 6000);
         return;
       }
     }
@@ -3093,7 +3113,8 @@ async function processBatchInterno(batch){
      scrittura in archivio andata male, facevano saltare la foto in silenzio: in griglia
      restava la miniatura piccola, nell'archivio non c'era niente, e a fine import la barra
      diceva comunque "puoi togliere la scheda". Ora quelle foto si contano e si dicono. */
-  const archivioAtteso = !!state.archive && !suCentrale();
+  // anche se l'archivio non si è aperto; ma non dove l'archivio non può esistere (browser senza cartelle)
+  const archivioAtteso = !suCentrale() && !state.senzaArchivio && !!window.showDirectoryPicker;
   const senzaOriginale = [];
   // la scheda a volte non risponde al primo colpo: si riprova prima di arrendersi
   const conRiprova = async (fn)=>{
