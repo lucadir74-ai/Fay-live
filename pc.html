@@ -975,7 +975,7 @@
   </div>
 </dialog>
 
-<dialog id="copDlg">
+<dialog id="copDlg" tabindex="-1">
   <h3 style="margin-bottom:4px;font-size:16px">Quante copie?</h3>
   <p class="hint" style="margin-bottom:10px;font-size:12px">Impostale qui, non nella finestra di Windows.</p>
   <div id="copBox" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
@@ -4686,7 +4686,7 @@ function chiediCopie(preimpostato){
         const b=document.createElement("button");
         b.textContent=i;
         b.style.cssText="min-width:42px;padding:8px 0;font-size:16px;font-weight:700"+(i===n?";outline:2px solid var(--accent)":"");
-        b.onclick=()=>finita(i);
+        b.onclick=()=>{ n=i; disegna(); };   // il numero si sceglie soltanto: parte col tasto Stampa
         box.append(b);
       }
       const meno=document.createElement("button"); meno.textContent="−";
@@ -4701,10 +4701,14 @@ function chiediCopie(preimpostato){
       ok.style.cssText="background:var(--accent);color:#000;font-weight:700;padding:8px 14px;font-size:14px";
       ok.onclick=()=>finita(n);
       box.append(meno,val,piu,ok);
+      // i tasti vengono ridisegnati: il fuoco torna al dialogo, così Invio e i numeri da tastiera continuano a funzionare
+      if(dlg.open) try{ dlg.focus(); }catch(_){}
     };
     disegna();
-    /* Col cliente davanti si stampa a raffica: invio conferma senza andare col mouse
-       sul tasto, i numeri da tastiera scelgono le copie, Esc annulla.
+    /* I tasti 1-5 (e i numeri da tastiera) SCELGONO le copie e basta: la stampa parte solo
+       col tasto "Stampa N" o con Invio, così un clic sbagliato sul numero non manda niente
+       in stampa. Col cliente davanti si stampa a raffica: Invio conferma senza andare col
+       mouse sul tasto, Esc annulla.
        Prima Esc chiudeva la finestra senza rispondere e la stampa restava appesa. */
     let chiuso = false;
     const finita = v =>{ if(chiuso) return; chiuso = true;
